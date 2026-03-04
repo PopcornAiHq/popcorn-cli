@@ -698,6 +698,24 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Integrations
+# ---------------------------------------------------------------------------
+
+
+def cmd_check_repo_access(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.check_repo_access(client, args.repo)
+    if resp.get("accessible"):
+        formatted = f"Popcorn has access to {args.repo}"
+    else:
+        auth_url = resp.get("auth_url", "")
+        formatted = f"Popcorn does not have access to {args.repo}."
+        if auth_url:
+            formatted += f" Authorize at: {auth_url}"
+    _output(args, resp, formatted)
+
+
+# ---------------------------------------------------------------------------
 # Raw API escape hatch
 # ---------------------------------------------------------------------------
 
@@ -1152,6 +1170,11 @@ Other:
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
     )
 
+    # --- Integrations ---
+
+    check_ra_p = sub.add_parser("check-repo-access", help=_h)
+    check_ra_p.add_argument("repo", help="Repository (owner/repo)")
+
     # --- Shell ---
 
     comp_p = sub.add_parser("completion", help=_h)
@@ -1198,6 +1221,7 @@ _COMMANDS = {
     "completion": cmd_completion,
     "prototype": cmd_prototype,
     "api": cmd_api,
+    "check-repo-access": cmd_check_repo_access,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
