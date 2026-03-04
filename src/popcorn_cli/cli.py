@@ -17,6 +17,7 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
+    popcorn check-repo-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
 
