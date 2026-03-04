@@ -194,3 +194,27 @@ class TestRawApi:
         mock_client.request.assert_called_once_with(
             "GET", "/api/foo", params={"a": "1", "b": "2"}, data=None
         )
+
+
+class TestCheckRepoAccess:
+    def test_check_repo_access_accessible(self, mock_client):
+        mock_client.post.return_value = {"accessible": True}
+        result = operations.check_repo_access(mock_client, "acme/widgets")
+        mock_client.post.assert_called_once_with(
+            "/api/integrations/github/check-repo-access",
+            data={"owner": "acme", "repo": "widgets"},
+        )
+        assert result["accessible"] is True
+
+    def test_check_repo_access_not_accessible(self, mock_client):
+        mock_client.post.return_value = {
+            "accessible": False,
+            "auth_url": "https://github.com/login/oauth/authorize?...",
+        }
+        result = operations.check_repo_access(mock_client, "acme/widgets")
+        assert result["accessible"] is False
+        assert "auth_url" in result
+
+    def test_check_repo_access_invalid_format(self, mock_client):
+        with pytest.raises(PopcornError, match="Invalid repo format"):
+            operations.check_repo_access(mock_client, "no-slash-here")
