@@ -1,0 +1,88 @@
+[project]
+name = "popcorn-cli"
+version = "0.2.0"
+description = "CLI for the Popcorn API"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [{ name = "Popcorn", email = "support@popcorn.ai" }]
+keywords = ["popcorn", "messaging", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Communications :: Chat",
+]
+dependencies = [
+    "httpx>=0.27",
+    "pyjwt>=2.0",
+]
+
+[project.scripts]
+popcorn = "popcorn_cli.cli:main"
+
+[project.urls]
+Homepage = "https://popcorn.ai"
+Repository = "https://github.com/PopcornAiHq/popcorn-cli"
+Issues = "https://github.com/PopcornAiHq/popcorn-cli/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/popcorn_core", "src/popcorn_cli"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.9",
+    "mypy>=1.11",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "pre-commit>=4.0",
+    "respx>=0.22",
+]
+
+# ── Ruff ─────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+    "B",     # flake8-bugbear
+    "SIM",   # flake8-simplify
+    "N",     # pep8-naming
+    "RUF",   # ruff-specific
+]
+ignore = [
+    "E501",   # line length — handled by formatter
+    "SIM108", # ternary — not always clearer
+    "N802",   # function name lowercase — we have do_GET in HTTP handler
+    "UP007",  # X | Y union syntax — keep Optional for 3.10 compat
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["popcorn_core", "popcorn_cli"]
+
+# ── Pytest ───────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-ra -q"
+
+# ── Mypy ─────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+check_untyped_defs = true
+strict_equality = true
+mypy_path = ["src"]
