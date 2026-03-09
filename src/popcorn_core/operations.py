@@ -510,6 +510,25 @@ def get_prototype(
 
 
 # ---------------------------------------------------------------------------
+# Integrations
+# ---------------------------------------------------------------------------
+
+
+def check_access(client: APIClient, repo: str) -> dict[str, Any]:
+    """Check if the user's integration can access a repository."""
+    parts = repo.split("/")
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise PopcornError(
+            f"Invalid repo format: {repo!r}. Expected owner/repo (e.g. acme/widgets)"
+        )
+    owner, name = parts
+    return client.post(
+        "/api/integrations/check-access",
+        data={"provider": "github", "owner": owner, "repo": name},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Raw API access
 # ---------------------------------------------------------------------------
 

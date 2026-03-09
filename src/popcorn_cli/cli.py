@@ -17,6 +17,7 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
+    popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
 
@@ -698,6 +699,24 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Integrations
+# ---------------------------------------------------------------------------
+
+
+def cmd_check_access(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.check_access(client, args.repo)
+    if resp.get("accessible"):
+        formatted = f"Popcorn has access to {args.repo}"
+    else:
+        auth_url = resp.get("auth_url", "")
+        formatted = f"Popcorn does not have access to {args.repo}."
+        if auth_url:
+            formatted += f" Authorize at: {auth_url}"
+    _output(args, resp, formatted)
+
+
+# ---------------------------------------------------------------------------
 # Raw API escape hatch
 # ---------------------------------------------------------------------------
 
@@ -790,7 +809,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api completion --json --workspace -e --env --no-color" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api check-access completion --json --workspace -e --env --no-color" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -851,6 +870,7 @@ _popcorn() {
         'webhook:Manage webhooks'
         'prototype:Access a prototype'
         'api:Raw API call'
+        'check-access:Check repo access'
         'completion:Generate shell completions'
     )
 
@@ -951,6 +971,9 @@ Channel management:
 Sidebar & webhooks:
   sidebar       Manage sidebar
   webhook       Manage webhooks
+
+Integrations:
+  check-access  Check repo access
 
 Other:
   prototype     Access a prototype
@@ -1152,6 +1175,11 @@ Other:
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
     )
 
+    # --- Integrations ---
+
+    check_ra_p = sub.add_parser("check-access", help=_h)
+    check_ra_p.add_argument("repo", help="Repository (owner/repo)")
+
     # --- Shell ---
 
     comp_p = sub.add_parser("completion", help=_h)
@@ -1198,6 +1226,7 @@ _COMMANDS = {
     "completion": cmd_completion,
     "prototype": cmd_prototype,
     "api": cmd_api,
+    "check-access": cmd_check_access,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents

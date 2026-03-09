@@ -196,3 +196,10 @@ class TestDidYouMean:
         err = capsys.readouterr().err
         assert "Did you mean" in err
         assert "inbox" in err
+
+
+class TestCheckAccess:
+    def test_check_access(self, parser):
+        args = parser.parse_args(["check-access", "acme/widgets"])
+        assert args.command == "check-access"
+        assert args.repo == "acme/widgets"
