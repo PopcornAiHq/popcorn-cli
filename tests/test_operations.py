@@ -196,30 +196,30 @@ class TestRawApi:
         )
 
 
-class TestCheckRepoAccess:
-    def test_check_repo_access_accessible(self, mock_client):
+class TestCheckAccess:
+    def test_check_access_accessible(self, mock_client):
         mock_client.post.return_value = {"accessible": True}
-        result = operations.check_repo_access(mock_client, "acme/widgets")
+        result = operations.check_access(mock_client, "acme/widgets")
         mock_client.post.assert_called_once_with(
             "/api/integrations/check-access",
             data={"provider": "github", "owner": "acme", "repo": "widgets"},
         )
         assert result["accessible"] is True
 
-    def test_check_repo_access_not_accessible(self, mock_client):
+    def test_check_access_not_accessible(self, mock_client):
         mock_client.post.return_value = {
             "accessible": False,
             "auth_url": "https://github.com/login/oauth/authorize?...",
         }
-        result = operations.check_repo_access(mock_client, "acme/widgets")
+        result = operations.check_access(mock_client, "acme/widgets")
         assert result["accessible"] is False
         assert "auth_url" in result
 
-    def test_check_repo_access_invalid_format(self, mock_client):
+    def test_check_access_invalid_format(self, mock_client):
         with pytest.raises(PopcornError, match="Invalid repo format"):
-            operations.check_repo_access(mock_client, "no-slash-here")
+            operations.check_access(mock_client, "no-slash-here")
 
     @pytest.mark.parametrize("bad_input", ["/", "owner/", "/repo"])
-    def test_check_repo_access_empty_parts(self, mock_client, bad_input):
+    def test_check_access_empty_parts(self, mock_client, bad_input):
         with pytest.raises(PopcornError, match="Invalid repo format"):
-            operations.check_repo_access(mock_client, bad_input)
+            operations.check_access(mock_client, bad_input)

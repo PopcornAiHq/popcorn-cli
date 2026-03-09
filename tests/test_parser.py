@@ -198,8 +198,8 @@ class TestDidYouMean:
         assert "inbox" in err
 
 
-class TestCheckRepoAccess:
-    def test_check_repo_access(self, parser):
-        args = parser.parse_args(["check-repo-access", "acme/widgets"])
-        assert args.command == "check-repo-access"
+class TestCheckAccess:
+    def test_check_access(self, parser):
+        args = parser.parse_args(["check-access", "acme/widgets"])
+        assert args.command == "check-access"
         assert args.repo == "acme/widgets"

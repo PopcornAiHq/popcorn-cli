@@ -514,8 +514,8 @@ def get_prototype(
 # ---------------------------------------------------------------------------
 
 
-def check_repo_access(client: APIClient, repo: str) -> dict[str, Any]:
-    """Check if the user's GitHub integration can access a repository."""
+def check_access(client: APIClient, repo: str) -> dict[str, Any]:
+    """Check if the user's integration can access a repository."""
     owner, _, name = repo.partition("/")
     if not owner or not name:
         raise PopcornError(

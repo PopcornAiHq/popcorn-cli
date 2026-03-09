@@ -17,7 +17,7 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn check-repo-access <owner/repo>
+    popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
 
@@ -703,9 +703,9 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_check_repo_access(args: argparse.Namespace) -> None:
+def cmd_check_access(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.check_repo_access(client, args.repo)
+    resp = operations.check_access(client, args.repo)
     if resp.get("accessible"):
         formatted = f"Popcorn has access to {args.repo}"
     else:
@@ -809,7 +809,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api check-repo-access completion --json --workspace -e --env --no-color" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api check-access completion --json --workspace -e --env --no-color" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -870,7 +870,7 @@ _popcorn() {
         'webhook:Manage webhooks'
         'prototype:Access a prototype'
         'api:Raw API call'
-        'check-repo-access:Check GitHub repo access'
+        'check-access:Check repo access'
         'completion:Generate shell completions'
     )
 
@@ -973,7 +973,7 @@ Sidebar & webhooks:
   webhook       Manage webhooks
 
 Integrations:
-  check-repo-access  Check GitHub repo access
+  check-access  Check repo access
 
 Other:
   prototype     Access a prototype
@@ -1177,7 +1177,7 @@ Other:
 
     # --- Integrations ---
 
-    check_ra_p = sub.add_parser("check-repo-access", help=_h)
+    check_ra_p = sub.add_parser("check-access", help=_h)
     check_ra_p.add_argument("repo", help="Repository (owner/repo)")
 
     # --- Shell ---
@@ -1226,7 +1226,7 @@ _COMMANDS = {
     "completion": cmd_completion,
     "prototype": cmd_prototype,
     "api": cmd_api,
-    "check-repo-access": cmd_check_repo_access,
+    "check-access": cmd_check_access,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
