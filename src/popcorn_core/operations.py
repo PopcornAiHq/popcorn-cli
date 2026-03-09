@@ -522,8 +522,8 @@ def check_repo_access(client: APIClient, repo: str) -> dict[str, Any]:
         )
     owner, name = repo.split("/", 1)
     return client.post(
-        "/api/integrations/github/check-repo-access",
-        data={"owner": owner, "repo": name},
+        "/api/integrations/check-access",
+        data={"provider": "github", "owner": owner, "repo": name},
     )
 
 

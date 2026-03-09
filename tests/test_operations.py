@@ -201,8 +201,8 @@ class TestCheckRepoAccess:
         mock_client.post.return_value = {"accessible": True}
         result = operations.check_repo_access(mock_client, "acme/widgets")
         mock_client.post.assert_called_once_with(
-            "/api/integrations/github/check-repo-access",
-            data={"owner": "acme", "repo": "widgets"},
+            "/api/integrations/check-access",
+            data={"provider": "github", "owner": "acme", "repo": "widgets"},
         )
         assert result["accessible"] is True
 
