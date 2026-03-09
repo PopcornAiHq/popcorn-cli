@@ -219,7 +219,7 @@ class TestCheckAccess:
         with pytest.raises(PopcornError, match="Invalid repo format"):
             operations.check_access(mock_client, "no-slash-here")
 
-    @pytest.mark.parametrize("bad_input", ["/", "owner/", "/repo"])
+    @pytest.mark.parametrize("bad_input", ["/", "owner/", "/repo", "org/repo/extra"])
     def test_check_access_empty_parts(self, mock_client, bad_input):
         with pytest.raises(PopcornError, match="Invalid repo format"):
             operations.check_access(mock_client, bad_input)
