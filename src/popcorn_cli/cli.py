@@ -809,7 +809,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api completion --json --workspace -e --env --no-color" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api check-repo-access completion --json --workspace -e --env --no-color" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -870,6 +870,7 @@ _popcorn() {
         'webhook:Manage webhooks'
         'prototype:Access a prototype'
         'api:Raw API call'
+        'check-repo-access:Check GitHub repo access'
         'completion:Generate shell completions'
     )
 
@@ -970,6 +971,9 @@ Channel management:
 Sidebar & webhooks:
   sidebar       Manage sidebar
   webhook       Manage webhooks
+
+Integrations:
+  check-repo-access  Check GitHub repo access
 
 Other:
   prototype     Access a prototype
