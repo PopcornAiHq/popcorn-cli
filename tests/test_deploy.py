@@ -1,4 +1,4 @@
-"""Tests for deploy operations and CLI commands."""
+"""Tests for site operations and CLI commands."""
 
 from __future__ import annotations
 
@@ -206,18 +206,18 @@ class TestCreateTarball:
             create_tarball()
 
 
-class TestDeployPush:
+class TestSitePush:
     @pytest.fixture()
     def push_args(self):
         args = MagicMock()
-        args.site_name = None
+        args.name = None
         args.context = ""
         args.json = False
         args.env = None
         args.workspace = None
         return args
 
-    def test_deploy_push_full_flow(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_site_push_full_flow(self, mock_client, tmp_path, monkeypatch, push_args):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "index.html").write_text("<html>hello</html>")
         (tmp_path / ".gitignore").write_text("node_modules\n")
@@ -246,9 +246,9 @@ class TestDeployPush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_deploy_push
+            from popcorn_cli.cli import cmd_site_push
 
-            cmd_deploy_push(push_args)
+            cmd_site_push(push_args)
 
         # Verify .popcorn.local.json was written
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
@@ -259,7 +259,7 @@ class TestDeployPush:
         gitignore = (tmp_path / ".gitignore").read_text()
         assert ".popcorn.local.json" in gitignore
 
-    def test_deploy_push_existing_site(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_site_push_existing_site(self, mock_client, tmp_path, monkeypatch, push_args):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "index.html").write_text("<html>hello</html>")
 
@@ -290,14 +290,14 @@ class TestDeployPush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_deploy_push
+            from popcorn_cli.cli import cmd_site_push
 
-            cmd_deploy_push(push_args)
+            cmd_site_push(push_args)
 
         # deploy_create should NOT have been called — only presign + pull
         assert mock_client.post.call_count == 2
 
-    def test_deploy_push_409_conflict(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_site_push_409_conflict(self, mock_client, tmp_path, monkeypatch, push_args):
         monkeypatch.chdir(tmp_path)
 
         mock_client.post.side_effect = APIError("Site already exists", status_code=409)
@@ -307,14 +307,14 @@ class TestDeployPush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_deploy_push
+            from popcorn_cli.cli import cmd_site_push
 
             with pytest.raises(PopcornError, match="already exists"):
-                cmd_deploy_push(push_args)
+                cmd_site_push(push_args)
 
-    def test_deploy_push_site_name_flag(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_site_push_name_flag(self, mock_client, tmp_path, monkeypatch, push_args):
         monkeypatch.chdir(tmp_path)
-        push_args.site_name = "custom-site"
+        push_args.name = "custom-site"
 
         mock_client.post.side_effect = [
             {"conversation_id": "conv-1", "site_name": "custom-site", "name": "custom-site"},
@@ -337,81 +337,40 @@ class TestDeployPush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_deploy_push
+            from popcorn_cli.cli import cmd_site_push
 
-            cmd_deploy_push(push_args)
+            cmd_site_push(push_args)
 
-        # Verify create was called with custom site name
         mock_client.post.assert_any_call("/appchannels/sites", data={"site_name": "custom-site"})
 
 
-class TestDeployParser:
+class TestSiteParser:
     @pytest.fixture()
     def parser(self):
         return build_parser()
 
-    def test_deploy_create(self, parser):
-        args = parser.parse_args(["deploy", "create", "--site-name", "my-site"])
-        assert args.command == "deploy"
-        assert args.deploy_command == "create"
-        assert args.site_name == "my-site"
+    def test_site_create(self, parser):
+        args = parser.parse_args(["site", "create", "--name", "my-site"])
+        assert args.command == "site"
+        assert args.site_command == "create"
+        assert args.name == "my-site"
 
-    def test_deploy_presign(self, parser):
-        args = parser.parse_args(["deploy", "presign", "--site-name", "my-site"])
-        assert args.deploy_command == "presign"
-        assert args.site_name == "my-site"
-
-    def test_deploy_pull(self, parser):
-        args = parser.parse_args(
-            [
-                "deploy",
-                "pull",
-                "--site-name",
-                "my-site",
-                "--s3-key",
-                "ws/sites/my-site/v/1.tar.gz",
-                "--conversation-id",
-                "conv-1",
-            ]
-        )
-        assert args.deploy_command == "pull"
-        assert args.site_name == "my-site"
-        assert args.s3_key == "ws/sites/my-site/v/1.tar.gz"
-        assert args.conversation_id == "conv-1"
-
-    def test_deploy_pull_with_context(self, parser):
-        args = parser.parse_args(
-            [
-                "deploy",
-                "pull",
-                "--site-name",
-                "my-site",
-                "--s3-key",
-                "key",
-                "--conversation-id",
-                "conv-1",
-                "--context",
-                "fix login",
-            ]
-        )
-        assert args.context == "fix login"
-
-    def test_deploy_push_defaults(self, parser):
-        args = parser.parse_args(["deploy", "push"])
-        assert args.deploy_command == "push"
-        assert args.site_name is None
+    def test_site_push_defaults(self, parser):
+        args = parser.parse_args(["site", "push"])
+        assert args.site_command == "push"
+        assert args.name is None
         assert args.context == ""
 
-    def test_deploy_push_with_options(self, parser):
+    def test_site_push_with_options(self, parser):
         args = parser.parse_args(
             [
-                "deploy",
+                "site",
                 "push",
-                "--site-name",
+                "--name",
                 "my-app",
                 "--context",
                 "initial release",
             ]
         )
-        assert args.site_name == "my-app"
+        assert args.name == "my-app"
         assert args.context == "initial release"

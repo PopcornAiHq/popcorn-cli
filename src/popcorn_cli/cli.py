@@ -17,10 +17,8 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn deploy create --site-name NAME
-    popcorn deploy presign --site-name NAME
-    popcorn deploy pull --site-name NAME --s3-key KEY --conversation-id ID
-    popcorn deploy push [--site-name NAME] [--context "..."]
+    popcorn site create --name NAME
+    popcorn site push [--name NAME] [--context "..."]
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
@@ -704,53 +702,33 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Deploy
+# Sites
 # ---------------------------------------------------------------------------
 
 
-def cmd_deploy(args: argparse.Namespace) -> None:
+def cmd_site(args: argparse.Namespace) -> None:
     sub = {
-        "create": cmd_deploy_create,
-        "presign": cmd_deploy_presign,
-        "pull": cmd_deploy_pull,
-        "push": cmd_deploy_push,
+        "create": cmd_site_create,
+        "push": cmd_site_push,
     }
-    handler = sub.get(getattr(args, "deploy_command", None) or "")
+    handler = sub.get(getattr(args, "site_command", None) or "")
     if handler:
         handler(args)
     else:
-        build_parser().parse_args(["deploy", "--help"])
+        build_parser().parse_args(["site", "--help"])
 
 
-def cmd_deploy_create(args: argparse.Namespace) -> None:
+def cmd_site_create(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.deploy_create(client, args.site_name)
-    _output(args, resp, f"Created site {resp.get('site_name', args.site_name)}")
+    resp = operations.deploy_create(client, args.name)
+    _output(args, resp, f"Created site {resp.get('site_name', args.name)}")
 
 
-def cmd_deploy_presign(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    resp = operations.deploy_presign(client, args.site_name)
-    _output(args, resp, f"Presigned URL for {args.site_name}:\n  {resp.get('upload_url', '')}")
-
-
-def cmd_deploy_pull(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    resp = operations.deploy_pull(
-        client, args.site_name, args.s3_key, args.conversation_id, args.context
-    )
-    _output(
-        args,
-        resp,
-        f"Deployed {resp.get('site_name', args.site_name)} v{resp.get('version', '?')}",
-    )
-
-
-def cmd_deploy_push(args: argparse.Namespace) -> None:
+def cmd_site_push(args: argparse.Namespace) -> None:
     client = _get_client(args)
     from pathlib import Path
 
-    site_name = args.site_name or f"pop-{Path.cwd().name}"
+    site_name = args.name or f"pop-{Path.cwd().name}"
 
     # Read .popcorn.local.json
     local_json = Path(".popcorn.local.json")
@@ -774,7 +752,7 @@ def cmd_deploy_push(args: argparse.Namespace) -> None:
                 raise PopcornError(
                     f"Site '{site_name}' already exists but .popcorn.local.json is missing.\n"
                     f"Create the site again to get a fresh conversation:\n"
-                    f"  popcorn deploy create --site-name {site_name}"
+                    f"  popcorn site create --name {site_name}"
                 ) from e
 
         # Presign
@@ -1086,11 +1064,9 @@ Sidebar & webhooks:
   sidebar       Manage sidebar
   webhook       Manage webhooks
 
-Deploy:
-  deploy create     Create a new site
-  deploy presign    Get a presigned S3 upload URL
-  deploy pull       Trigger VM to pull from S3 and deploy
-  deploy push       Create tarball, upload, and deploy (all-in-one)
+Sites:
+  site create       Create a new site
+  site push         Create tarball, upload, and deploy
 
 Integrations:
   check-access  Check repo access
@@ -1295,22 +1271,15 @@ Other:
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
     )
 
-    # --- Deploy ---
+    # --- Sites ---
 
-    deploy_parser = sub.add_parser("deploy", help=_h)
-    deploy_sub = deploy_parser.add_subparsers(dest="deploy_command")
-    dc_p = deploy_sub.add_parser("create", help="Create a new site")
-    dc_p.add_argument("--site-name", required=True, help="Site name")
-    dp_p = deploy_sub.add_parser("presign", help="Get a presigned S3 upload URL")
-    dp_p.add_argument("--site-name", required=True, help="Site name")
-    dpl_p = deploy_sub.add_parser("pull", help="Trigger VM to pull from S3 and deploy")
-    dpl_p.add_argument("--site-name", required=True, help="Site name")
-    dpl_p.add_argument("--s3-key", required=True, help="S3 key from presign")
-    dpl_p.add_argument("--conversation-id", required=True, help="Conversation ID")
-    dpl_p.add_argument("--context", type=str, default="", help="Deploy context message")
-    dpush_p = deploy_sub.add_parser("push", help="Create tarball, upload, and deploy (all-in-one)")
-    dpush_p.add_argument("--site-name", type=str, help="Site name (default: pop-<dirname>)")
-    dpush_p.add_argument("--context", type=str, default="", help="Deploy context message")
+    site_parser = sub.add_parser("site", help=_h)
+    site_sub = site_parser.add_subparsers(dest="site_command")
+    sc_p = site_sub.add_parser("create", help="Create a new site")
+    sc_p.add_argument("--name", required=True, help="Site name")
+    sp_p = site_sub.add_parser("push", help="Create tarball, upload, and deploy")
+    sp_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
+    sp_p.add_argument("--context", type=str, default="", help="Deploy context message")
 
     # --- Integrations ---
 
@@ -1367,7 +1336,7 @@ _COMMANDS = {
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook", "deploy"])
+_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook", "site"])
 
 
 def _hoist_json_flag(argv: list[str] | None = None) -> list[str]:
@@ -1422,8 +1391,8 @@ def main() -> None:
             cmd_sidebar(args)
         elif args.command == "webhook":
             cmd_webhook(args)
-        elif args.command == "deploy":
-            cmd_deploy(args)
+        elif args.command == "site":
+            cmd_site(args)
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:
