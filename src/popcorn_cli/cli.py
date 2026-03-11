@@ -722,11 +722,11 @@ def cmd_pop(args: argparse.Namespace) -> None:
     tarball = create_tarball()
 
     try:
-        # Create site (first deploy) — 409 means already exists
+        # Create app_channel (first deploy) — 409 means already exists
         if not conversation_id:
             try:
                 create_result = operations.deploy_create(client, site_name)
-                conversation_id = str(create_result["conversation_id"])
+                conversation_id = str(create_result["id"])
             except APIError as e:
                 if e.status_code != 409:
                     raise
@@ -735,16 +735,17 @@ def cmd_pop(args: argparse.Namespace) -> None:
                     f"Re-run after removing .popcorn.local.json, or use a different --name."
                 ) from e
 
+        if not conversation_id:
+            raise PopcornError("No conversation_id available for deploy")
+
         # Presign
-        presign = operations.deploy_presign(client, site_name)
+        presign = operations.deploy_presign(client, conversation_id)
 
         # Upload to S3
         operations.deploy_upload(presign["upload_url"], presign["upload_fields"], tarball)
 
-        # Pull (trigger VM pull + commit)
-        result = operations.deploy_pull(
-            client, site_name, presign["s3_key"], conversation_id, args.context
-        )
+        # Publish (trigger VM pull + commit)
+        result = operations.deploy_publish(client, conversation_id, presign["s3_key"], args.context)
     finally:
         # Cleanup tarball
         os.unlink(tarball)

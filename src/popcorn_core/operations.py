@@ -534,30 +534,32 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
 
 
 def deploy_create(client: APIClient, site_name: str) -> dict[str, Any]:
-    """Create a new deploy site."""
-    return client.post("/appchannels/sites", data={"site_name": site_name})
+    """Create an app_channel conversation (provisions VM site as side-effect)."""
+    return client.post(
+        "/api/conversations/create",
+        data={"name": site_name, "conversation_type": "app_channel"},
+    )
 
 
-def deploy_presign(client: APIClient, site_name: str) -> dict[str, Any]:
-    """Get a presigned S3 upload URL for a site."""
-    return client.post(f"/appchannels/sites/{site_name}/s3-presign")
+def deploy_presign(client: APIClient, conversation_id: str) -> dict[str, Any]:
+    """Get a presigned S3 upload URL for the conversation's site."""
+    return client.post(
+        "/api/conversations/presigned-url",
+        data={"conversation_id": conversation_id, "method": "PUT"},
+    )
 
 
-def deploy_pull(
+def deploy_publish(
     client: APIClient,
-    site_name: str,
-    s3_key: str,
     conversation_id: str,
+    s3_key: str,
     context: str = "",
 ) -> dict[str, Any]:
-    """Trigger VM to pull from S3 and deploy."""
-    data: dict[str, Any] = {"s3_key": s3_key, "conversation_id": conversation_id}
+    """Publish a tarball from S3 to the conversation's site."""
+    data: dict[str, Any] = {"conversation_id": conversation_id, "s3_key": s3_key}
     if context:
         data["context"] = context
-    return client.post(
-        f"/appchannels/sites/{site_name}/s3-pull",
-        data=data,
-    )
+    return client.post("/api/conversations/publish", data=data)
 
 
 def deploy_upload(

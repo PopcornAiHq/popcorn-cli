@@ -18,16 +18,17 @@ from popcorn_core.errors import APIError, PopcornError
 class TestDeployCreate:
     def test_deploy_create(self, mock_client):
         mock_client.post.return_value = {
-            "conversation_id": "conv-1",
-            "site_name": "my-site",
+            "id": "conv-1",
             "name": "my-site",
+            "type": "app_channel",
         }
         result = operations.deploy_create(mock_client, "my-site")
         mock_client.post.assert_called_once_with(
-            "/appchannels/sites", data={"site_name": "my-site"}
+            "/api/conversations/create",
+            data={"name": "my-site", "conversation_type": "app_channel"},
         )
-        assert result["site_name"] == "my-site"
-        assert result["conversation_id"] == "conv-1"
+        assert result["name"] == "my-site"
+        assert result["id"] == "conv-1"
 
 
 class TestDeployPresign:
@@ -37,41 +38,44 @@ class TestDeployPresign:
             "upload_fields": {"key": "abc"},
             "s3_key": "ws/sites/my-site/versions/123.tar.gz",
         }
-        result = operations.deploy_presign(mock_client, "my-site")
-        mock_client.post.assert_called_once_with("/appchannels/sites/my-site/s3-presign")
+        result = operations.deploy_presign(mock_client, "conv-1")
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/presigned-url",
+            data={"conversation_id": "conv-1", "method": "PUT"},
+        )
         assert result["upload_url"] == "https://s3.example.com/upload"
         assert result["s3_key"].endswith(".tar.gz")
 
 
-class TestDeployPull:
-    def test_deploy_pull(self, mock_client):
+class TestDeployPublish:
+    def test_deploy_publish(self, mock_client):
         mock_client.post.return_value = {
             "conversation_id": "conv-1",
             "site_name": "my-site",
             "version": 1,
             "commit_hash": "abc123",
         }
-        result = operations.deploy_pull(mock_client, "my-site", "s3-key-1", "conv-1")
+        result = operations.deploy_publish(mock_client, "conv-1", "s3-key-1")
         mock_client.post.assert_called_once_with(
-            "/appchannels/sites/my-site/s3-pull",
-            data={"s3_key": "s3-key-1", "conversation_id": "conv-1"},
+            "/api/conversations/publish",
+            data={"conversation_id": "conv-1", "s3_key": "s3-key-1"},
         )
         assert result["version"] == 1
         assert result["commit_hash"] == "abc123"
 
-    def test_deploy_pull_with_context(self, mock_client):
+    def test_deploy_publish_with_context(self, mock_client):
         mock_client.post.return_value = {
             "conversation_id": "conv-1",
             "site_name": "my-site",
             "version": 2,
             "commit_hash": "def456",
         }
-        operations.deploy_pull(mock_client, "my-site", "s3-key-1", "conv-1", context="fix login")
+        operations.deploy_publish(mock_client, "conv-1", "s3-key-1", context="fix login")
         mock_client.post.assert_called_once_with(
-            "/appchannels/sites/my-site/s3-pull",
+            "/api/conversations/publish",
             data={
-                "s3_key": "s3-key-1",
                 "conversation_id": "conv-1",
+                "s3_key": "s3-key-1",
                 "context": "fix login",
             },
         )
@@ -223,7 +227,7 @@ class TestPop:
         (tmp_path / ".gitignore").write_text("node_modules\n")
 
         mock_client.post.side_effect = [
-            {"conversation_id": "conv-1", "site_name": "pop-test", "name": "pop-test"},
+            {"id": "conv-1", "name": "pop-test", "type": "app_channel"},
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
@@ -306,7 +310,7 @@ class TestPop:
         pop_args.name = "custom-site"
 
         mock_client.post.side_effect = [
-            {"conversation_id": "conv-1", "site_name": "custom-site", "name": "custom-site"},
+            {"id": "conv-1", "name": "custom-site", "type": "app_channel"},
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
@@ -330,7 +334,10 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        mock_client.post.assert_any_call("/appchannels/sites", data={"site_name": "custom-site"})
+        mock_client.post.assert_any_call(
+            "/api/conversations/create",
+            data={"name": "custom-site", "conversation_type": "app_channel"},
+        )
 
 
 class TestPopParser:
