@@ -1,4 +1,4 @@
-"""Tests for site operations and CLI commands."""
+"""Tests for pop command and deploy operations."""
 
 from __future__ import annotations
 
@@ -206,9 +206,9 @@ class TestCreateTarball:
             create_tarball()
 
 
-class TestSitePush:
+class TestPop:
     @pytest.fixture()
-    def push_args(self):
+    def pop_args(self):
         args = MagicMock()
         args.name = None
         args.context = ""
@@ -217,21 +217,18 @@ class TestSitePush:
         args.workspace = None
         return args
 
-    def test_site_push_full_flow(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_pop_full_flow(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "index.html").write_text("<html>hello</html>")
         (tmp_path / ".gitignore").write_text("node_modules\n")
 
         mock_client.post.side_effect = [
-            # deploy_create
             {"conversation_id": "conv-1", "site_name": "pop-test", "name": "pop-test"},
-            # deploy_presign
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
                 "s3_key": "ws/sites/pop-test/versions/123.tar.gz",
             },
-            # deploy_pull
             {
                 "conversation_id": "conv-1",
                 "site_name": "pop-test",
@@ -246,36 +243,29 @@ class TestSitePush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_site_push
+            from popcorn_cli.cli import cmd_pop
 
-            cmd_site_push(push_args)
+            cmd_pop(pop_args)
 
-        # Verify .popcorn.local.json was written
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
         assert local["conversation_id"] == "conv-1"
         assert local["site_name"] == "pop-test"
 
-        # Verify .gitignore was updated
         gitignore = (tmp_path / ".gitignore").read_text()
         assert ".popcorn.local.json" in gitignore
 
-    def test_site_push_existing_site(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_pop_existing_site(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "index.html").write_text("<html>hello</html>")
-
-        # Pre-existing .popcorn.local.json
         (tmp_path / ".popcorn.local.json").write_text(
             json.dumps({"conversation_id": "conv-existing", "site_name": "pop-test"})
         )
 
         mock_client.post.side_effect = [
-            # deploy_presign (no create call since conversation_id exists)
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
                 "s3_key": "ws/sites/pop-test/versions/456.tar.gz",
             },
-            # deploy_pull
             {
                 "conversation_id": "conv-existing",
                 "site_name": "pop-test",
@@ -290,14 +280,13 @@ class TestSitePush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_site_push
+            from popcorn_cli.cli import cmd_pop
 
-            cmd_site_push(push_args)
+            cmd_pop(pop_args)
 
-        # deploy_create should NOT have been called — only presign + pull
         assert mock_client.post.call_count == 2
 
-    def test_site_push_409_conflict(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_pop_409_conflict(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
 
         mock_client.post.side_effect = APIError("Site already exists", status_code=409)
@@ -307,14 +296,14 @@ class TestSitePush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_site_push
+            from popcorn_cli.cli import cmd_pop
 
             with pytest.raises(PopcornError, match="already exists"):
-                cmd_site_push(push_args)
+                cmd_pop(pop_args)
 
-    def test_site_push_name_flag(self, mock_client, tmp_path, monkeypatch, push_args):
+    def test_pop_name_flag(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
-        push_args.name = "custom-site"
+        pop_args.name = "custom-site"
 
         mock_client.post.side_effect = [
             {"conversation_id": "conv-1", "site_name": "custom-site", "name": "custom-site"},
@@ -337,34 +326,25 @@ class TestSitePush:
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
         ):
-            from popcorn_cli.cli import cmd_site_push
+            from popcorn_cli.cli import cmd_pop
 
-            cmd_site_push(push_args)
+            cmd_pop(pop_args)
 
         mock_client.post.assert_any_call("/appchannels/sites", data={"site_name": "custom-site"})
 
 
-class TestSiteParser:
+class TestPopParser:
     @pytest.fixture()
     def parser(self):
         return build_parser()
 
-    def test_site_push_defaults(self, parser):
-        args = parser.parse_args(["site", "push"])
-        assert args.site_command == "push"
+    def test_pop_defaults(self, parser):
+        args = parser.parse_args(["pop"])
+        assert args.command == "pop"
         assert args.name is None
         assert args.context == ""
 
-    def test_site_push_with_options(self, parser):
-        args = parser.parse_args(
-            [
-                "site",
-                "push",
-                "--name",
-                "my-app",
-                "--context",
-                "initial release",
-            ]
-        )
+    def test_pop_with_options(self, parser):
+        args = parser.parse_args(["pop", "--name", "my-app", "--context", "initial release"])
         assert args.name == "my-app"
         assert args.context == "initial release"

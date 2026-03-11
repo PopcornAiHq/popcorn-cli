@@ -17,7 +17,7 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn site push [--name NAME] [--context "..."]
+    popcorn pop [--name NAME] [--context "..."]
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
@@ -701,22 +701,11 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sites
+# Pop (push site resources to a channel)
 # ---------------------------------------------------------------------------
 
 
-def cmd_site(args: argparse.Namespace) -> None:
-    sub = {
-        "push": cmd_site_push,
-    }
-    handler = sub.get(getattr(args, "site_command", None) or "")
-    if handler:
-        handler(args)
-    else:
-        build_parser().parse_args(["site", "--help"])
-
-
-def cmd_site_push(args: argparse.Namespace) -> None:
+def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
     from pathlib import Path
 
@@ -743,8 +732,7 @@ def cmd_site_push(args: argparse.Namespace) -> None:
                     raise
                 raise PopcornError(
                     f"Site '{site_name}' already exists but .popcorn.local.json is missing.\n"
-                    f"Create the site again to get a fresh conversation:\n"
-                    f"  popcorn site create --name {site_name}"
+                    f"Re-run after removing .popcorn.local.json, or use a different --name."
                 ) from e
 
         # Presign
@@ -1051,13 +1039,11 @@ Channel management:
   update        Update channel name or description
   archive       Archive a channel
   delete-conversation  Delete a conversation
+  pop           Push site resources to a channel
 
 Sidebar & webhooks:
   sidebar       Manage sidebar
   webhook       Manage webhooks
-
-Sites:
-  site push         Create tarball, upload, and deploy
 
 Integrations:
   check-access  Check repo access
@@ -1262,13 +1248,11 @@ Other:
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
     )
 
-    # --- Sites ---
+    # --- Pop ---
 
-    site_parser = sub.add_parser("site", help=_h)
-    site_sub = site_parser.add_subparsers(dest="site_command")
-    sp_p = site_sub.add_parser("push", help="Create tarball, upload, and deploy")
-    sp_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
-    sp_p.add_argument("--context", type=str, default="", help="Deploy context message")
+    pop_p = sub.add_parser("pop", help=_h)
+    pop_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
+    pop_p.add_argument("--context", type=str, default="", help="Deploy context message")
 
     # --- Integrations ---
 
@@ -1322,10 +1306,11 @@ _COMMANDS = {
     "prototype": cmd_prototype,
     "api": cmd_api,
     "check-access": cmd_check_access,
+    "pop": cmd_pop,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook", "site"])
+_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook"])
 
 
 def _hoist_json_flag(argv: list[str] | None = None) -> list[str]:
@@ -1380,8 +1365,6 @@ def main() -> None:
             cmd_sidebar(args)
         elif args.command == "webhook":
             cmd_webhook(args)
-        elif args.command == "site":
-            cmd_site(args)
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:
