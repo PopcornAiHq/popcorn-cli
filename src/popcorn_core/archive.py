@@ -34,6 +34,7 @@ def create_tarball() -> str:
                     if item.name not in (".git", "node_modules", ".popcorn.local.json"):
                         tar.add(item)
     except PopcornError:
+        Path(tarball).unlink(missing_ok=True)
         raise
     except Exception as e:
         Path(tarball).unlink(missing_ok=True)
