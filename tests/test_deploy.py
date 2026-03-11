@@ -349,12 +349,6 @@ class TestSiteParser:
     def parser(self):
         return build_parser()
 
-    def test_site_create(self, parser):
-        args = parser.parse_args(["site", "create", "--name", "my-site"])
-        assert args.command == "site"
-        assert args.site_command == "create"
-        assert args.name == "my-site"
-
     def test_site_push_defaults(self, parser):
         args = parser.parse_args(["site", "push"])
         assert args.site_command == "push"

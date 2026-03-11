@@ -17,7 +17,6 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn site create --name NAME
     popcorn site push [--name NAME] [--context "..."]
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
@@ -708,7 +707,6 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 def cmd_site(args: argparse.Namespace) -> None:
     sub = {
-        "create": cmd_site_create,
         "push": cmd_site_push,
     }
     handler = sub.get(getattr(args, "site_command", None) or "")
@@ -716,12 +714,6 @@ def cmd_site(args: argparse.Namespace) -> None:
         handler(args)
     else:
         build_parser().parse_args(["site", "--help"])
-
-
-def cmd_site_create(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    resp = operations.deploy_create(client, args.name)
-    _output(args, resp, f"Created site {resp.get('site_name', args.name)}")
 
 
 def cmd_site_push(args: argparse.Namespace) -> None:
@@ -1065,7 +1057,6 @@ Sidebar & webhooks:
   webhook       Manage webhooks
 
 Sites:
-  site create       Create a new site
   site push         Create tarball, upload, and deploy
 
 Integrations:
@@ -1275,8 +1266,6 @@ Other:
 
     site_parser = sub.add_parser("site", help=_h)
     site_sub = site_parser.add_subparsers(dest="site_command")
-    sc_p = site_sub.add_parser("create", help="Create a new site")
-    sc_p.add_argument("--name", required=True, help="Site name")
     sp_p = site_sub.add_parser("push", help="Create tarball, upload, and deploy")
     sp_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
     sp_p.add_argument("--context", type=str, default="", help="Deploy context message")
