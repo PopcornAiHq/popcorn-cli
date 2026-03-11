@@ -17,6 +17,10 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
+    popcorn deploy create --site-name NAME
+    popcorn deploy presign --site-name NAME
+    popcorn deploy pull --site-name NAME --s3-key KEY --conversation-id ID
+    popcorn deploy push [--site-name NAME] [--context "..."]
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
@@ -47,6 +51,7 @@ from urllib.parse import urlencode
 
 from popcorn_cli import __version__
 from popcorn_core import APIClient, PopcornError, load_config, operations, save_config
+from popcorn_core.archive import create_tarball
 from popcorn_core.auth import (
     CallbackHandler,
     discover_oidc,
@@ -56,7 +61,7 @@ from popcorn_core.auth import (
     run_callback_server,
 )
 from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
-from popcorn_core.errors import AuthError
+from popcorn_core.errors import APIError, AuthError
 
 from .formatting import (
     fmt_activity,
@@ -699,6 +704,115 @@ def cmd_prototype(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Deploy
+# ---------------------------------------------------------------------------
+
+
+def cmd_deploy(args: argparse.Namespace) -> None:
+    sub = {
+        "create": cmd_deploy_create,
+        "presign": cmd_deploy_presign,
+        "pull": cmd_deploy_pull,
+        "push": cmd_deploy_push,
+    }
+    handler = sub.get(getattr(args, "deploy_command", None) or "")
+    if handler:
+        handler(args)
+    else:
+        build_parser().parse_args(["deploy", "--help"])
+
+
+def cmd_deploy_create(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.deploy_create(client, args.site_name)
+    _output(args, resp, f"Created site {resp.get('site_name', args.site_name)}")
+
+
+def cmd_deploy_presign(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.deploy_presign(client, args.site_name)
+    _output(args, resp, f"Presigned URL for {args.site_name}:\n  {resp.get('upload_url', '')}")
+
+
+def cmd_deploy_pull(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.deploy_pull(
+        client, args.site_name, args.s3_key, args.conversation_id, args.context
+    )
+    _output(
+        args,
+        resp,
+        f"Deployed {resp.get('site_name', args.site_name)} v{resp.get('version', '?')}",
+    )
+
+
+def cmd_deploy_push(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    from pathlib import Path
+
+    site_name = args.site_name or f"pop-{Path.cwd().name}"
+
+    # Read .popcorn.local.json
+    local_json = Path(".popcorn.local.json")
+    conversation_id = None
+    if local_json.exists():
+        data = json.loads(local_json.read_text())
+        conversation_id = data.get("conversation_id")
+
+    # Create tarball
+    tarball = create_tarball()
+
+    try:
+        # Create site (first deploy) — 409 means already exists
+        if not conversation_id:
+            try:
+                create_result = operations.deploy_create(client, site_name)
+                conversation_id = str(create_result["conversation_id"])
+            except APIError as e:
+                if e.status_code != 409:
+                    raise
+                raise PopcornError(
+                    f"Site '{site_name}' already exists but .popcorn.local.json is missing.\n"
+                    f"Create the site again to get a fresh conversation:\n"
+                    f"  popcorn deploy create --site-name {site_name}"
+                ) from e
+
+        # Presign
+        presign = operations.deploy_presign(client, site_name)
+
+        # Upload to S3
+        operations.deploy_upload(presign["upload_url"], presign["upload_fields"], tarball)
+
+        # Pull (trigger VM pull + commit)
+        result = operations.deploy_pull(
+            client, site_name, presign["s3_key"], conversation_id, args.context
+        )
+    finally:
+        # Cleanup tarball
+        os.unlink(tarball)
+
+    # Write .popcorn.local.json
+    local_json.write_text(
+        json.dumps(
+            {
+                "conversation_id": str(result["conversation_id"]),
+                "site_name": result["site_name"],
+            },
+            indent=2,
+        )
+    )
+
+    # Add to .gitignore
+    gitignore = Path(".gitignore")
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".popcorn.local.json" not in content:
+            gitignore.write_text(content.rstrip() + "\n.popcorn.local.json\n")
+
+    _output(args, result, f"Published to #{result['site_name']} (v{result['version']})")
+
+
+# ---------------------------------------------------------------------------
 # Integrations
 # ---------------------------------------------------------------------------
 
@@ -972,6 +1086,12 @@ Sidebar & webhooks:
   sidebar       Manage sidebar
   webhook       Manage webhooks
 
+Deploy:
+  deploy create     Create a new site
+  deploy presign    Get a presigned S3 upload URL
+  deploy pull       Trigger VM to pull from S3 and deploy
+  deploy push       Create tarball, upload, and deploy (all-in-one)
+
 Integrations:
   check-access  Check repo access
 
@@ -1175,6 +1295,23 @@ Other:
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
     )
 
+    # --- Deploy ---
+
+    deploy_parser = sub.add_parser("deploy", help=_h)
+    deploy_sub = deploy_parser.add_subparsers(dest="deploy_command")
+    dc_p = deploy_sub.add_parser("create", help="Create a new site")
+    dc_p.add_argument("--site-name", required=True, help="Site name")
+    dp_p = deploy_sub.add_parser("presign", help="Get a presigned S3 upload URL")
+    dp_p.add_argument("--site-name", required=True, help="Site name")
+    dpl_p = deploy_sub.add_parser("pull", help="Trigger VM to pull from S3 and deploy")
+    dpl_p.add_argument("--site-name", required=True, help="Site name")
+    dpl_p.add_argument("--s3-key", required=True, help="S3 key from presign")
+    dpl_p.add_argument("--conversation-id", required=True, help="Conversation ID")
+    dpl_p.add_argument("--context", type=str, default="", help="Deploy context message")
+    dpush_p = deploy_sub.add_parser("push", help="Create tarball, upload, and deploy (all-in-one)")
+    dpush_p.add_argument("--site-name", type=str, help="Site name (default: pop-<dirname>)")
+    dpush_p.add_argument("--context", type=str, default="", help="Deploy context message")
+
     # --- Integrations ---
 
     check_ra_p = sub.add_parser("check-access", help=_h)
@@ -1230,7 +1367,7 @@ _COMMANDS = {
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook"])
+_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook", "deploy"])
 
 
 def _hoist_json_flag(argv: list[str] | None = None) -> list[str]:
@@ -1285,6 +1422,8 @@ def main() -> None:
             cmd_sidebar(args)
         elif args.command == "webhook":
             cmd_webhook(args)
+        elif args.command == "deploy":
+            cmd_deploy(args)
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:

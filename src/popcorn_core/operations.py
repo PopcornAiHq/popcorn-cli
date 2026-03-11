@@ -529,6 +529,63 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Deploy
+# ---------------------------------------------------------------------------
+
+
+def deploy_create(client: APIClient, site_name: str) -> dict[str, Any]:
+    """Create a new deploy site."""
+    return client.post("/appchannels/sites", data={"site_name": site_name})
+
+
+def deploy_presign(client: APIClient, site_name: str) -> dict[str, Any]:
+    """Get a presigned S3 upload URL for a site."""
+    return client.post(f"/appchannels/sites/{site_name}/s3-presign")
+
+
+def deploy_pull(
+    client: APIClient,
+    site_name: str,
+    s3_key: str,
+    conversation_id: str,
+    context: str = "",
+) -> dict[str, Any]:
+    """Trigger VM to pull from S3 and deploy."""
+    data: dict[str, Any] = {"s3_key": s3_key, "conversation_id": conversation_id}
+    if context:
+        data["context"] = context
+    return client.post(
+        f"/appchannels/sites/{site_name}/s3-pull",
+        data=data,
+    )
+
+
+def deploy_upload(
+    upload_url: str,
+    upload_fields: dict[str, str],
+    tarball_path: str,
+) -> None:
+    """Upload a tarball to a presigned S3 URL."""
+    path = Path(tarball_path)
+    if not path.is_file():
+        raise PopcornError(f"Tarball not found: {tarball_path}")
+    file_data = path.read_bytes()
+    try:
+        resp = httpx.post(
+            upload_url,
+            data=upload_fields,
+            files={"file": ("push.tar.gz", file_data, "application/gzip")},
+            timeout=120.0,
+        )
+    except httpx.TimeoutException as e:
+        raise APIError(f"Deploy upload timed out ({len(file_data)} bytes)") from e
+    except httpx.HTTPError as e:
+        raise APIError(f"Deploy upload network error: {e}") from e
+    if resp.status_code not in (200, 201, 204):
+        raise APIError(f"Deploy upload failed: HTTP {resp.status_code}\n{resp.text[:300]}")
+
+
+# ---------------------------------------------------------------------------
 # Raw API access
 # ---------------------------------------------------------------------------
 
