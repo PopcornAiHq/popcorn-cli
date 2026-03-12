@@ -43,6 +43,7 @@ import sys
 import time
 import webbrowser
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -688,27 +689,19 @@ def cmd_webhook(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Prototype commands
-# ---------------------------------------------------------------------------
-
-
-def cmd_prototype(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    resp = operations.get_prototype(
-        client, args.workspace_id, args.prototype_id, getattr(args, "path", "") or ""
-    )
-    _output(args, resp, json.dumps(resp, indent=2, default=str))
-
-
-# ---------------------------------------------------------------------------
 # Pop (push site resources to a channel)
 # ---------------------------------------------------------------------------
 
 
+def _write_local_json(path: Path, conversation_id: str, site_name: str) -> None:
+    """Persist deploy state to .popcorn.local.json."""
+    path.write_text(
+        json.dumps({"conversation_id": conversation_id, "site_name": site_name}, indent=2)
+    )
+
+
 def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    from pathlib import Path
-
     site_name = args.name or f"pop-{Path.cwd().name}"
 
     # Read .popcorn.local.json
@@ -734,6 +727,9 @@ def cmd_pop(args: argparse.Namespace) -> None:
                     f"Site '{site_name}' already exists. Use --name to choose a different name."
                 ) from e
 
+            # Persist conversation_id immediately so retries don't hit 409
+            _write_local_json(local_json, conversation_id, site_name)
+
         if not conversation_id:
             raise PopcornError("No conversation_id available for deploy")
 
@@ -749,15 +745,11 @@ def cmd_pop(args: argparse.Namespace) -> None:
         # Cleanup tarball
         os.unlink(tarball)
 
-    # Write .popcorn.local.json
-    local_json.write_text(
-        json.dumps(
-            {
-                "conversation_id": str(result["conversation_id"]),
-                "site_name": result["site_name"],
-            },
-            indent=2,
-        )
+    # Update .popcorn.local.json with server-confirmed values
+    _write_local_json(
+        local_json,
+        str(result["conversation_id"]),
+        result["site_name"],
     )
 
     # Add to .gitignore
@@ -881,7 +873,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook prototype api check-access pop completion --json --workspace -e --env --no-color" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook api check-access pop completion --json --workspace -e --env --no-color" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -940,7 +932,6 @@ _popcorn() {
         'delete-conversation:Delete a conversation'
         'sidebar:Manage sidebar'
         'webhook:Manage webhooks'
-        'prototype:Access a prototype'
         'api:Raw API call'
         'check-access:Check repo access'
         'pop:Publish site resources to a channel'
@@ -1050,7 +1041,6 @@ Integrations:
   check-access  Check repo access
 
 Other:
-  prototype     Access a prototype
   api           Raw API call (like gh api)
   completion    Generate shell completions"""
 
@@ -1222,13 +1212,6 @@ Other:
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
     wh_del.add_argument("webhook_id", help="Webhook UUID")
 
-    # --- Prototypes ---
-
-    proto_p = sub.add_parser("prototype", help=_h)
-    proto_p.add_argument("workspace_id", help="Workspace UUID")
-    proto_p.add_argument("prototype_id", help="Prototype UUID")
-    proto_p.add_argument("path", nargs="?", default="", help="Path within prototype")
-
     # --- Escape hatch ---
 
     api_p = sub.add_parser("api", help=_h)
@@ -1304,7 +1287,6 @@ _COMMANDS = {
     "watch": cmd_watch,
     "env": cmd_env,
     "completion": cmd_completion,
-    "prototype": cmd_prototype,
     "api": cmd_api,
     "check-access": cmd_check_access,
     "pop": cmd_pop,

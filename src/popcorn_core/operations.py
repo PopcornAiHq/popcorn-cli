@@ -495,21 +495,6 @@ def list_webhook_deliveries(client: APIClient, webhook_id: str) -> dict[str, Any
 
 
 # ---------------------------------------------------------------------------
-# Prototypes
-# ---------------------------------------------------------------------------
-
-
-def get_prototype(
-    client: APIClient, workspace_id: str, prototype_id: str, path: str = ""
-) -> dict[str, Any]:
-    """Proxy a request to a prototype."""
-    route = f"/prototype/{workspace_id}/{prototype_id}"
-    if path:
-        route = f"{route}/{path.lstrip('/')}"
-    return client.get(route)
-
-
-# ---------------------------------------------------------------------------
 # Integrations
 # ---------------------------------------------------------------------------
 
