@@ -231,7 +231,10 @@ class TestPop:
         (tmp_path / ".gitignore").write_text("node_modules\n")
 
         mock_client.post.side_effect = [
-            {"id": "conv-1", "name": "pop-test", "type": "workspace_channel"},
+            {
+                "ok": True,
+                "conversation": {"id": "conv-1", "name": "pop-test", "type": "workspace_channel"},
+            },
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
@@ -314,7 +317,14 @@ class TestPop:
         pop_args.name = "custom-site"
 
         mock_client.post.side_effect = [
-            {"id": "conv-1", "name": "custom-site", "type": "workspace_channel"},
+            {
+                "ok": True,
+                "conversation": {
+                    "id": "conv-1",
+                    "name": "custom-site",
+                    "type": "workspace_channel",
+                },
+            },
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},

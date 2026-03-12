@@ -719,7 +719,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
         if not conversation_id:
             try:
                 create_result = operations.deploy_create(client, site_name)
-                conversation_id = str(create_result["id"])
+                conversation_id = str(create_result["conversation"]["id"])
             except APIError as e:
                 if e.status_code != 409:
                     raise
