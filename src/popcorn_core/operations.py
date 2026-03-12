@@ -495,21 +495,6 @@ def list_webhook_deliveries(client: APIClient, webhook_id: str) -> dict[str, Any
 
 
 # ---------------------------------------------------------------------------
-# Prototypes
-# ---------------------------------------------------------------------------
-
-
-def get_prototype(
-    client: APIClient, workspace_id: str, prototype_id: str, path: str = ""
-) -> dict[str, Any]:
-    """Proxy a request to a prototype."""
-    route = f"/prototype/{workspace_id}/{prototype_id}"
-    if path:
-        route = f"{route}/{path.lstrip('/')}"
-    return client.get(route)
-
-
-# ---------------------------------------------------------------------------
 # Integrations
 # ---------------------------------------------------------------------------
 
@@ -526,6 +511,65 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
         "/api/integrations/check-access",
         data={"provider": "github", "owner": owner, "repo": name},
     )
+
+
+# ---------------------------------------------------------------------------
+# Deploy
+# ---------------------------------------------------------------------------
+
+
+def deploy_create(client: APIClient, site_name: str) -> dict[str, Any]:
+    """Create an app_channel conversation (provisions VM site as side-effect)."""
+    return client.post(
+        "/api/conversations/create",
+        data={"name": site_name, "conversation_type": "app_channel"},
+    )
+
+
+def deploy_presign(client: APIClient, conversation_id: str) -> dict[str, Any]:
+    """Get a presigned S3 upload URL for the conversation's site."""
+    return client.post(
+        "/api/conversations/presigned-url",
+        data={"conversation_id": conversation_id, "method": "PUT"},
+    )
+
+
+def deploy_publish(
+    client: APIClient,
+    conversation_id: str,
+    s3_key: str,
+    context: str = "",
+) -> dict[str, Any]:
+    """Publish a tarball from S3 to the conversation's site."""
+    data: dict[str, Any] = {"conversation_id": conversation_id, "s3_key": s3_key}
+    if context:
+        data["context"] = context
+    return client.post("/api/conversations/publish", data=data)
+
+
+def deploy_upload(
+    upload_url: str,
+    upload_fields: dict[str, str],
+    tarball_path: str,
+) -> None:
+    """Upload a tarball to a presigned S3 URL."""
+    path = Path(tarball_path)
+    if not path.is_file():
+        raise PopcornError(f"Tarball not found: {tarball_path}")
+    file_data = path.read_bytes()
+    try:
+        resp = httpx.post(
+            upload_url,
+            data=upload_fields,
+            files={"file": ("push.tar.gz", file_data, "application/gzip")},
+            timeout=120.0,
+        )
+    except httpx.TimeoutException as e:
+        raise APIError(f"Deploy upload timed out ({len(file_data)} bytes)") from e
+    except httpx.HTTPError as e:
+        raise APIError(f"Deploy upload network error: {e}") from e
+    if resp.status_code not in (200, 201, 204):
+        raise APIError(f"Deploy upload failed: HTTP {resp.status_code}\n{resp.text[:300]}")
 
 
 # ---------------------------------------------------------------------------
