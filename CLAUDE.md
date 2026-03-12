@@ -9,7 +9,8 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (94 tests)
+├── tests/                     ← pytest (119 tests)
+├── scripts/                   ← test-install.sh (Docker-based install tests)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check
 └── .pre-commit-config.yaml
@@ -55,6 +56,14 @@ Custom environments via env vars (for internal/dev use):
 Multiple profiles are stored in the config file. Switch with `popcorn env <name>`.
 
 **No internal URLs or credentials are shipped in this package.**
+
+## Testing Installation
+
+```bash
+./scripts/test-install.sh    # Docker-based: tests pip, pipx, uv install
+```
+
+Builds the wheel and verifies it installs correctly with each package manager in isolated containers.
 
 ## Publishing
 
