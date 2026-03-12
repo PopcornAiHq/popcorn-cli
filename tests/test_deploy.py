@@ -20,12 +20,16 @@ class TestDeployCreate:
         mock_client.post.return_value = {
             "id": "conv-1",
             "name": "my-site",
-            "type": "app_channel",
+            "type": "workspace_channel",
         }
         result = operations.deploy_create(mock_client, "my-site")
         mock_client.post.assert_called_once_with(
             "/api/conversations/create",
-            data={"name": "my-site", "conversation_type": "app_channel"},
+            data={
+                "name": "my-site",
+                "conversation_type": "workspace_channel",
+                "site_name": "my-site",
+            },
         )
         assert result["name"] == "my-site"
         assert result["id"] == "conv-1"
@@ -227,7 +231,7 @@ class TestPop:
         (tmp_path / ".gitignore").write_text("node_modules\n")
 
         mock_client.post.side_effect = [
-            {"id": "conv-1", "name": "pop-test", "type": "app_channel"},
+            {"id": "conv-1", "name": "pop-test", "type": "workspace_channel"},
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
@@ -310,7 +314,7 @@ class TestPop:
         pop_args.name = "custom-site"
 
         mock_client.post.side_effect = [
-            {"id": "conv-1", "name": "custom-site", "type": "app_channel"},
+            {"id": "conv-1", "name": "custom-site", "type": "workspace_channel"},
             {
                 "upload_url": "https://s3.example.com/upload",
                 "upload_fields": {"key": "abc"},
@@ -336,7 +340,11 @@ class TestPop:
 
         mock_client.post.assert_any_call(
             "/api/conversations/create",
-            data={"name": "custom-site", "conversation_type": "app_channel"},
+            data={
+                "name": "custom-site",
+                "conversation_type": "workspace_channel",
+                "site_name": "custom-site",
+            },
         )
 
 

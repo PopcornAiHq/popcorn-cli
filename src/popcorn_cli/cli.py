@@ -715,7 +715,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
     tarball = create_tarball()
 
     try:
-        # Create app_channel (first deploy) — 409 means already exists
+        # Create channel with site (first deploy) — 409 means already exists
         if not conversation_id:
             try:
                 create_result = operations.deploy_create(client, site_name)

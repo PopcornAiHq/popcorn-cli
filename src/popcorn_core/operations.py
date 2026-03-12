@@ -519,10 +519,14 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
 
 
 def deploy_create(client: APIClient, site_name: str) -> dict[str, Any]:
-    """Create an app_channel conversation (provisions VM site as side-effect)."""
+    """Create a channel with a provisioned site."""
     return client.post(
         "/api/conversations/create",
-        data={"name": site_name, "conversation_type": "app_channel"},
+        data={
+            "name": site_name,
+            "conversation_type": "workspace_channel",
+            "site_name": site_name,
+        },
     )
 
 
