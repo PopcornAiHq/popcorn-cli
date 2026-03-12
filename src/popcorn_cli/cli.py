@@ -731,8 +731,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
                 if e.status_code != 409:
                     raise
                 raise PopcornError(
-                    f"Site '{site_name}' already exists but .popcorn.local.json is missing.\n"
-                    f"Re-run after removing .popcorn.local.json, or use a different --name."
+                    f"Site '{site_name}' already exists. Use --name to choose a different name."
                 ) from e
 
         if not conversation_id:
