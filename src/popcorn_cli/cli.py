@@ -51,7 +51,7 @@ from typing import Any
 from urllib.parse import urlencode
 
 from popcorn_cli import __version__
-from popcorn_core import APIClient, PopcornError, load_config, operations, save_config
+from popcorn_core import APIClient, load_config, operations, save_config
 from popcorn_core.archive import create_tarball
 from popcorn_core.auth import (
     CallbackHandler,
@@ -62,7 +62,13 @@ from popcorn_core.auth import (
     run_callback_server,
 )
 from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
-from popcorn_core.errors import APIError, AuthError
+from popcorn_core.errors import (
+    EXIT_INTERRUPT,
+    EXIT_VALIDATION,
+    APIError,
+    AuthError,
+    PopcornError,
+)
 from popcorn_core.validation import extract
 
 from .formatting import (
@@ -778,11 +784,13 @@ def _create_with_collision_retry(
             json.dumps(
                 {
                     "error": f"Could not find available name for '{site_name}'",
+                    "code": "PopcornError",
+                    "retryable": False,
                     "attempted_names": attempted,
                 }
             )
         )
-        sys.exit(1)
+        sys.exit(EXIT_VALIDATION)
     raise PopcornError(
         f"Could not find available name for '{site_name}'. Tried: {', '.join(attempted)}"
     )
@@ -854,12 +862,14 @@ def cmd_pop(args: argparse.Namespace) -> None:
                 json.dumps(
                     {
                         "error": "Stale channel configuration",
+                        "code": "PopcornError",
+                        "retryable": False,
                         "stale_config": True,
                         "conversation_id": conversation_id,
                     }
                 )
             )
-            sys.exit(1)
+            sys.exit(EXIT_VALIDATION)
         elif sys.stdin.isatty():
             answer = input("Channel no longer exists. Create new? [Y/n] ")
             if answer.strip().lower() in ("n", "no"):
@@ -915,8 +925,19 @@ def cmd_pop(args: argparse.Namespace) -> None:
                     if e.body:
                         with contextlib.suppress(json.JSONDecodeError, TypeError):
                             body = json.loads(e.body)
-                    print(json.dumps({"error": str(e), "vm_error": vm_error, **body}))
-                    sys.exit(1)
+                    print(
+                        json.dumps(
+                            {
+                                "error": str(e),
+                                "code": "APIError",
+                                "retryable": e.retryable,
+                                **({"status": e.status_code} if e.status_code else {}),
+                                "vm_error": vm_error,
+                                **body,
+                            }
+                        )
+                    )
+                    sys.exit(e.exit_code)
                 raise PopcornError(f"Publish failed: {vm_error}") from e
             raise
     finally:
@@ -1607,11 +1628,14 @@ def main() -> None:
         else:
             parser.print_help()
     except PopcornError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        sys.exit(1)
+        if getattr(args, "json", False):
+            print(json.dumps(e.to_dict(), indent=2, default=str), file=sys.stderr)
+        else:
+            print(f"Error: {e}", file=sys.stderr)
+        sys.exit(e.exit_code)
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)
-        sys.exit(130)
+        sys.exit(EXIT_INTERRUPT)
 
 
 if __name__ == "__main__":

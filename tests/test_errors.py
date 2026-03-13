@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
-from popcorn_core.errors import APIError, AuthError, PopcornError
+from popcorn_core.errors import (
+    EXIT_AUTH,
+    EXIT_CLIENT,
+    EXIT_SERVER,
+    EXIT_VALIDATION,
+    APIError,
+    AuthError,
+    PopcornError,
+)
 
 
 class TestErrorHierarchy:
@@ -25,3 +33,73 @@ class TestErrorHierarchy:
         err = APIError("oops")
         assert err.status_code == 0
         assert err.body is None
+
+
+class TestExitCodes:
+    def test_popcorn_error_exit_code(self):
+        assert PopcornError("x").exit_code == EXIT_VALIDATION
+
+    def test_auth_error_exit_code(self):
+        assert AuthError("x").exit_code == EXIT_AUTH
+
+    def test_api_error_4xx_exit_code(self):
+        assert APIError("x", status_code=404).exit_code == EXIT_CLIENT
+
+    def test_api_error_5xx_exit_code(self):
+        assert APIError("x", status_code=502).exit_code == EXIT_SERVER
+
+    def test_api_error_no_status_exit_code(self):
+        assert APIError("network error").exit_code == EXIT_VALIDATION
+
+    def test_api_error_429_exit_code(self):
+        assert APIError("x", status_code=429).exit_code == EXIT_CLIENT
+
+
+class TestRetryable:
+    def test_5xx_is_retryable(self):
+        assert APIError("x", status_code=500).retryable is True
+        assert APIError("x", status_code=502).retryable is True
+        assert APIError("x", status_code=503).retryable is True
+
+    def test_429_is_retryable(self):
+        assert APIError("x", status_code=429).retryable is True
+
+    def test_4xx_not_retryable(self):
+        assert APIError("x", status_code=404).retryable is False
+        assert APIError("x", status_code=400).retryable is False
+
+    def test_no_status_not_retryable(self):
+        assert APIError("network").retryable is False
+
+
+class TestToDict:
+    def test_popcorn_error_to_dict(self):
+        d = PopcornError("bad input").to_dict()
+        assert d == {"error": "bad input", "code": "PopcornError", "retryable": False}
+
+    def test_auth_error_to_dict(self):
+        d = AuthError("not logged in").to_dict()
+        assert d == {"error": "not logged in", "code": "AuthError", "retryable": False}
+
+    def test_api_error_to_dict_with_status(self):
+        err = APIError("not found", status_code=404, body='{"detail": "nope"}')
+        d = err.to_dict()
+        assert d["error"] == "not found"
+        assert d["code"] == "APIError"
+        assert d["status"] == 404
+        assert d["retryable"] is False
+        assert d["body"] == {"detail": "nope"}
+
+    def test_api_error_to_dict_5xx(self):
+        d = APIError("server error", status_code=502).to_dict()
+        assert d["retryable"] is True
+        assert d["status"] == 502
+
+    def test_api_error_to_dict_no_status(self):
+        d = APIError("network error").to_dict()
+        assert "status" not in d
+        assert "body" not in d
+
+    def test_api_error_to_dict_unparseable_body(self):
+        d = APIError("err", status_code=500, body="not json").to_dict()
+        assert d["body"] == "not json"
