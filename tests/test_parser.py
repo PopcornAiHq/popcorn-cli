@@ -124,6 +124,22 @@ class TestReadingCommands:
         with pytest.raises(SystemExit):
             parser.parse_args(["inbox", "--unread", "--read"])
 
+    def test_read_cursor(self, parser):
+        args = parser.parse_args(["read", "#general", "--cursor", "abc123"])
+        assert args.cursor == "abc123"
+
+    def test_inbox_cursor(self, parser):
+        args = parser.parse_args(["inbox", "--cursor", "xyz"])
+        assert args.cursor == "xyz"
+
+    def test_search_cursor(self, parser):
+        args = parser.parse_args(["search", "messages", "hello", "--cursor", "c1"])
+        assert args.cursor == "c1"
+
+    def test_watch_count(self, parser):
+        args = parser.parse_args(["watch", "#general", "--count", "5"])
+        assert args.count == 5
+
 
 class TestWritingCommands:
     def test_send(self, parser):

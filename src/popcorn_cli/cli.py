@@ -473,7 +473,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         _output(args, resp, fmt)
 
     elif search_type == "messages":
-        resp = operations.search_messages(client, query)
+        resp = operations.search_messages(client, query, getattr(args, "cursor", "") or "")
         messages = resp.get("messages", [])
         lines = [fmt_message(item.get("message") or item) for item in messages]
         fmt = "Messages:\n" + "\n".join(lines) if lines else "No messages found."
@@ -482,7 +482,13 @@ def cmd_search(args: argparse.Namespace) -> None:
 
 def cmd_read(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.read_messages(client, args.conversation, args.thread or "", args.limit or 25)
+    resp = operations.read_messages(
+        client,
+        args.conversation,
+        args.thread or "",
+        args.limit or 25,
+        getattr(args, "cursor", "") or "",
+    )
     messages = resp.get("messages", [])
     lines = [fmt_message(m) for m in messages]
     if resp.get("has_more"):
@@ -1132,7 +1138,9 @@ def cmd_api(args: argparse.Namespace) -> None:
 def cmd_inbox(args: argparse.Namespace) -> None:
     client = _get_client(args)
     filter_type = "unread" if args.unread else ("read" if args.read else "all")
-    resp = operations.get_inbox(client, filter_type, args.limit or 20)
+    resp = operations.get_inbox(
+        client, filter_type, args.limit or 20, getattr(args, "cursor", "") or ""
+    )
 
     activity_data = extract(resp, "activity", label="inbox")
     activities = activity_data.get("activities", [])
@@ -1148,6 +1156,8 @@ def cmd_inbox(args: argparse.Namespace) -> None:
 def cmd_watch(args: argparse.Namespace) -> None:
     client = _get_client(args)
     interval = args.interval or 3
+    max_count = getattr(args, "count", None) or 0
+    seen = 0
 
     resp = operations.read_messages(client, args.conversation, limit=1)
     messages = resp.get("messages", [])
@@ -1176,6 +1186,9 @@ def cmd_watch(args: argparse.Namespace) -> None:
                         print(json.dumps(msg, indent=2, default=str), flush=True)
                     else:
                         print(fmt_message(msg), flush=True)
+                    seen += 1
+                    if max_count and seen >= max_count:
+                        return
                 # new_msgs[0] is the newest message (first in API response)
                 last_seen_id = new_msgs[0]["id"]
     except KeyboardInterrupt:
@@ -1489,17 +1502,20 @@ Other:
     inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
     inbox_grp.add_argument("--read", action="store_true", help="Show only read")
     inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
+    inbox_p.add_argument("--cursor", type=str, help="Pagination cursor from previous response")
 
     search_p = sub.add_parser("search", help=_h)
     search_p.add_argument(
         "search_type", choices=["channels", "dms", "users", "messages"], help="What to search"
     )
     search_p.add_argument("query", nargs="?", default="", help="Search query")
+    search_p.add_argument("--cursor", type=str, help="Pagination cursor (messages only)")
 
     read_p = sub.add_parser("read", help=_h)
     read_p.add_argument("conversation", help="Channel name (#general) or UUID")
     read_p.add_argument("--thread", type=str, help="Thread ID to read replies")
     read_p.add_argument("--limit", type=int, help="Max messages (default 25)")
+    read_p.add_argument("--cursor", type=str, help="Pagination cursor from previous response")
 
     info_p = sub.add_parser("info", help=_h)
     info_p.add_argument("conversation", help="Channel name (#general) or UUID")
@@ -1516,6 +1532,7 @@ Other:
     watch_p.add_argument(
         "--interval", type=int, default=3, help="Poll interval in seconds (default 3)"
     )
+    watch_p.add_argument("--count", type=int, default=None, help="Exit after receiving N messages")
 
     # --- Writing ---
 

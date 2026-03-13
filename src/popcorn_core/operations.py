@@ -89,13 +89,16 @@ def search_users(client: APIClient, query: str = "") -> dict[str, Any]:
     return {"users": users}
 
 
-def search_messages(client: APIClient, query: str) -> dict[str, Any]:
+def search_messages(client: APIClient, query: str, cursor: str = "") -> dict[str, Any]:
     """Full-text search across messages."""
     if not query:
         raise PopcornError(
             "Query required for message search. Usage: popcorn search messages <query>"
         )
-    return client.get("/api/search/", {"query": query, "limit": 50})
+    params: dict[str, Any] = {"query": query, "limit": 50}
+    if cursor:
+        params["cursor"] = cursor
+    return client.get("/api/search/", params)
 
 
 # ---------------------------------------------------------------------------
@@ -108,18 +111,17 @@ def read_messages(
     conversation: str,
     thread_id: str = "",
     limit: int = 25,
+    cursor: str = "",
 ) -> dict[str, Any]:
     """Read message history from a channel, DM, or thread."""
     conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"limit": limit, "conversation_id": conv_id}
+    if cursor:
+        params["cursor"] = cursor
     if thread_id:
-        return client.get(
-            "/api/messages/thread",
-            {"thread_ts": thread_id, "limit": limit, "conversation_id": conv_id},
-        )
-    return client.get(
-        "/api/messages/history",
-        {"limit": limit, "conversation_id": conv_id},
-    )
+        params["thread_ts"] = thread_id
+        return client.get("/api/messages/thread", params)
+    return client.get("/api/messages/history", params)
 
 
 def send_message(
@@ -303,9 +305,13 @@ def delete_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def get_inbox(client: APIClient, filter_type: str = "all", limit: int = 20) -> dict[str, Any]:
+def get_inbox(
+    client: APIClient, filter_type: str = "all", limit: int = 20, cursor: str = ""
+) -> dict[str, Any]:
     """Fetch notifications (mentions, replies, reactions)."""
     params: dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
     if filter_type == "unread":
         params["is_read"] = "false"
     elif filter_type == "read":
