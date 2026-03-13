@@ -1,10 +1,16 @@
-.PHONY: install fmt lint typecheck test check clean
+.PHONY: install dev fmt lint typecheck test check clean
 
 # ── Setup ────────────────────────────────────────────────────────────
 
 install:  ## Install package + dev deps
 	uv sync
 	uv run pre-commit install
+
+dev:  ## Create bin/popcorn wrapper for local dev (doesn't affect global install)
+	@mkdir -p bin
+	@printf '#!/bin/sh\nexec uv run --project "%s" popcorn "$$@"\n' "$(CURDIR)" > bin/popcorn
+	@chmod +x bin/popcorn
+	@echo "Created bin/popcorn — add $(CURDIR)/bin to PATH or run ./bin/popcorn"
 
 # ── Code quality ─────────────────────────────────────────────────────
 
