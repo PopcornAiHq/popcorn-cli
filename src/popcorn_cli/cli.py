@@ -1018,12 +1018,25 @@ def cmd_pop(args: argparse.Namespace) -> None:
         if ".popcorn.local.json" not in content:
             gitignore.write_text(content.rstrip() + "\n.popcorn.local.json\n")
 
-    # Build output
-    output_data = result
-    if suggested_name and json_mode:
-        output_data = {**result, "suggested_name": suggested_name}
+    # Fetch site URL for output (non-fatal — URL is a convenience field)
+    site_url = None
+    try:
+        site_status = operations.get_site_status(client, result_conv_id)
+        site_url = site_status.get("url")
+    except PopcornError:
+        pass
 
-    _output(args, output_data, f"Published to #{result_site_name} (v{result['version']})")
+    # Build output
+    output_data: dict[str, Any] = {**result}
+    if site_url:
+        output_data["site_url"] = site_url
+    if suggested_name:
+        output_data["suggested_name"] = suggested_name
+
+    human_line = f"Published to #{result_site_name} (v{result['version']})"
+    if site_url:
+        human_line += f"\n{site_url}"
+    _output(args, output_data, human_line)
 
 
 def cmd_status(args: argparse.Namespace) -> None:

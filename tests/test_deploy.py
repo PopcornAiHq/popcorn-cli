@@ -15,6 +15,9 @@ from popcorn_core import operations
 from popcorn_core.archive import create_tarball
 from popcorn_core.errors import APIError, PopcornError
 
+# Shared mock response for site-status (appended to post side_effect lists)
+_SITE_STATUS = {"url": "https://pop-test.popcorn.ai", "site_name": "pop-test", "version": 1}
+
 
 class TestDeployCreate:
     def test_deploy_create(self, mock_client):
@@ -365,6 +368,7 @@ class TestPop:
                 "version": 1,
                 "commit_hash": "abc123",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -383,6 +387,44 @@ class TestPop:
 
         gitignore = (tmp_path / ".gitignore").read_text()
         assert ".popcorn.local.json" in gitignore
+
+    def test_pop_json_includes_site_url(self, mock_client, tmp_path, monkeypatch, pop_args, capsys):
+        """JSON output includes site_url from site-status."""
+        monkeypatch.chdir(tmp_path)
+        pop_args.json = True
+        (tmp_path / ".gitignore").write_text("")
+
+        mock_client.post.side_effect = [
+            {
+                "ok": True,
+                "conversation": {"id": "conv-1", "name": "pop-test", "type": "workspace_channel"},
+            },
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            {
+                "conversation_id": "conv-1",
+                "site_name": "pop-test",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+            {"url": "https://pop-test.popcorn.ai", "site_name": "pop-test", "version": 1},
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        output = json.loads(capsys.readouterr().out)
+        assert output["site_url"] == "https://pop-test.popcorn.ai"
 
     def test_pop_existing_site(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
@@ -405,6 +447,7 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "def456",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -417,7 +460,7 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        assert mock_client.post.call_count == 2
+        assert mock_client.post.call_count == 3  # presign + publish + site-status
 
     def test_pop_409_conflict_retries_with_suffix(
         self, mock_client, tmp_path, monkeypatch, pop_args
@@ -444,7 +487,7 @@ class TestPop:
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".gitignore").write_text("")
 
-        # First create 409s, second succeeds, then presign + publish
+        # First create 409s, second succeeds, then presign + publish + site-status
         mock_client.post.side_effect = [
             APIError("Site already exists", status_code=409),
             {
@@ -466,6 +509,7 @@ class TestPop:
                 "version": 1,
                 "commit_hash": "abc123",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -505,6 +549,7 @@ class TestPop:
                 "version": 1,
                 "commit_hash": "abc",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -553,6 +598,7 @@ class TestPop:
                 "version": 1,
                 "commit_hash": "abc123",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -647,6 +693,7 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "abc",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -660,8 +707,8 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        # presign + publish(502) + publish(success) = 3 post calls
-        assert mock_client.post.call_count == 3
+        # presign + publish(502) + publish(success) + site-status = 4 post calls
+        assert mock_client.post.call_count == 4
 
     def test_pop_force_flag_passed_to_publish(self, mock_client, tmp_path, monkeypatch, pop_args):
         """--force passes force=True to deploy_publish."""
@@ -687,6 +734,7 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "abc",
             },
+            _SITE_STATUS,
         ]
 
         with (
@@ -699,8 +747,8 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        # Check the publish call includes force=True
-        publish_call = mock_client.post.call_args_list[-1]
+        # Check the publish call includes force=True (second-to-last post, before site-status)
+        publish_call = mock_client.post.call_args_list[-2]
         assert publish_call[1]["data"]["force"] is True
 
 
