@@ -1742,6 +1742,8 @@ Other:
     comp_p.add_argument("shell", choices=["bash", "zsh"], help="Shell type")
 
     sub.add_parser("commands", help=_h)
+    sub.add_parser("help", help=_h)
+    sub.add_parser("version", help=_h)
 
     # Hide the auto-generated subparser list — the epilog handles display
     sub._choices_actions = []
@@ -1836,8 +1838,11 @@ def main() -> None:
         and not getattr(args, "json", False)
     )
 
-    if not args.command:
+    if not args.command or args.command == "help":
         parser.print_help()
+        sys.exit(0)
+    if args.command == "version":
+        print(f"popcorn {__version__}")
         sys.exit(0)
 
     try:
