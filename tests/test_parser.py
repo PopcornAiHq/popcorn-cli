@@ -25,6 +25,14 @@ class TestGlobalFlags:
         args = parser.parse_args(["--workspace", "ws-123", "whoami"])
         assert args.workspace == "ws-123"
 
+    def test_quiet_flag(self, parser):
+        args = parser.parse_args(["--quiet", "whoami"])
+        assert args.quiet is True
+
+    def test_quiet_short_flag(self, parser):
+        args = parser.parse_args(["-q", "whoami"])
+        assert args.quiet is True
+
     def test_no_command_defaults_to_none(self, parser):
         args = parser.parse_args([])
         assert args.command is None

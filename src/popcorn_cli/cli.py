@@ -24,7 +24,7 @@ Usage:
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
 
-Flags: --json (raw output), -e/--env, --no-color, --workspace UUID
+Flags: --json (raw output), -q/--quiet (suppress status), -e/--env, --no-color, --workspace UUID
 Conversations can be specified as #channel-name or UUID.
 
 Custom environments can be configured via environment variables:
@@ -81,6 +81,19 @@ from .formatting import (
 )
 
 # ---------------------------------------------------------------------------
+# Quiet mode — suppresses informational stderr messages for agent consumption
+# ---------------------------------------------------------------------------
+
+_quiet = False
+
+
+def _status(msg: str) -> None:
+    """Print an informational message to stderr, unless --quiet is set."""
+    if not _quiet:
+        print(msg, file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -102,7 +115,7 @@ def _get_client(args: argparse.Namespace) -> APIClient:
         profile.workspace_id = args.workspace
 
     if sys.stderr.isatty():
-        print(f"[{env}] {profile.email} / {profile.workspace_name}", file=sys.stderr)
+        _status(f"[{env}] {profile.email} / {profile.workspace_name}")
 
     return APIClient(profile)
 
@@ -505,9 +518,9 @@ def cmd_send(args: argparse.Namespace) -> None:
 
     file_parts = []
     if file_path:
-        print(f"Uploading {file_path}...", file=sys.stderr)
+        _status(f"Uploading {file_path}...")
         file_parts.append(operations.upload_file(client, args.conversation, file_path))
-        print("Uploaded.", file=sys.stderr)
+        _status("Uploaded.")
 
     resp = operations.send_message(
         client, args.conversation, message or "", args.thread or "", file_parts
@@ -770,10 +783,7 @@ def _create_with_collision_retry(
         try:
             result = operations.deploy_create(client, candidate)
             if not json_mode:
-                print(
-                    f"'{site_name}' is taken. Created as '{candidate}' instead.",
-                    file=sys.stderr,
-                )
+                _status(f"'{site_name}' is taken. Created as '{candidate}' instead.")
             return result, candidate
         except APIError as e2:
             if e2.status_code != 409:
@@ -816,10 +826,7 @@ def _publish_with_retry(
                 raise
             delay = 2**attempt  # 1, 2, 4
             if not json_mode:
-                print(
-                    f"Retrying publish (attempt {attempt + 2}/{max_retries + 1})...",
-                    file=sys.stderr,
-                )
+                _status(f"Retrying publish (attempt {attempt + 2}/{max_retries + 1})...")
             time.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
 
@@ -1093,7 +1100,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
     messages = resp.get("messages", [])
     last_seen_id = messages[0]["id"] if messages else None
 
-    print(f"Watching... (Ctrl+C to stop, polling every {interval}s)", file=sys.stderr)
+    _status(f"Watching... (Ctrl+C to stop, polling every {interval}s)")
 
     try:
         while True:
@@ -1119,7 +1126,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                 # new_msgs[0] is the newest message (first in API response)
                 last_seen_id = new_msgs[0]["id"]
     except KeyboardInterrupt:
-        print("\nStopped watching.", file=sys.stderr)
+        _status("\nStopped watching.")
 
 
 # ---------------------------------------------------------------------------
@@ -1318,6 +1325,9 @@ Other:
     parser.add_argument("--workspace", type=str, help="Override workspace ID")
     parser.add_argument("-e", "--env", type=str, help="Profile/environment name to use")
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
+    parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Suppress informational stderr messages"
+    )
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
@@ -1571,22 +1581,28 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook"])
 
 
-def _hoist_json_flag(argv: list[str] | None = None) -> list[str]:
-    """Move --json to before the subcommand so it's parsed as a global flag.
+def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
+    """Move global flags to before the subcommand so they're parsed correctly.
 
-    Allows both ``popcorn --json read ...`` and ``popcorn read --json ...``.
+    Allows both ``popcorn --json read ...`` and ``popcorn read --json ...``,
+    and similarly for ``--quiet``/``-q``.
     """
     args = argv if argv is not None else sys.argv[1:]
-    if "--json" not in args:
-        return list(args)
-    result = [a for a in args if a != "--json"]
-    result.insert(0, "--json")
-    return result
+    hoisted = []
+    for flag in ("--json", "--quiet", "-q"):
+        if flag in args:
+            hoisted.append(flag)
+            args = [a for a in args if a != flag]
+    return hoisted + list(args)
 
 
 def main() -> None:
+    global _quiet
+
     parser = build_parser()
-    args = parser.parse_args(_hoist_json_flag())
+    args = parser.parse_args(_hoist_global_flags())
+
+    _quiet = getattr(args, "quiet", False)
 
     set_color(
         sys.stdout.isatty()
