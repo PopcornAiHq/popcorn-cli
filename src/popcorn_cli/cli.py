@@ -1177,7 +1177,10 @@ def cmd_watch(args: argparse.Namespace) -> None:
     client = _get_client(args)
     interval = args.interval or 3
     max_count = getattr(args, "count", None) or 0
+    max_wait = getattr(args, "max_wait", None)
+    json_mode = getattr(args, "json", False)
     seen = 0
+    start = time.monotonic()
 
     resp = operations.read_messages(client, args.conversation, limit=1)
     messages = resp.get("messages", [])
@@ -1187,6 +1190,9 @@ def cmd_watch(args: argparse.Namespace) -> None:
 
     try:
         while True:
+            if max_wait and (time.monotonic() - start) >= max_wait:
+                _status(f"Max wait ({max_wait}s) reached.")
+                return
             time.sleep(interval)
             resp = operations.read_messages(client, args.conversation, limit=50)
             messages = resp.get("messages", [])
@@ -1202,8 +1208,8 @@ def cmd_watch(args: argparse.Namespace) -> None:
             if new_msgs:
                 # Print oldest-first
                 for msg in reversed(new_msgs):
-                    if getattr(args, "json", False):
-                        print(json.dumps(msg, default=str), flush=True)
+                    if json_mode:
+                        print(json.dumps({"ok": True, "data": msg}, default=str), flush=True)
                     else:
                         print(fmt_message(msg), flush=True)
                     seen += 1
@@ -1595,6 +1601,12 @@ Other:
         "--interval", type=int, default=3, help="Poll interval in seconds (default 3)"
     )
     watch_p.add_argument("--count", type=int, default=None, help="Exit after receiving N messages")
+    watch_p.add_argument(
+        "--max-wait",
+        type=float,
+        default=None,
+        help="Exit after N seconds even if no messages received",
+    )
 
     # --- Writing ---
 

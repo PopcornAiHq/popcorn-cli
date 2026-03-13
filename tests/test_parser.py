@@ -144,6 +144,10 @@ class TestReadingCommands:
         args = parser.parse_args(["watch", "#general", "--count", "5"])
         assert args.count == 5
 
+    def test_watch_max_wait(self, parser):
+        args = parser.parse_args(["watch", "#general", "--max-wait", "30"])
+        assert args.max_wait == 30.0
+
 
 class TestWritingCommands:
     def test_send(self, parser):
