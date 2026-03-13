@@ -1183,7 +1183,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                 # Print oldest-first
                 for msg in reversed(new_msgs):
                     if getattr(args, "json", False):
-                        print(json.dumps(msg, indent=2, default=str), flush=True)
+                        print(json.dumps(msg, default=str), flush=True)
                     else:
                         print(fmt_message(msg), flush=True)
                     seen += 1
@@ -1333,6 +1333,41 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
     return args_out
 
 
+_COMMAND_DESCRIPTIONS: dict[str, str] = {
+    "auth": "Authentication commands (login, logout, status, token)",
+    "workspace": "List or switch workspaces",
+    "env": "Show or switch environment/profile",
+    "whoami": "Show current user and workspace",
+    "inbox": "Show notifications (mentions, replies, reactions)",
+    "search": "Search channels, DMs, users, or messages",
+    "read": "Read message history from a channel or thread",
+    "info": "Show conversation info and members",
+    "get-message": "Get a single message by ID",
+    "download": "Download a file attachment",
+    "watch": "Watch a channel for new messages (polling)",
+    "send": "Send a message to a channel or DM",
+    "react": "Add or remove an emoji reaction",
+    "edit": "Edit a message",
+    "delete": "Delete a message",
+    "create": "Create a channel or DM",
+    "join": "Join a channel",
+    "leave": "Leave a channel",
+    "invite": "Invite users to a channel",
+    "kick": "Remove a user from a channel",
+    "update": "Update channel name or description",
+    "archive": "Archive or unarchive a channel",
+    "delete-conversation": "Delete a conversation",
+    "webhook": "Manage webhooks (create, list, deliveries)",
+    "api": "Raw API call (escape hatch, like gh api)",
+    "pop": "Push site resources to a channel",
+    "status": "Show site deployment status",
+    "log": "Show site version history",
+    "check-access": "Check repository access",
+    "completion": "Generate shell completions (bash, zsh)",
+    "commands": "Dump CLI schema as JSON for programmatic discovery",
+}
+
+
 def cmd_commands(_args: argparse.Namespace) -> None:
     """Dump full CLI schema as JSON for agent bootstrapping."""
     parser = build_parser()
@@ -1347,6 +1382,8 @@ def cmd_commands(_args: argparse.Namespace) -> None:
     if sub_action:
         for name, sub_parser in sub_action.choices.items():
             cmd: dict[str, Any] = {"name": name}
+            if name in _COMMAND_DESCRIPTIONS:
+                cmd["description"] = _COMMAND_DESCRIPTIONS[name]
             # Check for nested subcommands (auth, workspace, webhook)
             nested_sub = None
             for act in sub_parser._actions:
@@ -1354,14 +1391,16 @@ def cmd_commands(_args: argparse.Namespace) -> None:
                     nested_sub = act
                     break
             if nested_sub:
+                # Build help text lookup from _choices_actions
+                sub_help = {ca.dest: ca.help for ca in nested_sub._choices_actions if ca.help}
                 subcmds = []
                 for sub_name, sub_sub_parser in nested_sub.choices.items():
                     sub_entry: dict[str, Any] = {"name": sub_name}
                     sub_args = _introspect_parser(sub_sub_parser)
                     if sub_args:
                         sub_entry["arguments"] = sub_args
-                    if sub_sub_parser.description:
-                        sub_entry["description"] = sub_sub_parser.description
+                    if sub_name in sub_help:
+                        sub_entry["description"] = sub_help[sub_name]
                     subcmds.append(sub_entry)
                 cmd["subcommands"] = subcmds
             else:
