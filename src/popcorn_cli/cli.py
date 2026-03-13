@@ -1424,8 +1424,6 @@ Other:
     env_p.add_argument("target_env", nargs="?", default=None, help="Profile name to switch to")
 
     sub.add_parser("whoami", help=_h)
-    sub.add_parser("profile", help=_h)  # alias for whoami
-    sub.add_parser("me", help=_h)  # alias for whoami
 
     # --- Reading ---
 
@@ -1624,8 +1622,6 @@ Other:
 
 _COMMANDS = {
     "whoami": cmd_whoami,
-    "profile": cmd_whoami,  # alias
-    "me": cmd_whoami,  # alias
     "search": cmd_search,
     "read": cmd_read,
     "info": cmd_info,

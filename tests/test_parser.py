@@ -213,16 +213,6 @@ class TestWebhook:
         assert args.webhook_command == "list"
 
 
-class TestAliases:
-    def test_profile_alias(self, parser):
-        args = parser.parse_args(["profile"])
-        assert args.command == "profile"
-
-    def test_me_alias(self, parser):
-        args = parser.parse_args(["me"])
-        assert args.command == "me"
-
-
 class TestDidYouMean:
     def test_close_typo_suggests(self):
         parser = build_parser()

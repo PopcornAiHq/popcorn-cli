@@ -132,6 +132,25 @@ class APIClient:
         params = self._inject_workspace(params or {})
         return self._request(method.upper(), path, params=params, json_data=data)
 
+    def _do_request(
+        self,
+        method: str,
+        url: str,
+        params: dict[str, Any] | None,
+        json_data: dict[str, Any] | None,
+    ) -> httpx.Response:
+        """Execute a single HTTP request, translating httpx errors to APIError."""
+        try:
+            return self._client.request(
+                method, url, headers=self._headers(), params=params, json=json_data
+            )
+        except httpx.ConnectError as e:
+            raise APIError(f"Cannot connect to {self.profile.api_url}") from e
+        except httpx.TimeoutException as e:
+            raise APIError(f"Request timed out: {method} {url}") from e
+        except httpx.HTTPError as e:
+            raise APIError(f"Network error ({type(e).__name__}): {e}") from e
+
     def _request(
         self,
         method: str,
@@ -140,37 +159,12 @@ class APIClient:
         json_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         url = f"{self.profile.api_url}{path}"
-        try:
-            resp = self._client.request(
-                method, url, headers=self._headers(), params=params, json=json_data
-            )
-        except httpx.ConnectError as e:
-            raise APIError(f"Cannot connect to {self.profile.api_url}") from e
-        except httpx.TimeoutException as e:
-            raise APIError(f"Request timed out: {method} {path}") from e
-        except httpx.HTTPError as e:
-            raise APIError(f"Network error ({type(e).__name__}): {e}") from e
+        resp = self._do_request(method, url, params, json_data)
 
         # Auto-retry on 401
         if resp.status_code == 401:
-            try:
-                self._refresh_token()
-            except AuthError:
-                raise
-            try:
-                resp = self._client.request(
-                    method,
-                    url,
-                    headers=self._headers(),
-                    params=params,
-                    json=json_data,
-                )
-            except httpx.ConnectError as e:
-                raise APIError(f"Cannot connect to {self.profile.api_url}") from e
-            except httpx.TimeoutException as e:
-                raise APIError(f"Request timed out on retry: {method} {path}") from e
-            except httpx.HTTPError as e:
-                raise APIError(f"Network error on retry ({type(e).__name__}): {e}") from e
+            self._refresh_token()
+            resp = self._do_request(method, url, params, json_data)
             if resp.status_code == 401:
                 raise AuthError("Session expired (refresh did not help). Run: popcorn auth login")
 

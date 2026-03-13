@@ -313,11 +313,6 @@ def get_inbox(client: APIClient, filter_type: str = "all", limit: int = 20) -> d
     return client.get("/api/activities/get", params)
 
 
-def get_unread_count(client: APIClient) -> dict[str, Any]:
-    """Get unread notification count."""
-    return client.get("/api/activities/get-unread-count")
-
-
 # ---------------------------------------------------------------------------
 # File uploads
 # ---------------------------------------------------------------------------
@@ -378,38 +373,9 @@ def upload_file(client: APIClient, conversation: str, file_path: str) -> dict[st
     }
 
 
-def list_conversation_files(client: APIClient, conversation: str) -> dict[str, Any]:
-    """List files in a conversation."""
-    conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/file-uploads/list-conversation-files", {"conversation_id": conv_id})
-
-
 def download_file(client: APIClient, file_key: str) -> dict[str, Any]:
     """Get a presigned download URL for a file."""
     return client.get("/api/file-uploads/download", {"file_key": file_key})
-
-
-# ---------------------------------------------------------------------------
-# Users
-# ---------------------------------------------------------------------------
-
-
-def get_user(client: APIClient, user_id: str) -> dict[str, Any]:
-    """Get info about a specific user."""
-    return client.get(f"/api/users/{user_id}")
-
-
-def update_profile(client: APIClient, **fields: Any) -> dict[str, Any]:
-    """Update current user's profile (display_name, etc.)."""
-    return client.patch("/api/users/profile", data=fields)
-
-
-def update_status(client: APIClient, status: str, emoji: str = "") -> dict[str, Any]:
-    """Update current user's status."""
-    body: dict[str, Any] = {"status": status}
-    if emoji:
-        body["emoji"] = emoji
-    return client.patch("/api/users/status", data=body)
 
 
 # ---------------------------------------------------------------------------
@@ -420,11 +386,6 @@ def update_status(client: APIClient, status: str, emoji: str = "") -> dict[str, 
 def get_sidebar(client: APIClient) -> dict[str, Any]:
     """Get sidebar with categorized conversations."""
     return client.post("/api/sidebar/get")
-
-
-def get_sidebar_list(client: APIClient) -> dict[str, Any]:
-    """Get flat list of conversations in sidebar."""
-    return client.get("/api/sidebar/get-sidebar-list")
 
 
 def sidebar_add_conversation(
@@ -460,11 +421,6 @@ def sidebar_rename_category(client: APIClient, category_id: str, name: str) -> d
         "/api/sidebar/rename-category",
         data={"category_id": category_id, "name": name},
     )
-
-
-def sidebar_reorder_categories(client: APIClient, category_ids: list[str]) -> dict[str, Any]:
-    """Reorder sidebar categories."""
-    return client.post("/api/sidebar/reorder-categories", data={"category_ids": category_ids})
 
 
 # ---------------------------------------------------------------------------
