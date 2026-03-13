@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from popcorn_core import operations
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import APIError, PopcornError
 
 
 @pytest.fixture(autouse=True)
@@ -193,6 +193,66 @@ class TestRawApi:
         operations.raw_api_call(mock_client, "GET", "/api/foo?a=1", params={"b": "2"})
         mock_client.request.assert_called_once_with(
             "GET", "/api/foo", params={"a": "1", "b": "2"}, data=None
+        )
+
+
+class TestSiteStatus:
+    def test_get_site_status(self, mock_client):
+        mock_client.post.return_value = {
+            "site_name": "my-site",
+            "status": "deployed",
+            "url": "https://my-site.popcorn.ai",
+        }
+        result = operations.get_site_status(mock_client, "conv-1")
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/site-status",
+            data={"conversation_id": "conv-1"},
+        )
+        assert result["status"] == "deployed"
+        assert result["site_name"] == "my-site"
+
+    def test_get_site_status_fallback(self, mock_client):
+        mock_client.post.side_effect = APIError("Not found", status_code=404)
+        mock_client.get.return_value = {"conversation": {"id": "conv-1", "name": "my-site"}}
+        result = operations.get_site_status(mock_client, "conv-1")
+        mock_client.get.assert_called_once_with(
+            "/api/conversations/info", {"conversation_id": "conv-1"}
+        )
+        assert result["fallback"] is True
+        assert result["conversation"]["id"] == "conv-1"
+
+    def test_get_site_log(self, mock_client):
+        mock_client.post.return_value = {
+            "versions": [{"version": 1, "commit_hash": "abc123"}],
+        }
+        result = operations.get_site_log(mock_client, "conv-1")
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/site-log",
+            data={"conversation_id": "conv-1", "limit": 10},
+        )
+        assert len(result["versions"]) == 1
+        assert result["versions"][0]["version"] == 1
+
+    def test_get_site_log_fallback(self, mock_client):
+        mock_client.post.side_effect = APIError("Not found", status_code=404)
+        result = operations.get_site_log(mock_client, "conv-1")
+        assert result["fallback"] is True
+        assert result["versions"] == []
+
+    def test_deploy_publish_with_force(self, mock_client):
+        mock_client.post.return_value = {
+            "conversation_id": "conv-1",
+            "site_name": "my-site",
+            "version": 3,
+        }
+        operations.deploy_publish(mock_client, "conv-1", "s3-key-1", force=True)
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/publish",
+            data={
+                "conversation_id": "conv-1",
+                "s3_key": "s3-key-1",
+                "force": True,
+            },
         )
 
 

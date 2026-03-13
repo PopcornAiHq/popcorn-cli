@@ -17,7 +17,9 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn pop [--name NAME] [--context "..."]
+    popcorn pop [--name NAME] [--context "..."] [--force]
+    popcorn status [channel]
+    popcorn log [channel] [--limit N]
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
@@ -34,6 +36,7 @@ Custom environments can be configured via environment variables:
 from __future__ import annotations
 
 import argparse
+import contextlib
 import difflib
 import json
 import os
@@ -60,6 +63,7 @@ from popcorn_core.auth import (
 )
 from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
 from popcorn_core.errors import APIError, AuthError
+from popcorn_core.validation import extract
 
 from .formatting import (
     fmt_activity,
@@ -397,8 +401,8 @@ def cmd_env(args: argparse.Namespace) -> None:
 def cmd_whoami(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.get_whoami(client)
-    user = resp.get("user", {})
-    ws = resp.get("workspace", {})
+    user = extract(resp, "user", label="whoami")
+    ws = extract(resp, "workspace", label="whoami")
     formatted = (
         f"User:      {user.get('display_name', '')} ({user.get('username', '')})\n"
         f"Email:     {user.get('email', '')}\n"
@@ -700,9 +704,138 @@ def _write_local_json(path: Path, conversation_id: str, site_name: str) -> None:
     )
 
 
+def _validate_channel(client: APIClient, conversation_id: str) -> bool:
+    """Check if a conversation still exists and has a provisioned site.
+
+    Returns True if valid, False if stale (404 or no site).
+    Raises APIError for unexpected failures.
+    """
+    try:
+        info = client.get("/api/conversations/info", {"conversation_id": conversation_id})
+        conv = info.get("conversation", {})
+        return conv.get("site") is not None
+    except APIError as e:
+        if e.status_code == 404:
+            return False
+        raise
+
+
+def _resolve_conversation_id_from_local(args: argparse.Namespace, client: APIClient) -> str:
+    """Resolve conversation_id from channel arg or .popcorn.local.json."""
+    channel = getattr(args, "channel", None)
+    if channel:
+        from popcorn_core.resolve import resolve_conversation
+
+        return resolve_conversation(client, channel)
+
+    local_json = Path(".popcorn.local.json")
+    if local_json.exists():
+        data = json.loads(local_json.read_text())
+        cid = data.get("conversation_id")
+        if cid:
+            return str(cid)
+
+    raise PopcornError("No channel specified and no .popcorn.local.json found")
+
+
+def _create_with_collision_retry(
+    client: APIClient, site_name: str, json_mode: bool
+) -> tuple[dict[str, Any], str]:
+    """Create a deploy channel, retrying with random suffixes on 409.
+
+    Returns (create_result, effective_site_name).
+    """
+    import random
+    import string
+
+    try:
+        result = operations.deploy_create(client, site_name)
+        return result, site_name
+    except APIError as e:
+        if e.status_code != 409:
+            raise
+
+    # Name taken — try up to 5 random suffixes
+    attempted: list[str] = []
+    for _ in range(5):
+        suffix = "".join(random.choices(string.ascii_lowercase, k=4))
+        candidate = f"{site_name}-{suffix}"
+        attempted.append(candidate)
+        try:
+            result = operations.deploy_create(client, candidate)
+            if not json_mode:
+                print(
+                    f"'{site_name}' is taken. Created as '{candidate}' instead.",
+                    file=sys.stderr,
+                )
+            return result, candidate
+        except APIError as e2:
+            if e2.status_code != 409:
+                raise
+
+    if json_mode:
+        print(
+            json.dumps(
+                {
+                    "error": f"Could not find available name for '{site_name}'",
+                    "attempted_names": attempted,
+                }
+            )
+        )
+        sys.exit(1)
+    raise PopcornError(
+        f"Could not find available name for '{site_name}'. Tried: {', '.join(attempted)}"
+    )
+
+
+def _publish_with_retry(
+    client: APIClient,
+    conversation_id: str,
+    s3_key: str,
+    context: str,
+    force: bool,
+    json_mode: bool,
+) -> dict[str, Any]:
+    """Call deploy_publish with retry on 502 (up to 3 retries, exponential backoff)."""
+    import time
+
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            return operations.deploy_publish(client, conversation_id, s3_key, context, force=force)
+        except APIError as e:
+            if e.status_code != 502 or attempt == max_retries:
+                raise
+            delay = 2**attempt  # 1, 2, 4
+            if not json_mode:
+                print(
+                    f"Retrying publish (attempt {attempt + 2}/{max_retries + 1})...",
+                    file=sys.stderr,
+                )
+            time.sleep(delay)
+    raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _parse_vm_error(e: APIError) -> str | None:
+    """Try to extract the real VM error from an APIError body."""
+    if not e.body:
+        return None
+    try:
+        body = json.loads(e.body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    for key in ("vm_error", "upstream_error", "error"):
+        val = body.get(key)
+        if isinstance(val, str):
+            return val
+    return None
+
+
 def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
     site_name = args.name or f"pop-{Path.cwd().name}"
+    json_mode = getattr(args, "json", False)
+    force = getattr(args, "force", False)
 
     # Read .popcorn.local.json
     local_json = Path(".popcorn.local.json")
@@ -711,21 +844,47 @@ def cmd_pop(args: argparse.Namespace) -> None:
         data = json.loads(local_json.read_text())
         conversation_id = data.get("conversation_id")
 
+    # Validate existing channel — detect stale .popcorn.local.json
+    if conversation_id and not _validate_channel(client, conversation_id):
+        if force:
+            local_json.unlink(missing_ok=True)
+            conversation_id = None
+        elif json_mode:
+            print(
+                json.dumps(
+                    {
+                        "error": "Stale channel configuration",
+                        "stale_config": True,
+                        "conversation_id": conversation_id,
+                    }
+                )
+            )
+            sys.exit(1)
+        elif sys.stdin.isatty():
+            answer = input("Channel no longer exists. Create new? [Y/n] ")
+            if answer.strip().lower() in ("n", "no"):
+                raise PopcornError("Aborted.")
+            local_json.unlink(missing_ok=True)
+            conversation_id = None
+        else:
+            raise PopcornError(
+                "Stale channel configuration: channel no longer exists. "
+                "Use --force to auto-recreate."
+            )
+
     # Create tarball
     tarball = create_tarball()
+    suggested_name = None
 
     try:
-        # Create channel with site (first deploy) — 409 means already exists
+        # Create channel with site (first deploy)
         if not conversation_id:
-            try:
-                create_result = operations.deploy_create(client, site_name)
-                conversation_id = str(create_result["conversation"]["id"])
-            except APIError as e:
-                if e.status_code != 409:
-                    raise
-                raise PopcornError(
-                    f"Site '{site_name}' already exists. Use --name to choose a different name."
-                ) from e
+            create_result, site_name = _create_with_collision_retry(client, site_name, json_mode)
+            conversation_id = str(
+                extract(create_result, "conversation", "id", label="deploy_create")
+            )
+            if site_name != (args.name or f"pop-{Path.cwd().name}"):
+                suggested_name = site_name
 
             # Persist conversation_id immediately so retries don't hit 409
             _write_local_json(local_json, conversation_id, site_name)
@@ -734,23 +893,41 @@ def cmd_pop(args: argparse.Namespace) -> None:
             raise PopcornError("No conversation_id available for deploy")
 
         # Presign
+
         presign = operations.deploy_presign(client, conversation_id)
+        upload_url = extract(presign, "upload_url", label="deploy_presign")
+        upload_fields = extract(presign, "upload_fields", label="deploy_presign")
+        s3_key = extract(presign, "s3_key", label="deploy_presign")
 
         # Upload to S3
-        operations.deploy_upload(presign["upload_url"], presign["upload_fields"], tarball)
+        operations.deploy_upload(upload_url, upload_fields, tarball)
 
-        # Publish (trigger VM pull + commit)
-        result = operations.deploy_publish(client, conversation_id, presign["s3_key"], args.context)
+        # Publish with retry on 502 (items 1, 2)
+        try:
+            result = _publish_with_retry(
+                client, conversation_id, s3_key, args.context, force, json_mode
+            )
+        except APIError as e:
+            vm_error = _parse_vm_error(e)
+            if vm_error:
+                if json_mode:
+                    body: dict[str, Any] = {}
+                    if e.body:
+                        with contextlib.suppress(json.JSONDecodeError, TypeError):
+                            body = json.loads(e.body)
+                    print(json.dumps({"error": str(e), "vm_error": vm_error, **body}))
+                    sys.exit(1)
+                raise PopcornError(f"Publish failed: {vm_error}") from e
+            raise
     finally:
         # Cleanup tarball
         os.unlink(tarball)
 
     # Update .popcorn.local.json with server-confirmed values
-    _write_local_json(
-        local_json,
-        str(result["conversation_id"]),
-        result["site_name"],
-    )
+
+    result_conv_id = str(extract(result, "conversation_id", label="deploy_publish"))
+    result_site_name = extract(result, "site_name", label="deploy_publish")
+    _write_local_json(local_json, result_conv_id, result_site_name)
 
     # Add to .gitignore
     gitignore = Path(".gitignore")
@@ -759,7 +936,70 @@ def cmd_pop(args: argparse.Namespace) -> None:
         if ".popcorn.local.json" not in content:
             gitignore.write_text(content.rstrip() + "\n.popcorn.local.json\n")
 
-    _output(args, result, f"Published to #{result['site_name']} (v{result['version']})")
+    # Build output
+    output_data = result
+    if suggested_name and json_mode:
+        output_data = {**result, "suggested_name": suggested_name}
+
+    _output(args, output_data, f"Published to #{result_site_name} (v{result['version']})")
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    conversation_id = _resolve_conversation_id_from_local(args, client)
+    resp = operations.get_site_status(client, conversation_id)
+
+    if getattr(args, "json", False):
+        print(json.dumps(resp, indent=2, default=str))
+        return
+
+    if resp.get("fallback"):
+        conv = resp.get("conversation", {})
+        name = conv.get("name", "—")
+        lines = [
+            f"Site:      {name}",
+            "URL:       —",
+            "Version:   —",
+            "Commit:    —",
+            "Deployed:  —",
+            "(Detailed status not available)",
+        ]
+    else:
+        lines = [
+            f"Site:      {resp.get('site_name', '—')}",
+            f"URL:       {resp.get('url', '—')}",
+            f"Version:   {resp.get('version', '—')}",
+            f"Commit:    {resp.get('commit_hash', '—')}",
+            f"Deployed:  {resp.get('deployed_at', '—')} by {resp.get('deployed_by', '—')}",
+        ]
+    print("\n".join(lines))
+
+
+def cmd_log(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    conversation_id = _resolve_conversation_id_from_local(args, client)
+    resp = operations.get_site_log(client, conversation_id, limit=args.limit)
+
+    if getattr(args, "json", False):
+        print(json.dumps(resp, indent=2, default=str))
+        return
+
+    if resp.get("fallback"):
+        print("Version history not available yet")
+        return
+
+    versions = resp.get("versions", [])
+    if not versions:
+        print("No versions found")
+        return
+
+    for v in versions:
+        ver = v.get("version", "?")
+        commit = v.get("commit_hash", "?")[:7]
+        msg = v.get("message", "")
+        author = v.get("author", "")
+        ts = v.get("created_at", "")
+        print(f"v{ver}  {commit}  {msg:<30s}  {author}  {ts}")
 
 
 # ---------------------------------------------------------------------------
@@ -813,7 +1053,7 @@ def cmd_inbox(args: argparse.Namespace) -> None:
     filter_type = "unread" if args.unread else ("read" if args.read else "all")
     resp = operations.get_inbox(client, filter_type, args.limit or 20)
 
-    activity_data = resp.get("activity", resp)
+    activity_data = extract(resp, "activity", label="inbox")
     activities = activity_data.get("activities", [])
     unread_count = activity_data.get("unread_count", 0)
 
@@ -1032,6 +1272,8 @@ Channel management:
   archive       Archive a channel
   delete-conversation  Delete a conversation
   pop           Push site resources to a channel
+  status        Show site deployment status
+  log           Show site version history
 
 Sidebar & webhooks:
   sidebar       Manage sidebar
@@ -1237,6 +1479,16 @@ Other:
     pop_p = sub.add_parser("pop", help=_h)
     pop_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
     pop_p.add_argument("--context", type=str, default="", help="Deploy context message")
+    pop_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
+
+    # --- Site status & log ---
+
+    status_p = sub.add_parser("status", help=_h)
+    status_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+
+    log_p = sub.add_parser("log", help=_h)
+    log_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
 
     # --- Integrations ---
 
@@ -1290,6 +1542,8 @@ _COMMANDS = {
     "api": cmd_api,
     "check-access": cmd_check_access,
     "pop": cmd_pop,
+    "status": cmd_status,
+    "log": cmd_log,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents

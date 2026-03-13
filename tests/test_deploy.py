@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tarfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -198,6 +199,123 @@ class TestCreateTarball:
             finally:
                 Path(tarball).unlink(missing_ok=True)
 
+    def test_create_tarball_popcornignore_git(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+        (tmp_path / "app.js").write_text("console.log('hi')")
+        (tmp_path / "debug.log").write_text("log data")
+        (tmp_path / ".popcornignore").write_text("*.log\n")
+
+        with (
+            patch("popcorn_core.archive._is_git_repo", return_value=True),
+            patch(
+                "popcorn_core.archive.subprocess.check_output",
+                return_value="index.html\napp.js\ndebug.log\n.popcornignore\n",
+            ),
+        ):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert "app.js" in names
+                    assert "debug.log" not in names
+                    assert ".popcornignore" not in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
+    def test_create_tarball_popcornignore_non_git(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+        (tmp_path / "style.css").write_text("body {}")
+        (tmp_path / "debug.log").write_text("log data")
+        (tmp_path / ".popcornignore").write_text("*.log\n")
+
+        with patch("popcorn_core.archive._is_git_repo", return_value=False):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert "style.css" in names
+                    assert "debug.log" not in names
+                    assert ".popcornignore" not in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
+    def test_create_tarball_no_popcornignore(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+        (tmp_path / "data.log").write_text("log data")
+
+        with patch("popcorn_core.archive._is_git_repo", return_value=False):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert "data.log" in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
+    def test_popcornignore_excludes_itself(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+        (tmp_path / ".popcornignore").write_text("# empty ignore\n")
+
+        # Test in git mode
+        with (
+            patch("popcorn_core.archive._is_git_repo", return_value=True),
+            patch(
+                "popcorn_core.archive.subprocess.check_output",
+                return_value="index.html\n.popcornignore\n",
+            ),
+        ):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert ".popcornignore" not in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
+        # Test in non-git mode
+        with patch("popcorn_core.archive._is_git_repo", return_value=False):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert ".popcornignore" not in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
+    def test_create_tarball_non_git_recursive(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "index.html").write_text("<html>hello</html>")
+        sub = tmp_path / "src"
+        sub.mkdir()
+        (sub / "app.js").write_text("console.log('hi')")
+        deep = sub / "utils"
+        deep.mkdir()
+        (deep / "helper.js").write_text("export default {}")
+        (deep / "debug.log").write_text("log data")
+        (tmp_path / ".popcornignore").write_text("**/*.log\n")
+
+        with patch("popcorn_core.archive._is_git_repo", return_value=False):
+            tarball = create_tarball()
+            try:
+                with tarfile.open(tarball, "r:gz") as tar:
+                    names = tar.getnames()
+                    assert "index.html" in names
+                    assert os.path.join("src", "app.js") in names
+                    assert os.path.join("src", "utils", "helper.js") in names
+                    assert os.path.join("src", "utils", "debug.log") not in names
+                    assert ".popcornignore" not in names
+            finally:
+                Path(tarball).unlink(missing_ok=True)
+
     def test_create_tarball_git_error(self, tmp_path, monkeypatch):
         import subprocess
 
@@ -223,6 +341,7 @@ class TestPop:
         args.json = False
         args.env = None
         args.workspace = None
+        args.force = False
         return args
 
     def test_pop_full_flow(self, mock_client, tmp_path, monkeypatch, pop_args):
@@ -271,6 +390,9 @@ class TestPop:
             json.dumps({"conversation_id": "conv-existing", "site_name": "pop-test"})
         )
 
+        mock_client.get.return_value = {
+            "conversation": {"id": "conv-existing", "site": {"name": "pop-test"}},
+        }
         mock_client.post.side_effect = [
             {
                 "upload_url": "https://s3.example.com/upload",
@@ -297,9 +419,12 @@ class TestPop:
 
         assert mock_client.post.call_count == 2
 
-    def test_pop_409_conflict(self, mock_client, tmp_path, monkeypatch, pop_args):
+    def test_pop_409_conflict_retries_with_suffix(
+        self, mock_client, tmp_path, monkeypatch, pop_args
+    ):
         monkeypatch.chdir(tmp_path)
 
+        # All creates return 409 — should try original + 5 suffixed names then fail
         mock_client.post.side_effect = APIError("Site already exists", status_code=409)
 
         with (
@@ -309,8 +434,52 @@ class TestPop:
         ):
             from popcorn_cli.cli import cmd_pop
 
-            with pytest.raises(PopcornError, match="already exists"):
+            with pytest.raises(PopcornError, match="Could not find available name"):
                 cmd_pop(pop_args)
+
+        # 1 original + 5 retries = 6 create calls
+        assert mock_client.post.call_count == 6
+
+    def test_pop_409_conflict_succeeds_on_retry(self, mock_client, tmp_path, monkeypatch, pop_args):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".gitignore").write_text("")
+
+        # First create 409s, second succeeds, then presign + publish
+        mock_client.post.side_effect = [
+            APIError("Site already exists", status_code=409),
+            {
+                "ok": True,
+                "conversation": {
+                    "id": "conv-1",
+                    "name": "pop-test-abcd",
+                    "type": "workspace_channel",
+                },
+            },
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "ws/sites/pop-test-abcd/versions/1.tar.gz",
+            },
+            {
+                "conversation_id": "conv-1",
+                "site_name": "pop-test-abcd",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        local = json.loads((tmp_path / ".popcorn.local.json").read_text())
+        assert local["conversation_id"] == "conv-1"
 
     def test_pop_name_flag(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
@@ -357,6 +526,317 @@ class TestPop:
             },
         )
 
+    def test_pop_stale_config_force(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """--force auto-deletes stale config and creates new channel."""
+        monkeypatch.chdir(tmp_path)
+        pop_args.force = True
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "dead-conv", "site_name": "old-site"})
+        )
+        (tmp_path / ".gitignore").write_text("")
+
+        # _validate_channel returns False (stale), then fresh create flow
+        mock_client.get.side_effect = APIError("Not found", status_code=404)
+        mock_client.post.side_effect = [
+            {
+                "ok": True,
+                "conversation": {"id": "conv-new", "name": "pop-test", "type": "workspace_channel"},
+            },
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            {
+                "conversation_id": "conv-new",
+                "site_name": "pop-test",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        local = json.loads((tmp_path / ".popcorn.local.json").read_text())
+        assert local["conversation_id"] == "conv-new"
+
+    def test_pop_stale_config_no_force_aborts(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """Non-interactive + stale config + no --force = abort."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "dead-conv", "site_name": "old-site"})
+        )
+
+        mock_client.get.side_effect = APIError("Not found", status_code=404)
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("sys.stdin") as mock_stdin,
+        ):
+            mock_stdin.isatty.return_value = False
+            from popcorn_cli.cli import cmd_pop
+
+            with pytest.raises(PopcornError, match="Stale channel configuration"):
+                cmd_pop(pop_args)
+
+    def test_pop_publish_vm_error_surfaced(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """VM error from publish body is surfaced to user."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client.get.return_value = {
+            "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
+        }
+        mock_client.post.side_effect = [
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            APIError(
+                "Publish failed on VM",
+                status_code=500,
+                body='{"error": "No changes to commit"}',
+            ),
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            with pytest.raises(PopcornError, match="Publish failed: No changes to commit"):
+                cmd_pop(pop_args)
+
+    def test_pop_502_retry(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """502 on publish triggers retry."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+        (tmp_path / ".gitignore").write_text("")
+
+        mock_client.get.return_value = {
+            "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
+        }
+        mock_client.post.side_effect = [
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            APIError("Bad Gateway", status_code=502),
+            {
+                "conversation_id": "conv-1",
+                "site_name": "my-site",
+                "version": 2,
+                "commit_hash": "abc",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("time.sleep"),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        # presign + publish(502) + publish(success) = 3 post calls
+        assert mock_client.post.call_count == 3
+
+    def test_pop_force_flag_passed_to_publish(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """--force passes force=True to deploy_publish."""
+        monkeypatch.chdir(tmp_path)
+        pop_args.force = True
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+        (tmp_path / ".gitignore").write_text("")
+
+        mock_client.get.return_value = {
+            "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
+        }
+        mock_client.post.side_effect = [
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            {
+                "conversation_id": "conv-1",
+                "site_name": "my-site",
+                "version": 2,
+                "commit_hash": "abc",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        # Check the publish call includes force=True
+        publish_call = mock_client.post.call_args_list[-1]
+        assert publish_call[1]["data"]["force"] is True
+
+
+class TestStatus:
+    def test_status_from_local_json(self, mock_client, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client.post.return_value = {
+            "site_name": "my-site",
+            "url": "https://my-site.popcorn.ai",
+            "version": 3,
+            "commit_hash": "abc1234",
+            "deployed_at": "2026-03-12T14:30:00Z",
+            "deployed_by": "user@example.com",
+        }
+
+        args = MagicMock()
+        args.channel = None
+        args.json = False
+        args.env = None
+        args.workspace = None
+
+        with patch("popcorn_cli.cli._get_client", return_value=mock_client):
+            from popcorn_cli.cli import cmd_status
+
+            cmd_status(args)
+
+    def test_status_fallback(self, mock_client, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client.post.side_effect = APIError("Not found", status_code=404)
+        mock_client.get.return_value = {
+            "conversation": {"name": "my-site"},
+        }
+
+        args = MagicMock()
+        args.channel = None
+        args.json = False
+        args.env = None
+        args.workspace = None
+
+        with patch("popcorn_cli.cli._get_client", return_value=mock_client):
+            from popcorn_cli.cli import cmd_status
+
+            cmd_status(args)
+
+        output = capsys.readouterr().out
+        assert "my-site" in output
+        assert "Detailed status not available" in output
+
+    def test_status_no_local_json(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        args = MagicMock()
+        args.channel = None
+        args.json = False
+        args.env = None
+        args.workspace = None
+
+        with pytest.raises(PopcornError, match="No channel specified"):
+            from popcorn_cli.cli import cmd_status
+
+            cmd_status(args)
+
+
+class TestLog:
+    def test_log_versions(self, mock_client, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client.post.return_value = {
+            "versions": [
+                {
+                    "version": 3,
+                    "commit_hash": "abc1234567",
+                    "message": "Update landing page",
+                    "author": "user@example.com",
+                    "created_at": "2026-03-12T14:30:00Z",
+                },
+                {
+                    "version": 2,
+                    "commit_hash": "def5678901",
+                    "message": "Fix typo",
+                    "author": "user@example.com",
+                    "created_at": "2026-03-11T10:15:00Z",
+                },
+            ],
+        }
+
+        args = MagicMock()
+        args.channel = None
+        args.json = False
+        args.env = None
+        args.workspace = None
+        args.limit = 10
+
+        with patch("popcorn_cli.cli._get_client", return_value=mock_client):
+            from popcorn_cli.cli import cmd_log
+
+            cmd_log(args)
+
+        output = capsys.readouterr().out
+        assert "v3" in output
+        assert "abc1234" in output
+        assert "Update landing page" in output
+
+    def test_log_fallback(self, mock_client, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client.post.side_effect = APIError("Not found", status_code=404)
+
+        args = MagicMock()
+        args.channel = None
+        args.json = False
+        args.env = None
+        args.workspace = None
+        args.limit = 10
+
+        with patch("popcorn_cli.cli._get_client", return_value=mock_client):
+            from popcorn_cli.cli import cmd_log
+
+            cmd_log(args)
+
+        output = capsys.readouterr().out
+        assert "not available yet" in output
+
 
 class TestPopParser:
     @pytest.fixture()
@@ -368,8 +848,31 @@ class TestPopParser:
         assert args.command == "pop"
         assert args.name is None
         assert args.context == ""
+        assert args.force is False
 
     def test_pop_with_options(self, parser):
         args = parser.parse_args(["pop", "--name", "my-app", "--context", "initial release"])
         assert args.name == "my-app"
         assert args.context == "initial release"
+
+    def test_pop_force_flag(self, parser):
+        args = parser.parse_args(["pop", "--force"])
+        assert args.force is True
+
+    def test_status_parser(self, parser):
+        args = parser.parse_args(["status"])
+        assert args.command == "status"
+        assert args.channel is None
+
+    def test_status_with_channel(self, parser):
+        args = parser.parse_args(["status", "my-channel"])
+        assert args.channel == "my-channel"
+
+    def test_log_parser(self, parser):
+        args = parser.parse_args(["log"])
+        assert args.command == "log"
+        assert args.limit == 10
+
+    def test_log_with_limit(self, parser):
+        args = parser.parse_args(["log", "--limit", "5"])
+        assert args.limit == 5

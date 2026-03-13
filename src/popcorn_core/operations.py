@@ -543,11 +543,14 @@ def deploy_publish(
     conversation_id: str,
     s3_key: str,
     context: str = "",
+    force: bool = False,
 ) -> dict[str, Any]:
     """Publish a tarball from S3 to the conversation's site."""
     data: dict[str, Any] = {"conversation_id": conversation_id, "s3_key": s3_key}
     if context:
         data["context"] = context
+    if force:
+        data["force"] = True
     return client.post("/api/conversations/publish", data=data)
 
 
@@ -574,6 +577,38 @@ def deploy_upload(
         raise APIError(f"Deploy upload network error: {e}") from e
     if resp.status_code not in (200, 201, 204):
         raise APIError(f"Deploy upload failed: HTTP {resp.status_code}\n{resp.text[:300]}")
+
+
+# ---------------------------------------------------------------------------
+# Site status
+# ---------------------------------------------------------------------------
+
+
+def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
+    """Get site deployment status, falling back to conversation info."""
+    try:
+        return client.post(
+            "/api/conversations/site-status",
+            data={"conversation_id": conversation_id},
+        )
+    except APIError as e:
+        if e.status_code == 404:
+            info = client.get("/api/conversations/info", {"conversation_id": conversation_id})
+            return {"conversation": info.get("conversation", {}), "fallback": True}
+        raise
+
+
+def get_site_log(client: APIClient, conversation_id: str, limit: int = 10) -> dict[str, Any]:
+    """Get site version history."""
+    try:
+        return client.post(
+            "/api/conversations/site-log",
+            data={"conversation_id": conversation_id, "limit": limit},
+        )
+    except APIError as e:
+        if e.status_code == 404:
+            return {"versions": [], "fallback": True}
+        raise
 
 
 # ---------------------------------------------------------------------------
