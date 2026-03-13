@@ -190,17 +190,6 @@ class TestApiEscapeHatch:
         assert args.method == "DELETE"
 
 
-class TestSidebar:
-    def test_sidebar_list(self, parser):
-        args = parser.parse_args(["sidebar", "list"])
-        assert args.command == "sidebar"
-        assert args.sidebar_command == "list"
-
-    def test_sidebar_add(self, parser):
-        args = parser.parse_args(["sidebar", "add", "#general"])
-        assert args.conversation == "#general"
-
-
 class TestWebhook:
     def test_webhook_create(self, parser):
         args = parser.parse_args(["webhook", "create", "#general", "https://example.com/hook"])

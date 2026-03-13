@@ -709,40 +709,6 @@ def cmd_delete_conversation(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Sidebar commands
-# ---------------------------------------------------------------------------
-
-
-def cmd_sidebar(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    sub = getattr(args, "sidebar_command", None)
-
-    if sub == "list":
-        resp = operations.get_sidebar(client)
-        _output(args, resp, json.dumps(resp, indent=2, default=str))
-    elif sub == "add":
-        resp = operations.sidebar_add_conversation(
-            client, args.conversation, getattr(args, "category", "") or ""
-        )
-        _output(args, resp, f"Added {args.conversation} to sidebar")
-    elif sub == "remove":
-        resp = operations.sidebar_remove_conversation(client, args.conversation)
-        _output(args, resp, f"Removed {args.conversation} from sidebar")
-    elif sub == "create-category":
-        resp = operations.sidebar_create_category(client, args.name)
-        _output(args, resp, f"Created category: {args.name}")
-    elif sub == "delete-category":
-        resp = operations.sidebar_delete_category(client, args.category_id)
-        _output(args, resp, f"Deleted category: {args.category_id}")
-    elif sub == "rename-category":
-        resp = operations.sidebar_rename_category(client, args.category_id, args.name)
-        _output(args, resp, f"Renamed category to: {args.name}")
-    else:
-        resp = operations.get_sidebar(client)
-        _output(args, resp, json.dumps(resp, indent=2, default=str))
-
-
-# ---------------------------------------------------------------------------
 # Webhook commands
 # ---------------------------------------------------------------------------
 
@@ -1208,7 +1174,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami profile me search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation sidebar webhook api check-access pop completion --json --workspace -e --env --no-color" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1218,9 +1184,6 @@ _popcorn_completions() {
             ;;
         search)
             COMPREPLY=($(compgen -W "channels dms users messages" -- "$cur"))
-            ;;
-        sidebar)
-            COMPREPLY=($(compgen -W "list add remove create-category delete-category rename-category" -- "$cur"))
             ;;
         webhook)
             COMPREPLY=($(compgen -W "create list deliveries" -- "$cur"))
@@ -1245,8 +1208,6 @@ _popcorn() {
         'workspace:Workspace commands'
         'env:Show or switch environment'
         'whoami:Show current user and workspace'
-        'profile:Alias for whoami'
-        'me:Alias for whoami'
         'search:Search channels, DMs, users, or messages'
         'read:Read message history'
         'get-message:Get a single message by ID'
@@ -1265,7 +1226,6 @@ _popcorn() {
         'update:Update channel name or description'
         'archive:Archive a channel'
         'delete-conversation:Delete a conversation'
-        'sidebar:Manage sidebar'
         'webhook:Manage webhooks'
         'api:Raw API call'
         'check-access:Check repo access'
@@ -1288,7 +1248,6 @@ _popcorn() {
                 auth) _values 'subcommand' login status logout token ;;
                 workspace) _values 'subcommand' list switch ;;
                 search) _values 'type' channels dms users messages ;;
-                sidebar) _values 'subcommand' list add remove create-category delete-category rename-category ;;
                 webhook) _values 'subcommand' create list deliveries ;;
                 completion) _values 'shell' bash zsh ;;
             esac
@@ -1370,8 +1329,7 @@ Channel management:
   status        Show site deployment status
   log           Show site version history
 
-Sidebar & webhooks:
-  sidebar       Manage sidebar
+Webhooks:
   webhook       Manage webhooks
 
 Integrations:
@@ -1529,24 +1487,6 @@ Other:
     delconv_p = sub.add_parser("delete-conversation", help=_h)
     delconv_p.add_argument("conversation", help="Channel name (#general) or UUID")
 
-    # --- Sidebar ---
-
-    sidebar_parser = sub.add_parser("sidebar", help=_h)
-    sidebar_sub = sidebar_parser.add_subparsers(dest="sidebar_command")
-    sidebar_sub.add_parser("list", help="List sidebar conversations")
-    sb_add = sidebar_sub.add_parser("add", help="Add conversation to sidebar")
-    sb_add.add_argument("conversation", help="Channel name or UUID")
-    sb_add.add_argument("--category", type=str, help="Category to add to")
-    sb_rm = sidebar_sub.add_parser("remove", help="Remove conversation from sidebar")
-    sb_rm.add_argument("conversation", help="Channel name or UUID")
-    sb_cc = sidebar_sub.add_parser("create-category", help="Create sidebar category")
-    sb_cc.add_argument("name", help="Category name")
-    sb_dc = sidebar_sub.add_parser("delete-category", help="Delete sidebar category")
-    sb_dc.add_argument("category_id", help="Category UUID")
-    sb_rc = sidebar_sub.add_parser("rename-category", help="Rename sidebar category")
-    sb_rc.add_argument("category_id", help="Category UUID")
-    sb_rc.add_argument("name", help="New name")
-
     # --- Webhooks ---
 
     wh_parser = sub.add_parser("webhook", help=_h)
@@ -1651,7 +1591,7 @@ _COMMANDS = {
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "sidebar", "webhook"])
+_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "webhook"])
 
 
 def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
@@ -1722,8 +1662,6 @@ def main() -> None:
                 handler(args)
             else:
                 parser.parse_args(["workspace", "--help"])
-        elif args.command == "sidebar":
-            cmd_sidebar(args)
         elif args.command == "webhook":
             cmd_webhook(args)
         elif args.command in _COMMANDS:

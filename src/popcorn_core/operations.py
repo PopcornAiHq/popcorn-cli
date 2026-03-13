@@ -379,51 +379,6 @@ def download_file(client: APIClient, file_key: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Sidebar
-# ---------------------------------------------------------------------------
-
-
-def get_sidebar(client: APIClient) -> dict[str, Any]:
-    """Get sidebar with categorized conversations."""
-    return client.post("/api/sidebar/get")
-
-
-def sidebar_add_conversation(
-    client: APIClient, conversation: str, category: str = ""
-) -> dict[str, Any]:
-    """Add a conversation to the sidebar."""
-    conv_id = resolve_conversation(client, conversation)
-    body: dict[str, Any] = {"conversation_id": conv_id}
-    if category:
-        body["category"] = category
-    return client.post("/api/sidebar/add-conversation", data=body)
-
-
-def sidebar_remove_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Remove a conversation from the sidebar."""
-    conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/sidebar/remove-conversation", data={"conversation_id": conv_id})
-
-
-def sidebar_create_category(client: APIClient, name: str) -> dict[str, Any]:
-    """Create a new sidebar category."""
-    return client.post("/api/sidebar/create-category", data={"name": name})
-
-
-def sidebar_delete_category(client: APIClient, category_id: str) -> dict[str, Any]:
-    """Delete a sidebar category."""
-    return client.post("/api/sidebar/delete-category", data={"category_id": category_id})
-
-
-def sidebar_rename_category(client: APIClient, category_id: str, name: str) -> dict[str, Any]:
-    """Rename a sidebar category."""
-    return client.post(
-        "/api/sidebar/rename-category",
-        data={"category_id": category_id, "name": name},
-    )
-
-
-# ---------------------------------------------------------------------------
 # Webhooks
 # ---------------------------------------------------------------------------
 
