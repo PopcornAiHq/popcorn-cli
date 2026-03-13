@@ -25,7 +25,8 @@ Usage:
     echo "msg" | popcorn send <conversation>
     cat batch.ndjson | popcorn send --batch --json
 
-Flags: --json (raw output), -q/--quiet (suppress status), -e/--env, --no-color, --workspace UUID
+Flags: --json (raw output), -q/--quiet (suppress status), --timeout N,
+       -e/--env, --no-color, --workspace UUID
 Conversations can be specified as #channel-name or UUID.
 
 Custom environments can be configured via environment variables:
@@ -118,7 +119,8 @@ def _get_client(args: argparse.Namespace) -> APIClient:
     if sys.stderr.isatty():
         _status(f"[{env}] {profile.email} / {profile.workspace_name}")
 
-    return APIClient(profile)
+    timeout = getattr(args, "timeout", None)
+    return APIClient(profile, timeout=timeout) if timeout else APIClient(profile)
 
 
 def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
@@ -1380,6 +1382,9 @@ Other:
     parser.add_argument(
         "-q", "--quiet", action="store_true", help="Suppress informational stderr messages"
     )
+    parser.add_argument(
+        "--timeout", type=float, default=None, help="HTTP request timeout in seconds (default: 30)"
+    )
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
@@ -1644,15 +1649,29 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
     """Move global flags to before the subcommand so they're parsed correctly.
 
     Allows both ``popcorn --json read ...`` and ``popcorn read --json ...``,
-    and similarly for ``--quiet``/``-q``.
+    and similarly for ``--quiet``/``-q`` and ``--timeout N``.
     """
-    args = argv if argv is not None else sys.argv[1:]
-    hoisted = []
+    args = list(argv if argv is not None else sys.argv[1:])
+    hoisted: list[str] = []
+
+    # Boolean flags
     for flag in ("--json", "--quiet", "-q"):
         if flag in args:
             hoisted.append(flag)
             args = [a for a in args if a != flag]
-    return hoisted + list(args)
+
+    # Value flags (--flag VALUE)
+    for flag in ("--timeout",):
+        if flag in args:
+            idx = args.index(flag)
+            hoisted.append(args[idx])
+            if idx + 1 < len(args):
+                hoisted.append(args[idx + 1])
+                args = args[:idx] + args[idx + 2 :]
+            else:
+                args = args[:idx]
+
+    return hoisted + args
 
 
 def main() -> None:

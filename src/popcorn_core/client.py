@@ -16,9 +16,9 @@ from .errors import APIError, AuthError
 class APIClient:
     """Synchronous HTTP client with auth + workspace injection."""
 
-    def __init__(self, profile: Profile) -> None:
+    def __init__(self, profile: Profile, timeout: float = 30.0) -> None:
         self.profile = profile
-        self._client = httpx.Client(timeout=30.0)
+        self._client = httpx.Client(timeout=timeout)
 
     def _token(self) -> str:
         """Return a valid token, refreshing if needed."""

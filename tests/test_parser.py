@@ -33,9 +33,53 @@ class TestGlobalFlags:
         args = parser.parse_args(["-q", "whoami"])
         assert args.quiet is True
 
+    def test_timeout_flag(self, parser):
+        args = parser.parse_args(["--timeout", "60", "whoami"])
+        assert args.timeout == 60.0
+
+    def test_timeout_default_none(self, parser):
+        args = parser.parse_args(["whoami"])
+        assert args.timeout is None
+
     def test_no_command_defaults_to_none(self, parser):
         args = parser.parse_args([])
         assert args.command is None
+
+
+class TestFlagHoisting:
+    def test_json_after_subcommand(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        assert _hoist_global_flags(["read", "--json", "#general"]) == [
+            "--json",
+            "read",
+            "#general",
+        ]
+
+    def test_quiet_after_subcommand(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        assert _hoist_global_flags(["read", "-q", "#general"]) == [
+            "-q",
+            "read",
+            "#general",
+        ]
+
+    def test_timeout_after_subcommand(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        assert _hoist_global_flags(["read", "--timeout", "60", "#general"]) == [
+            "--timeout",
+            "60",
+            "read",
+            "#general",
+        ]
+
+    def test_multiple_flags_hoisted(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        result = _hoist_global_flags(["read", "--json", "-q", "--timeout", "10", "#general"])
+        assert result == ["--json", "-q", "--timeout", "10", "read", "#general"]
 
 
 class TestAuthCommands:
