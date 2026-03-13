@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import time
 from typing import Any
 
@@ -192,10 +193,16 @@ class APIClient:
                     msg = "; ".join(parts) if parts else str(detail)
                 else:
                     msg = str(detail)
+            retry_after: float | None = None
+            raw_retry = resp.headers.get("retry-after")
+            if raw_retry:
+                with contextlib.suppress(ValueError):
+                    retry_after = float(raw_retry)
             raise APIError(
                 msg or f"HTTP {resp.status_code}",
                 status_code=resp.status_code,
                 body=resp.text,
+                retry_after=retry_after,
             )
 
         try:

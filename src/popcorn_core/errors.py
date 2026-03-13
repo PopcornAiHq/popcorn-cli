@@ -43,10 +43,17 @@ class AuthError(PopcornError):
 class APIError(PopcornError):
     """API call failed."""
 
-    def __init__(self, message: str, status_code: int = 0, body: str | None = None):
+    def __init__(
+        self,
+        message: str,
+        status_code: int = 0,
+        body: str | None = None,
+        retry_after: float | None = None,
+    ):
         super().__init__(message)
         self.status_code = status_code
         self.body = body
+        self.retry_after = retry_after
 
     @property
     def exit_code(self) -> int:  # type: ignore[override]
@@ -68,6 +75,8 @@ class APIError(PopcornError):
         }
         if self.status_code:
             d["status"] = self.status_code
+        if self.retry_after is not None:
+            d["retry_after"] = self.retry_after
         if self.body:
             # Try to include parsed body, fall back to raw string
             try:

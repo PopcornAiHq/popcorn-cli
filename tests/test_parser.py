@@ -94,6 +94,10 @@ class TestAuthCommands:
         args = parser.parse_args(["auth", "login", "--with-token"])
         assert args.with_token is True
 
+    def test_auth_login_workspace(self, parser):
+        args = parser.parse_args(["auth", "login", "--workspace", "acme"])
+        assert args.workspace == "acme"
+
     def test_auth_status(self, parser):
         args = parser.parse_args(["auth", "status"])
         assert args.auth_command == "status"
@@ -206,6 +210,10 @@ class TestApiEscapeHatch:
     def test_api_explicit_method(self, parser):
         args = parser.parse_args(["api", "-X", "DELETE", "/api/webhooks/delete"])
         assert args.method == "DELETE"
+
+    def test_api_raw_flag(self, parser):
+        args = parser.parse_args(["api", "/api/users/me", "--raw"])
+        assert args.raw is True
 
 
 class TestWebhook:

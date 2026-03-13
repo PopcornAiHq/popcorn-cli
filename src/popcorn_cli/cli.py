@@ -142,12 +142,22 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
         print(formatted)
 
 
-def _select_workspace(client: APIClient, profile: Profile) -> None:
+def _select_workspace(client: APIClient, profile: Profile, target: str | None = None) -> None:
     """Interactive workspace selection (auto-selects first when non-interactive)."""
     workspaces = operations.list_workspaces(client)
 
     if not workspaces:
         raise PopcornError("No workspaces found for this account")
+
+    # Explicit --workspace flag: match by name or ID
+    if target:
+        for ws in workspaces:
+            if ws["id"] == target or (ws.get("name") or "").lower() == target.lower():
+                profile.workspace_id = ws["id"]
+                profile.workspace_name = ws.get("name", "")
+                _status(f"Selected workspace: {profile.workspace_name}")
+                return
+        raise PopcornError(f"Workspace not found: {target}")
 
     if len(workspaces) == 1:
         ws = workspaces[0]
@@ -228,7 +238,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
         save_config(cfg)
         print(f"Authenticated as {result['email']}")
         client = APIClient(profile)
-        _select_workspace(client, profile)
+        _select_workspace(client, profile, getattr(args, "workspace", None))
         save_config(cfg)
         print(f"\nLogged in as {result['email']} in workspace {profile.workspace_name}")
         return
@@ -1139,10 +1149,10 @@ def cmd_api(args: argparse.Namespace) -> None:
 
     method = args.method or ("POST" if data else "GET")
     resp = operations.raw_api_call(client, method, args.path, data, params=params)
-    if getattr(args, "json", False):
-        print(_json_ok(resp))
-    else:
+    if getattr(args, "raw", False) or not getattr(args, "json", False):
         print(json.dumps(resp, indent=2, default=str))
+    else:
+        print(_json_ok(resp))
 
 
 def cmd_inbox(args: argparse.Namespace) -> None:
@@ -1529,6 +1539,9 @@ Other:
     login_p.add_argument("-e", "--env", type=str, help="Profile name for this login")
     login_p.add_argument("--with-token", action="store_true", help="Read token from stdin")
     login_p.add_argument("--force", action="store_true", help="Re-authenticate")
+    login_p.add_argument(
+        "--workspace", type=str, help="Select workspace by name or ID (skips interactive prompt)"
+    )
     auth_sub.add_parser("status", help="Show current auth status")
     auth_sub.add_parser("logout", help="Clear stored tokens")
     auth_sub.add_parser("token", help="Print auth token to stdout")
@@ -1683,6 +1696,11 @@ Other:
         action="append",
         metavar="KEY=VALUE",
         help="Query parameter (repeatable, e.g. -p file_key=abc)",
+    )
+    api_p.add_argument(
+        "--raw",
+        action="store_true",
+        help="Output raw JSON without envelope (even with --json)",
     )
 
     # --- Pop ---

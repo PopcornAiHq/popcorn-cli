@@ -103,3 +103,12 @@ class TestToDict:
     def test_api_error_to_dict_unparseable_body(self):
         d = APIError("err", status_code=500, body="not json").to_dict()
         assert d["body"] == "not json"
+
+    def test_api_error_retry_after(self):
+        d = APIError("rate limited", status_code=429, retry_after=30.0).to_dict()
+        assert d["retry_after"] == 30.0
+        assert d["retryable"] is True
+
+    def test_api_error_retry_after_absent(self):
+        d = APIError("rate limited", status_code=429).to_dict()
+        assert "retry_after" not in d
