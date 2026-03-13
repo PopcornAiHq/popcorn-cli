@@ -424,7 +424,8 @@ class TestPop:
             cmd_pop(pop_args)
 
         output = json.loads(capsys.readouterr().out)
-        assert output["site_url"] == "https://pop-test.popcorn.ai"
+        assert output["ok"] is True
+        assert output["data"]["site_url"] == "https://pop-test.popcorn.ai"
 
     def test_pop_existing_site(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)

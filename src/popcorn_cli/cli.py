@@ -124,10 +124,20 @@ def _get_client(args: argparse.Namespace) -> APIClient:
     return APIClient(profile, timeout=timeout) if timeout else APIClient(profile)
 
 
+def _json_ok(data: Any) -> str:
+    """Wrap data in the standard success envelope."""
+    return json.dumps({"ok": True, "data": data}, indent=2, default=str)
+
+
+def _json_err(error_dict: dict[str, Any]) -> str:
+    """Wrap error in the standard error envelope."""
+    return json.dumps({"ok": False, **error_dict}, indent=2, default=str)
+
+
 def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
-    """Print JSON or human-readable output."""
+    """Print JSON (wrapped in envelope) or human-readable output."""
     if getattr(args, "json", False):
-        print(json.dumps(data, indent=2, default=str))
+        print(_json_ok(data))
     else:
         print(formatted)
 
@@ -363,7 +373,7 @@ def cmd_workspace_list(args: argparse.Namespace) -> None:
     workspaces = operations.list_workspaces(client)
 
     if getattr(args, "json", False):
-        print(json.dumps({"workspaces": workspaces}, indent=2, default=str))
+        print(_json_ok({"workspaces": workspaces}))
         return
 
     for ws in workspaces:
@@ -590,7 +600,7 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
             results.append({"line": line_num, "error": str(e), "ok": False})
 
     if json_mode:
-        print(json.dumps({"results": results}, indent=2, default=str))
+        print(_json_ok({"results": results}))
     else:
         for r in results:
             if r["ok"]:
@@ -635,7 +645,7 @@ def cmd_download(args: argparse.Namespace) -> None:
     resp = operations.download_file(client, args.file_key)
 
     if getattr(args, "json", False):
-        print(json.dumps(resp, indent=2, default=str))
+        print(_json_ok(resp))
         return
 
     url = resp.get("download_url") or resp.get("url")
@@ -912,7 +922,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
             conversation_id = None
         elif json_mode:
             print(
-                json.dumps(
+                _json_err(
                     {
                         "error": "Stale channel configuration",
                         "code": "PopcornError",
@@ -920,7 +930,8 @@ def cmd_pop(args: argparse.Namespace) -> None:
                         "stale_config": True,
                         "conversation_id": conversation_id,
                     }
-                )
+                ),
+                file=sys.stderr,
             )
             sys.exit(EXIT_VALIDATION)
         elif sys.stdin.isatty():
@@ -974,22 +985,18 @@ def cmd_pop(args: argparse.Namespace) -> None:
             vm_error = _parse_vm_error(e)
             if vm_error:
                 if json_mode:
-                    body: dict[str, Any] = {}
+                    err_data: dict[str, Any] = {
+                        "error": str(e),
+                        "code": "APIError",
+                        "retryable": e.retryable,
+                        "vm_error": vm_error,
+                    }
+                    if e.status_code:
+                        err_data["status"] = e.status_code
                     if e.body:
                         with contextlib.suppress(json.JSONDecodeError, TypeError):
-                            body = json.loads(e.body)
-                    print(
-                        json.dumps(
-                            {
-                                "error": str(e),
-                                "code": "APIError",
-                                "retryable": e.retryable,
-                                **({"status": e.status_code} if e.status_code else {}),
-                                "vm_error": vm_error,
-                                **body,
-                            }
-                        )
-                    )
+                            err_data["body"] = json.loads(e.body)
+                    print(_json_err(err_data), file=sys.stderr)
                     sys.exit(e.exit_code)
                 raise PopcornError(f"Publish failed: {vm_error}") from e
             raise
@@ -1037,7 +1044,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     resp = operations.get_site_status(client, conversation_id)
 
     if getattr(args, "json", False):
-        print(json.dumps(resp, indent=2, default=str))
+        print(_json_ok(resp))
         return
 
     if resp.get("fallback"):
@@ -1068,7 +1075,7 @@ def cmd_log(args: argparse.Namespace) -> None:
     resp = operations.get_site_log(client, conversation_id, limit=args.limit)
 
     if getattr(args, "json", False):
-        print(json.dumps(resp, indent=2, default=str))
+        print(_json_ok(resp))
         return
 
     if resp.get("fallback"):
@@ -1132,7 +1139,10 @@ def cmd_api(args: argparse.Namespace) -> None:
 
     method = args.method or ("POST" if data else "GET")
     resp = operations.raw_api_call(client, method, args.path, data, params=params)
-    print(json.dumps(resp, indent=2, default=str))
+    if getattr(args, "json", False):
+        print(_json_ok(resp))
+    else:
+        print(json.dumps(resp, indent=2, default=str))
 
 
 def cmd_inbox(args: argparse.Namespace) -> None:
@@ -1416,7 +1426,7 @@ def cmd_commands(_args: argparse.Namespace) -> None:
         "global_flags": global_flags,
         "commands": commands,
     }
-    print(json.dumps(schema, indent=2, default=str))
+    print(json.dumps(schema, indent=2, default=str))  # No envelope — this IS the schema
 
 
 # ---------------------------------------------------------------------------
@@ -1828,7 +1838,7 @@ def main() -> None:
             parser.print_help()
     except PopcornError as e:
         if getattr(args, "json", False):
-            print(json.dumps(e.to_dict(), indent=2, default=str), file=sys.stderr)
+            print(_json_err(e.to_dict()), file=sys.stderr)
         else:
             print(f"Error: {e}", file=sys.stderr)
         sys.exit(e.exit_code)
