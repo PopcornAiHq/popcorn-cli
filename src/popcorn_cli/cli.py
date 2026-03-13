@@ -17,7 +17,7 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn pop [--name NAME] [--context "..."] [--force]
+    popcorn pop [NAME] [--context "..."] [--force]
     popcorn status [channel]
     popcorn log [channel] [--limit N]
     popcorn check-access <owner/repo>
@@ -1477,7 +1477,7 @@ Other:
     # --- Pop ---
 
     pop_p = sub.add_parser("pop", help=_h)
-    pop_p.add_argument("--name", type=str, help="Site name (default: pop-<dirname>)")
+    pop_p.add_argument("name", nargs="?", default=None, help="Site name (default: pop-<dirname>)")
     pop_p.add_argument("--context", type=str, default="", help="Deploy context message")
     pop_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
 

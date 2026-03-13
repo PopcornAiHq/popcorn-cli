@@ -851,7 +851,7 @@ class TestPopParser:
         assert args.force is False
 
     def test_pop_with_options(self, parser):
-        args = parser.parse_args(["pop", "--name", "my-app", "--context", "initial release"])
+        args = parser.parse_args(["pop", "my-app", "--context", "initial release"])
         assert args.name == "my-app"
         assert args.context == "initial release"
 
