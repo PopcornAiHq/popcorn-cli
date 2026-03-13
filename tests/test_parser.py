@@ -86,6 +86,11 @@ class TestWritingCommands:
         assert args.conversation == "#general"
         assert args.message == "hello world"
 
+    def test_send_batch(self, parser):
+        args = parser.parse_args(["send", "--batch"])
+        assert args.batch is True
+        assert args.conversation is None
+
     def test_react(self, parser):
         args = parser.parse_args(["react", "#general", "msg-1", "thumbsup"])
         assert args.emoji == "thumbsup"

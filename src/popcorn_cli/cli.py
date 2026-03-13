@@ -23,6 +23,7 @@ Usage:
     popcorn check-access <owner/repo>
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
+    cat batch.ndjson | popcorn send --batch --json
 
 Flags: --json (raw output), -q/--quiet (suppress status), -e/--env, --no-color, --workspace UUID
 Conversations can be specified as #channel-name or UUID.
@@ -506,7 +507,14 @@ def cmd_info(args: argparse.Namespace) -> None:
 
 
 def cmd_send(args: argparse.Namespace) -> None:
+    if getattr(args, "batch", False):
+        _cmd_send_batch(args)
+        return
+
     client = _get_client(args)
+
+    if not getattr(args, "conversation", None):
+        raise PopcornError("conversation is required (or use --batch for NDJSON stdin)")
 
     message = getattr(args, "message", None)
     if message == "-" or (message is None and not sys.stdin.isatty()):
@@ -527,6 +535,50 @@ def cmd_send(args: argparse.Namespace) -> None:
     )
     msg = resp.get("message", {})
     _output(args, resp, f"Sent (id: {msg.get('id', '?')})")
+
+
+def _cmd_send_batch(args: argparse.Namespace) -> None:
+    """Send messages from NDJSON stdin. Each line: {"conversation": "...", "message": "..."}."""
+    client = _get_client(args)
+    json_mode = getattr(args, "json", False)
+    results: list[dict[str, Any]] = []
+
+    for line_num, line in enumerate(sys.stdin, 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError as e:
+            results.append({"line": line_num, "error": f"Invalid JSON: {e}", "ok": False})
+            continue
+
+        conv = item.get("conversation")
+        msg_text = item.get("message", "")
+        thread = item.get("thread", "")
+
+        if not conv:
+            results.append({"line": line_num, "error": "Missing 'conversation' field", "ok": False})
+            continue
+        if not msg_text:
+            results.append({"line": line_num, "error": "Missing 'message' field", "ok": False})
+            continue
+
+        try:
+            resp = operations.send_message(client, conv, msg_text, thread, [])
+            sent_msg = resp.get("message", {})
+            results.append({"line": line_num, "ok": True, "message_id": sent_msg.get("id", "?")})
+        except PopcornError as e:
+            results.append({"line": line_num, "error": str(e), "ok": False})
+
+    if json_mode:
+        print(json.dumps({"results": results}, indent=2, default=str))
+    else:
+        for r in results:
+            if r["ok"]:
+                print(f"Line {r['line']}: Sent (id: {r['message_id']})")
+            else:
+                print(f"Line {r['line']}: Error: {r['error']}")
 
 
 def cmd_react(args: argparse.Namespace) -> None:
@@ -1395,10 +1447,17 @@ Other:
     # --- Writing ---
 
     send_p = sub.add_parser("send", help=_h)
-    send_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    send_p.add_argument(
+        "conversation", nargs="?", default=None, help="Channel name (#general) or UUID"
+    )
     send_p.add_argument("message", nargs="?", default=None, help='Message text (use "-" for stdin)')
     send_p.add_argument("--thread", type=str, help="Reply to thread ID")
     send_p.add_argument("--file", type=str, help="File path to upload and attach")
+    send_p.add_argument(
+        "--batch",
+        action="store_true",
+        help='Read NDJSON from stdin: {"conversation": "...", "message": "..."}',
+    )
 
     react_p = sub.add_parser("react", help=_h)
     react_p.add_argument("conversation", help="Channel name (#general) or UUID")
