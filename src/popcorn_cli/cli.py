@@ -9,9 +9,9 @@ Usage:
     popcorn whoami
     popcorn search channels|dms|users [query]
     popcorn search messages <query>
-    popcorn read <conversation> [--thread ID] [--limit N]
+    popcorn list-messages <conversation> [--thread ID] [--limit N]
     popcorn info <conversation>
-    popcorn send <conversation> "message" [--thread ID] [--file PATH]
+    popcorn send-message <conversation> "message" [--thread ID] [--file PATH]
     popcorn react <conversation> <message_id> <emoji> [--remove]
     popcorn edit-message <conversation> <message_id> "content"
     popcorn download <file_key> [-o PATH]
@@ -23,8 +23,8 @@ Usage:
     popcorn check-access <owner/repo>
     popcorn commands --json
     popcorn completion bash|zsh
-    echo "msg" | popcorn send <conversation>
-    cat batch.ndjson | popcorn send --batch --json
+    echo "msg" | popcorn send-message <conversation>
+    cat batch.ndjson | popcorn send-message --batch --json
 
 Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
        -e/--env, --no-color, --workspace UUID
@@ -500,7 +500,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         _output(args, resp, fmt)
 
 
-def cmd_read(args: argparse.Namespace) -> None:
+def cmd_list_messages(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.read_messages(
         client,
@@ -544,7 +544,7 @@ def cmd_info(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
-def cmd_send(args: argparse.Namespace) -> None:
+def cmd_send_message(args: argparse.Namespace) -> None:
     if getattr(args, "batch", False):
         _cmd_send_batch(args)
         return
@@ -678,7 +678,7 @@ def cmd_download(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cmd_create(args: argparse.Namespace) -> None:
+def cmd_create_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     members = args.members.split(",") if getattr(args, "members", None) else None
     resp = operations.create_conversation(
@@ -692,19 +692,19 @@ def cmd_create(args: argparse.Namespace) -> None:
     _output(args, resp, f"Created: {conv.get('name', '')} (id: {conv.get('id', '?')})")
 
 
-def cmd_join(args: argparse.Namespace) -> None:
+def cmd_join_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.join_conversation(client, args.conversation)
     _output(args, resp, f"Joined {args.conversation}")
 
 
-def cmd_leave(args: argparse.Namespace) -> None:
+def cmd_leave_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.leave_conversation(client, args.conversation)
     _output(args, resp, f"Left {args.conversation}")
 
 
-def cmd_archive(args: argparse.Namespace) -> None:
+def cmd_archive_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if getattr(args, "undo", False):
         resp = operations.unarchive_conversation(client, args.conversation)
@@ -1233,7 +1233,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami search read get-message info inbox watch send react edit-message delete-message create join leave invite kick edit-channel archive delete-channel webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami search list-messages get-message info inbox watch send-message react edit-message delete-message create-channel join-channel leave-channel invite kick edit-channel archive-channel delete-channel webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1268,22 +1268,22 @@ _popcorn() {
         'env:Show or switch environment'
         'whoami:Show current user and workspace'
         'search:Search channels, DMs, users, or messages'
-        'read:Read message history'
+        'list-messages:Read message history'
         'get-message:Get a single message by ID'
         'info:Show conversation info and members'
         'inbox:Show notifications'
         'watch:Watch a channel for new messages'
-        'send:Send a message'
+        'send-message:Send a message'
         'react:React to a message'
         'edit-message:Edit a message'
         'delete-message:Delete a message'
-        'create:Create a channel or DM'
-        'join:Join a channel'
-        'leave:Leave a channel'
+        'create-channel:Create a channel'
+        'join-channel:Join a channel'
+        'leave-channel:Leave a channel'
         'invite:Invite users to a channel'
         'kick:Remove a user from a channel'
         'edit-channel:Update channel name or description'
-        'archive:Archive a channel'
+        'archive-channel:Archive a channel'
         'delete-channel:Delete a channel'
         'webhook:Manage webhooks'
         'api:Raw API call'
@@ -1366,22 +1366,22 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "whoami": "Show current user and workspace",
     "inbox": "Show notifications (mentions, replies, reactions)",
     "search": "Search channels, DMs, users, or messages",
-    "read": "Read message history from a channel or thread",
+    "list-messages": "Read message history from a channel or thread",
     "info": "Show conversation info and members",
     "get-message": "Get a single message by ID",
     "download": "Download a file attachment",
     "watch": "Watch a channel for new messages (polling)",
-    "send": "Send a message to a channel or DM",
+    "send-message": "Send a message to a channel or DM",
     "react": "Add or remove an emoji reaction",
     "edit-message": "Edit a message",
     "delete-message": "Delete a message",
-    "create": "Create a channel or DM",
-    "join": "Join a channel",
-    "leave": "Leave a channel",
+    "create-channel": "Create a channel",
+    "join-channel": "Join a channel",
+    "leave-channel": "Leave a channel",
     "invite": "Invite users to a channel",
     "kick": "Remove a user from a channel",
     "edit-channel": "Update channel name or description",
-    "archive": "Archive or unarchive a channel",
+    "archive-channel": "Archive or unarchive a channel",
     "delete-channel": "Delete a channel",
     "webhook": "Manage webhooks (create, list, deliveries)",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -1478,8 +1478,8 @@ Sites:
   log           Show site version history
 
 Messages:
-  read          Read message history
-  send          Send a message
+  list-messages Read message history
+  send-message  Send a message
   get-message   Get a single message by ID
   edit-message  Edit a message
   delete-message Delete a message
@@ -1491,13 +1491,13 @@ Messages:
 
 Channels:
   info          Show channel info and members
-  create        Create a channel or DM
-  join          Join a channel
-  leave         Leave a channel
+  create-channel Create a channel
+  join-channel  Join a channel
+  leave-channel Leave a channel
   invite        Invite users to a channel
   kick          Remove a user from a channel
   edit-channel  Update channel name or description
-  archive       Archive a channel
+  archive-channel Archive a channel
   delete-channel  Delete a channel
 
 Webhooks:
@@ -1580,7 +1580,7 @@ Other:
     search_p.add_argument("query", nargs="?", default="", help="Search query")
     search_p.add_argument("--cursor", type=str, help="Pagination cursor (messages only)")
 
-    read_p = sub.add_parser("read", help=_h)
+    read_p = sub.add_parser("list-messages", help=_h)
     read_p.add_argument("conversation", help="Channel name (#general) or UUID")
     read_p.add_argument("--thread", type=str, help="Thread ID to read replies")
     read_p.add_argument("--limit", type=int, help="Max messages (default 25)")
@@ -1611,7 +1611,7 @@ Other:
 
     # --- Writing ---
 
-    send_p = sub.add_parser("send", help=_h)
+    send_p = sub.add_parser("send-message", help=_h)
     send_p.add_argument(
         "conversation", nargs="?", default=None, help="Channel name (#general) or UUID"
     )
@@ -1641,21 +1641,21 @@ Other:
 
     # --- Channel management ---
 
-    create_p = sub.add_parser("create", help=_h)
+    create_p = sub.add_parser("create-channel", help=_h)
     create_p.add_argument("name", help="Channel name")
     create_p.add_argument(
         "--type",
-        choices=["public_channel", "private_channel", "dm", "group_dm"],
+        choices=["public_channel", "private_channel"],
         default="public_channel",
         help="Conversation type",
     )
     create_p.add_argument("--description", type=str, help="Channel description")
     create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
 
-    join_p = sub.add_parser("join", help=_h)
+    join_p = sub.add_parser("join-channel", help=_h)
     join_p.add_argument("conversation", help="Channel name (#general) or UUID")
 
-    leave_p = sub.add_parser("leave", help=_h)
+    leave_p = sub.add_parser("leave-channel", help=_h)
     leave_p.add_argument("conversation", help="Channel name (#general) or UUID")
 
     invite_p = sub.add_parser("invite", help=_h)
@@ -1671,7 +1671,7 @@ Other:
     update_p.add_argument("--name", type=str, help="New name")
     update_p.add_argument("--description", type=str, help="New description")
 
-    archive_p = sub.add_parser("archive", help=_h)
+    archive_p = sub.add_parser("archive-channel", help=_h)
     archive_p.add_argument("conversation", help="Channel name (#general) or UUID")
     archive_p.add_argument("--undo", action="store_true", help="Unarchive instead")
 
@@ -1763,18 +1763,18 @@ Other:
 _COMMANDS = {
     "whoami": cmd_whoami,
     "search": cmd_search,
-    "read": cmd_read,
+    "list-messages": cmd_list_messages,
     "info": cmd_info,
-    "send": cmd_send,
+    "send-message": cmd_send_message,
     "react": cmd_react,
     "edit-message": cmd_edit_message,
     "delete-message": cmd_delete_message,
     "get-message": cmd_get_message,
     "download": cmd_download,
-    "create": cmd_create,
-    "join": cmd_join,
-    "leave": cmd_leave,
-    "archive": cmd_archive,
+    "create-channel": cmd_create_channel,
+    "join-channel": cmd_join_channel,
+    "leave-channel": cmd_leave_channel,
+    "archive-channel": cmd_archive_channel,
     "invite": cmd_invite,
     "kick": cmd_kick,
     "edit-channel": cmd_edit_channel,

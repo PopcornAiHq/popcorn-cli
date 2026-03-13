@@ -52,36 +52,38 @@ class TestFlagHoisting:
     def test_json_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["read", "--json", "#general"]) == [
+        assert _hoist_global_flags(["list-messages", "--json", "#general"]) == [
             "--json",
-            "read",
+            "list-messages",
             "#general",
         ]
 
     def test_quiet_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["read", "-q", "#general"]) == [
+        assert _hoist_global_flags(["list-messages", "-q", "#general"]) == [
             "-q",
-            "read",
+            "list-messages",
             "#general",
         ]
 
     def test_timeout_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["read", "--timeout", "60", "#general"]) == [
+        assert _hoist_global_flags(["list-messages", "--timeout", "60", "#general"]) == [
             "--timeout",
             "60",
-            "read",
+            "list-messages",
             "#general",
         ]
 
     def test_multiple_flags_hoisted(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        result = _hoist_global_flags(["read", "--json", "-q", "--timeout", "10", "#general"])
-        assert result == ["--json", "-q", "--timeout", "10", "read", "#general"]
+        result = _hoist_global_flags(
+            ["list-messages", "--json", "-q", "--timeout", "10", "#general"]
+        )
+        assert result == ["--json", "-q", "--timeout", "10", "list-messages", "#general"]
 
 
 class TestAuthCommands:
@@ -110,14 +112,14 @@ class TestReadingCommands:
         assert args.search_type == "channels"
         assert args.query == "test"
 
-    def test_read(self, parser):
-        args = parser.parse_args(["read", "#general", "--limit", "10"])
-        assert args.command == "read"
+    def test_list_messages(self, parser):
+        args = parser.parse_args(["list-messages", "#general", "--limit", "10"])
+        assert args.command == "list-messages"
         assert args.conversation == "#general"
         assert args.limit == 10
 
-    def test_read_thread(self, parser):
-        args = parser.parse_args(["read", "#general", "--thread", "t-123"])
+    def test_list_messages_thread(self, parser):
+        args = parser.parse_args(["list-messages", "#general", "--thread", "t-123"])
         assert args.thread == "t-123"
 
     def test_inbox_unread(self, parser):
@@ -128,8 +130,8 @@ class TestReadingCommands:
         with pytest.raises(SystemExit):
             parser.parse_args(["inbox", "--unread", "--read"])
 
-    def test_read_cursor(self, parser):
-        args = parser.parse_args(["read", "#general", "--cursor", "abc123"])
+    def test_list_messages_cursor(self, parser):
+        args = parser.parse_args(["list-messages", "#general", "--cursor", "abc123"])
         assert args.cursor == "abc123"
 
     def test_inbox_cursor(self, parser):
@@ -150,14 +152,14 @@ class TestReadingCommands:
 
 
 class TestWritingCommands:
-    def test_send(self, parser):
-        args = parser.parse_args(["send", "#general", "hello world"])
-        assert args.command == "send"
+    def test_send_message(self, parser):
+        args = parser.parse_args(["send-message", "#general", "hello world"])
+        assert args.command == "send-message"
         assert args.conversation == "#general"
         assert args.message == "hello world"
 
-    def test_send_batch(self, parser):
-        args = parser.parse_args(["send", "--batch"])
+    def test_send_message_batch(self, parser):
+        args = parser.parse_args(["send-message", "--batch"])
         assert args.batch is True
         assert args.conversation is None
 
@@ -169,31 +171,31 @@ class TestWritingCommands:
         args = parser.parse_args(["react", "#general", "msg-1", "thumbsup", "--remove"])
         assert args.remove is True
 
-    def test_edit(self, parser):
-        args = parser.parse_args(["edit", "#general", "msg-1", "new content"])
+    def test_edit_message(self, parser):
+        args = parser.parse_args(["edit-message", "#general", "msg-1", "new content"])
         assert args.content == "new content"
 
-    def test_delete(self, parser):
-        args = parser.parse_args(["delete", "#general", "msg-1"])
+    def test_delete_message(self, parser):
+        args = parser.parse_args(["delete-message", "#general", "msg-1"])
         assert args.message_id == "msg-1"
 
 
 class TestChannelManagement:
-    def test_create(self, parser):
-        args = parser.parse_args(["create", "new-channel"])
-        assert args.command == "create"
+    def test_create_channel(self, parser):
+        args = parser.parse_args(["create-channel", "new-channel"])
+        assert args.command == "create-channel"
         assert args.name == "new-channel"
 
-    def test_create_private(self, parser):
-        args = parser.parse_args(["create", "secret", "--type", "private_channel"])
+    def test_create_channel_private(self, parser):
+        args = parser.parse_args(["create-channel", "secret", "--type", "private_channel"])
         assert args.type == "private_channel"
 
-    def test_join(self, parser):
-        args = parser.parse_args(["join", "#general"])
+    def test_join_channel(self, parser):
+        args = parser.parse_args(["join-channel", "#general"])
         assert args.conversation == "#general"
 
-    def test_archive_undo(self, parser):
-        args = parser.parse_args(["archive", "#general", "--undo"])
+    def test_archive_channel_undo(self, parser):
+        args = parser.parse_args(["archive-channel", "#general", "--undo"])
         assert args.undo is True
 
     def test_invite(self, parser):
@@ -236,16 +238,16 @@ class TestDidYouMean:
     def test_close_typo_suggests(self):
         parser = build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(["sned"])
+            parser.parse_args(["send-mesage"])
         assert exc_info.value.code == 2
 
     def test_close_typo_message(self, capsys):
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(["sned"])
+            parser.parse_args(["send-mesage"])
         err = capsys.readouterr().err
         assert "Did you mean" in err
-        assert "send" in err
+        assert "send-message" in err
 
     def test_distant_typo_no_suggestion(self, capsys):
         parser = build_parser()
@@ -290,7 +292,7 @@ class TestCommands:
         assert "commands" in schema
         # All top-level commands are present
         cmd_names = [c["name"] for c in schema["commands"]]
-        for expected in ["send", "read", "auth", "pop", "commands"]:
+        for expected in ["send-message", "list-messages", "auth", "pop", "commands"]:
             assert expected in cmd_names
 
     def test_commands_has_subcommands_for_auth(self, capsys):
@@ -308,7 +310,7 @@ class TestCommands:
         assert "login" in sub_names
         assert "status" in sub_names
 
-    def test_commands_send_has_arguments(self, capsys):
+    def test_commands_send_message_has_arguments(self, capsys):
         import json
 
         from popcorn_cli.cli import cmd_commands
@@ -317,7 +319,7 @@ class TestCommands:
         cmd_commands(args)
         out = capsys.readouterr().out
         schema = json.loads(out)
-        send_cmd = next(c for c in schema["commands"] if c["name"] == "send")
+        send_cmd = next(c for c in schema["commands"] if c["name"] == "send-message")
         assert "arguments" in send_cmd
         arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_cmd["arguments"]]
         assert "conversation" in arg_names
