@@ -133,7 +133,7 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
 
 
 def _select_workspace(client: APIClient, profile: Profile) -> None:
-    """Interactive workspace selection."""
+    """Interactive workspace selection (auto-selects first when non-interactive)."""
     workspaces = operations.list_workspaces(client)
 
     if not workspaces:
@@ -143,24 +143,33 @@ def _select_workspace(client: APIClient, profile: Profile) -> None:
         ws = workspaces[0]
         profile.workspace_id = ws["id"]
         profile.workspace_name = ws.get("name", "")
-        print(f"Auto-selected workspace: {ws.get('name', ws['id'])}")
-    else:
-        print("\nAvailable workspaces:")
-        for i, ws in enumerate(workspaces, 1):
-            active = " <- current" if ws["id"] == profile.workspace_id else ""
-            print(f"  {i}. {ws.get('name', 'Unnamed')} ({ws['id']}){active}")
-        while True:
-            try:
-                choice = input(f"\nSelect workspace [1-{len(workspaces)}]: ").strip()
-                idx = int(choice) - 1
-                if 0 <= idx < len(workspaces):
-                    ws = workspaces[idx]
-                    profile.workspace_id = ws["id"]
-                    profile.workspace_name = ws.get("name", "")
-                    break
-            except (ValueError, EOFError):
-                pass
-            print("Invalid selection, try again.")
+        _status(f"Auto-selected workspace: {ws.get('name', ws['id'])}")
+        return
+
+    # Non-interactive: auto-select first workspace so agents don't hang
+    if not sys.stdin.isatty():
+        ws = workspaces[0]
+        profile.workspace_id = ws["id"]
+        profile.workspace_name = ws.get("name", "")
+        _status(f"Auto-selected workspace: {ws.get('name', ws['id'])} (first of {len(workspaces)})")
+        return
+
+    print("\nAvailable workspaces:")
+    for i, ws in enumerate(workspaces, 1):
+        active = " <- current" if ws["id"] == profile.workspace_id else ""
+        print(f"  {i}. {ws.get('name', 'Unnamed')} ({ws['id']}){active}")
+    while True:
+        try:
+            choice = input(f"\nSelect workspace [1-{len(workspaces)}]: ").strip()
+            idx = int(choice) - 1
+            if 0 <= idx < len(workspaces):
+                ws = workspaces[idx]
+                profile.workspace_id = ws["id"]
+                profile.workspace_name = ws.get("name", "")
+                break
+        except (ValueError, EOFError):
+            pass
+        print("Invalid selection, try again.")
 
 
 # ---------------------------------------------------------------------------
@@ -724,10 +733,20 @@ def cmd_webhook(args: argparse.Namespace) -> None:
         _output(args, resp, f"Created webhook for {args.conversation}")
     elif sub == "list":
         resp = operations.list_webhooks(client, args.conversation)
-        _output(args, resp, json.dumps(resp, indent=2, default=str))
+        hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
+        lines = [f"Webhooks for {args.conversation} ({len(hooks)}):"]
+        for h in hooks:
+            lines.append(f"  {h.get('id', '?')}  {h.get('url', '?')}")
+        _output(args, resp, "\n".join(lines))
     elif sub == "deliveries":
         resp = operations.list_webhook_deliveries(client, args.webhook_id)
-        _output(args, resp, json.dumps(resp, indent=2, default=str))
+        deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
+        lines = [f"Deliveries for {args.webhook_id} ({len(deliveries)}):"]
+        for d in deliveries:
+            status = d.get("status_code", "?")
+            ts = d.get("created_at", "?")
+            lines.append(f"  {d.get('id', '?')}  {status}  {ts}")
+        _output(args, resp, "\n".join(lines))
     else:
         raise PopcornError("Usage: popcorn webhook [create|list|deliveries]")
 
@@ -905,10 +924,10 @@ def cmd_pop(args: argparse.Namespace) -> None:
             local_json.unlink(missing_ok=True)
             conversation_id = None
         else:
-            raise PopcornError(
-                "Stale channel configuration: channel no longer exists. "
-                "Use --force to auto-recreate."
-            )
+            # Non-interactive: auto-recreate like --force so agents don't hang
+            _status("Stale channel configuration — auto-recreating.")
+            local_json.unlink(missing_ok=True)
+            conversation_id = None
 
     # Create tarball
     tarball = create_tarball()

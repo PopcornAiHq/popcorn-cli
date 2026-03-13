@@ -614,17 +614,39 @@ class TestPop:
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
         assert local["conversation_id"] == "conv-new"
 
-    def test_pop_stale_config_no_force_aborts(self, mock_client, tmp_path, monkeypatch, pop_args):
-        """Non-interactive + stale config + no --force = abort."""
+    def test_pop_stale_config_no_force_auto_recreates(
+        self, mock_client, tmp_path, monkeypatch, pop_args
+    ):
+        """Non-interactive + stale config auto-recreates like --force."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / ".popcorn.local.json").write_text(
             json.dumps({"conversation_id": "dead-conv", "site_name": "old-site"})
         )
+        (tmp_path / ".gitignore").write_text("")
 
         mock_client.get.side_effect = APIError("Not found", status_code=404)
+        mock_client.post.side_effect = [
+            {
+                "ok": True,
+                "conversation": {"id": "conv-new", "name": "pop-test", "type": "workspace_channel"},
+            },
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "key.tar.gz",
+            },
+            {
+                "conversation_id": "conv-new",
+                "site_name": "pop-test",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+            _SITE_STATUS,
+        ]
 
         with (
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("sys.stdin") as mock_stdin,
@@ -632,8 +654,10 @@ class TestPop:
             mock_stdin.isatty.return_value = False
             from popcorn_cli.cli import cmd_pop
 
-            with pytest.raises(PopcornError, match="Stale channel configuration"):
-                cmd_pop(pop_args)
+            cmd_pop(pop_args)
+
+        local = json.loads((tmp_path / ".popcorn.local.json").read_text())
+        assert local["conversation_id"] == "conv-new"
 
     def test_pop_publish_vm_error_surfaced(self, mock_client, tmp_path, monkeypatch, pop_args):
         """VM error from publish body is surfaced to user."""
