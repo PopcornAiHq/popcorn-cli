@@ -21,6 +21,7 @@ Usage:
     popcorn status [channel]
     popcorn log [channel] [--limit N]
     popcorn check-access <owner/repo>
+    popcorn commands --json
     popcorn completion bash|zsh
     echo "msg" | popcorn send <conversation>
     cat batch.ndjson | popcorn send --batch --json
@@ -1269,6 +1270,84 @@ def cmd_completion(args: argparse.Namespace) -> None:
         raise PopcornError(f"Unknown shell: {shell}. Supported: bash, zsh")
 
 
+def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
+    """Extract argument metadata from an argparse parser."""
+    args_out: list[dict[str, Any]] = []
+    for action in parser._actions:
+        if isinstance(
+            action,
+            argparse._HelpAction | argparse._VersionAction | argparse._SubParsersAction,
+        ):
+            continue
+        entry: dict[str, Any] = {}
+        if action.option_strings:
+            entry["flags"] = action.option_strings
+        else:
+            entry["name"] = action.dest
+        entry["required"] = (
+            action.required if action.option_strings else action.nargs not in ("?", "*")
+        )
+        if action.help and action.help != argparse.SUPPRESS:
+            entry["help"] = action.help
+        if action.type is not None:
+            entry["type"] = getattr(action.type, "__name__", str(action.type))
+        if isinstance(action, argparse._StoreConstAction):
+            entry["type"] = "bool"
+        if action.choices:
+            entry["choices"] = list(action.choices)
+        if action.default is not None and action.default != argparse.SUPPRESS:
+            entry["default"] = action.default
+        args_out.append(entry)
+    return args_out
+
+
+def cmd_commands(_args: argparse.Namespace) -> None:
+    """Dump full CLI schema as JSON for agent bootstrapping."""
+    parser = build_parser()
+    # Find the subparsers action
+    sub_action = None
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            sub_action = action
+            break
+
+    commands: list[dict[str, Any]] = []
+    if sub_action:
+        for name, sub_parser in sub_action.choices.items():
+            cmd: dict[str, Any] = {"name": name}
+            # Check for nested subcommands (auth, workspace, webhook)
+            nested_sub = None
+            for act in sub_parser._actions:
+                if isinstance(act, argparse._SubParsersAction):
+                    nested_sub = act
+                    break
+            if nested_sub:
+                subcmds = []
+                for sub_name, sub_sub_parser in nested_sub.choices.items():
+                    sub_entry: dict[str, Any] = {"name": sub_name}
+                    sub_args = _introspect_parser(sub_sub_parser)
+                    if sub_args:
+                        sub_entry["arguments"] = sub_args
+                    if sub_sub_parser.description:
+                        sub_entry["description"] = sub_sub_parser.description
+                    subcmds.append(sub_entry)
+                cmd["subcommands"] = subcmds
+            else:
+                cmd_args = _introspect_parser(sub_parser)
+                if cmd_args:
+                    cmd["arguments"] = cmd_args
+            commands.append(cmd)
+
+    global_flags = _introspect_parser(parser)
+
+    schema = {
+        "version": __version__,
+        "global_flags": global_flags,
+        "commands": commands,
+    }
+    print(json.dumps(schema, indent=2, default=str))
+
+
 # ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
@@ -1337,7 +1416,8 @@ Integrations:
 
 Other:
   api           Raw API call (like gh api)
-  completion    Generate shell completions"""
+  completion    Generate shell completions
+  commands      Dump CLI schema as JSON"""
 
     parser = PopcornParser(
         prog="popcorn",
@@ -1541,10 +1621,12 @@ Other:
     check_ra_p = sub.add_parser("check-access", help=_h)
     check_ra_p.add_argument("repo", help="Repository (owner/repo)")
 
-    # --- Shell ---
+    # --- Shell & discovery ---
 
     comp_p = sub.add_parser("completion", help=_h)
     comp_p.add_argument("shell", choices=["bash", "zsh"], help="Shell type")
+
+    sub.add_parser("commands", help=_h)
 
     # Hide the auto-generated subparser list — the epilog handles display
     sub._choices_actions = []
@@ -1588,6 +1670,7 @@ _COMMANDS = {
     "pop": cmd_pop,
     "status": cmd_status,
     "log": cmd_log,
+    "commands": cmd_commands,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents

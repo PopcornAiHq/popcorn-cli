@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import argparse
+
 import pytest
 
 from popcorn_cli.cli import build_parser
@@ -220,7 +222,7 @@ class TestDidYouMean:
     def test_distant_typo_no_suggestion(self, capsys):
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(["zzzznotacommand"])
+            parser.parse_args(["xyzqwfoo"])
         err = capsys.readouterr().err
         assert "unknown command" in err
         assert "Did you mean" not in err
@@ -239,3 +241,55 @@ class TestCheckAccess:
         args = parser.parse_args(["check-access", "acme/widgets"])
         assert args.command == "check-access"
         assert args.repo == "acme/widgets"
+
+
+class TestCommands:
+    def test_commands_parses(self, parser):
+        args = parser.parse_args(["commands"])
+        assert args.command == "commands"
+
+    def test_commands_json_output(self, capsys):
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        args = argparse.Namespace(command="commands")
+        cmd_commands(args)
+        out = capsys.readouterr().out
+        schema = json.loads(out)
+        assert "version" in schema
+        assert "global_flags" in schema
+        assert "commands" in schema
+        # All top-level commands are present
+        cmd_names = [c["name"] for c in schema["commands"]]
+        for expected in ["send", "read", "auth", "pop", "commands"]:
+            assert expected in cmd_names
+
+    def test_commands_has_subcommands_for_auth(self, capsys):
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        args = argparse.Namespace(command="commands")
+        cmd_commands(args)
+        out = capsys.readouterr().out
+        schema = json.loads(out)
+        auth_cmd = next(c for c in schema["commands"] if c["name"] == "auth")
+        assert "subcommands" in auth_cmd
+        sub_names = [s["name"] for s in auth_cmd["subcommands"]]
+        assert "login" in sub_names
+        assert "status" in sub_names
+
+    def test_commands_send_has_arguments(self, capsys):
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        args = argparse.Namespace(command="commands")
+        cmd_commands(args)
+        out = capsys.readouterr().out
+        schema = json.loads(out)
+        send_cmd = next(c for c in schema["commands"] if c["name"] == "send")
+        assert "arguments" in send_cmd
+        arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_cmd["arguments"]]
+        assert "conversation" in arg_names
