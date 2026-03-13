@@ -13,7 +13,7 @@ Usage:
     popcorn info <conversation>
     popcorn send <conversation> "message" [--thread ID] [--file PATH]
     popcorn react <conversation> <message_id> <emoji> [--remove]
-    popcorn edit <conversation> <message_id> "content"
+    popcorn edit-message <conversation> <message_id> "content"
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
@@ -629,13 +629,13 @@ def cmd_react(args: argparse.Namespace) -> None:
         _output(args, resp, f"Added {args.emoji}")
 
 
-def cmd_edit(args: argparse.Namespace) -> None:
+def cmd_edit_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.edit_message(client, args.conversation, args.message_id, args.content)
     _output(args, resp, f"Edited (id: {args.message_id})")
 
 
-def cmd_delete(args: argparse.Namespace) -> None:
+def cmd_delete_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.delete_message(client, args.conversation, args.message_id)
     _output(args, resp, f"Deleted (id: {args.message_id})")
@@ -727,7 +727,7 @@ def cmd_kick(args: argparse.Namespace) -> None:
     _output(args, resp, f"Removed {args.user_id} from {args.conversation}")
 
 
-def cmd_update(args: argparse.Namespace) -> None:
+def cmd_edit_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.update_conversation(
         client,
@@ -738,7 +738,7 @@ def cmd_update(args: argparse.Namespace) -> None:
     _output(args, resp, f"Updated {args.conversation}")
 
 
-def cmd_delete_conversation(args: argparse.Namespace) -> None:
+def cmd_delete_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.delete_conversation(client, args.conversation)
     _output(args, resp, f"Deleted {args.conversation}")
@@ -1233,7 +1233,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami search read get-message info inbox watch send react edit delete create join leave invite kick update archive delete-conversation webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami search read get-message info inbox watch send react edit-message delete-message create join leave invite kick edit-channel archive delete-channel webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1275,16 +1275,16 @@ _popcorn() {
         'watch:Watch a channel for new messages'
         'send:Send a message'
         'react:React to a message'
-        'edit:Edit a message'
-        'delete:Delete a message'
+        'edit-message:Edit a message'
+        'delete-message:Delete a message'
         'create:Create a channel or DM'
         'join:Join a channel'
         'leave:Leave a channel'
         'invite:Invite users to a channel'
         'kick:Remove a user from a channel'
-        'update:Update channel name or description'
+        'edit-channel:Update channel name or description'
         'archive:Archive a channel'
-        'delete-conversation:Delete a conversation'
+        'delete-channel:Delete a channel'
         'webhook:Manage webhooks'
         'api:Raw API call'
         'check-access:Check repo access'
@@ -1373,16 +1373,16 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "watch": "Watch a channel for new messages (polling)",
     "send": "Send a message to a channel or DM",
     "react": "Add or remove an emoji reaction",
-    "edit": "Edit a message",
-    "delete": "Delete a message",
+    "edit-message": "Edit a message",
+    "delete-message": "Delete a message",
     "create": "Create a channel or DM",
     "join": "Join a channel",
     "leave": "Leave a channel",
     "invite": "Invite users to a channel",
     "kick": "Remove a user from a channel",
-    "update": "Update channel name or description",
+    "edit-channel": "Update channel name or description",
     "archive": "Archive or unarchive a channel",
-    "delete-conversation": "Delete a conversation",
+    "delete-channel": "Delete a channel",
     "webhook": "Manage webhooks (create, list, deliveries)",
     "api": "Raw API call (escape hatch, like gh api)",
     "pop": "Push site resources to a channel",
@@ -1472,45 +1472,45 @@ class PopcornParser(argparse.ArgumentParser):
 
 def build_parser() -> PopcornParser:
     epilog = """\
-Auth & identity:
-  auth          Authentication commands
-  workspace     Workspace commands
-  env           Show or switch environment
-  whoami        Show current user and workspace
+Sites:
+  pop           Deploy site to a channel
+  status        Show site deployment status
+  log           Show site version history
 
-Reading:
-  inbox         Show notifications
-  search        Search channels, DMs, users, or messages
+Messages:
   read          Read message history
-  info          Show conversation info and members
-  get-message   Get a single message by ID
-  download      Download a file attachment
-  watch         Watch a channel for new messages
-
-Writing:
   send          Send a message
+  get-message   Get a single message by ID
+  edit-message  Edit a message
+  delete-message Delete a message
   react         React to a message
-  edit          Edit a message
-  delete        Delete a message
+  search        Search channels, DMs, users, or messages
+  inbox         Show notifications
+  download      Download a file attachment
+  watch         Watch for new messages
 
-Channel management:
+Channels:
+  info          Show channel info and members
   create        Create a channel or DM
   join          Join a channel
   leave         Leave a channel
   invite        Invite users to a channel
   kick          Remove a user from a channel
-  update        Update channel name or description
+  edit-channel  Update channel name or description
   archive       Archive a channel
-  delete-conversation  Delete a conversation
-  pop           Push site resources to a channel
-  status        Show site deployment status
-  log           Show site version history
+  delete-channel  Delete a channel
 
 Webhooks:
   webhook       Manage webhooks
 
 Integrations:
   check-access  Check repo access
+
+Auth & identity:
+  auth          Authentication commands
+  workspace     Workspace commands
+  env           Show or switch environment
+  whoami        Show current user and workspace
 
 Other:
   api           Raw API call (like gh api)
@@ -1630,12 +1630,12 @@ Other:
     react_p.add_argument("emoji", help='Emoji (e.g. "thumbs up")')
     react_p.add_argument("--remove", action="store_true", help="Remove reaction instead of adding")
 
-    edit_p = sub.add_parser("edit", help=_h)
+    edit_p = sub.add_parser("edit-message", help=_h)
     edit_p.add_argument("conversation", help="Channel name (#general) or UUID")
     edit_p.add_argument("message_id", help="Message UUID")
     edit_p.add_argument("content", help="New message content")
 
-    del_p = sub.add_parser("delete", help=_h)
+    del_p = sub.add_parser("delete-message", help=_h)
     del_p.add_argument("conversation", help="Channel name (#general) or UUID")
     del_p.add_argument("message_id", help="Message UUID")
 
@@ -1666,7 +1666,7 @@ Other:
     kick_p.add_argument("conversation", help="Channel name (#general) or UUID")
     kick_p.add_argument("user_id", help="User UUID to remove")
 
-    update_p = sub.add_parser("update", help=_h)
+    update_p = sub.add_parser("edit-channel", help=_h)
     update_p.add_argument("conversation", help="Channel name (#general) or UUID")
     update_p.add_argument("--name", type=str, help="New name")
     update_p.add_argument("--description", type=str, help="New description")
@@ -1675,7 +1675,7 @@ Other:
     archive_p.add_argument("conversation", help="Channel name (#general) or UUID")
     archive_p.add_argument("--undo", action="store_true", help="Unarchive instead")
 
-    delconv_p = sub.add_parser("delete-conversation", help=_h)
+    delconv_p = sub.add_parser("delete-channel", help=_h)
     delconv_p.add_argument("conversation", help="Channel name (#general) or UUID")
 
     # --- Webhooks ---
@@ -1767,8 +1767,8 @@ _COMMANDS = {
     "info": cmd_info,
     "send": cmd_send,
     "react": cmd_react,
-    "edit": cmd_edit,
-    "delete": cmd_delete,
+    "edit-message": cmd_edit_message,
+    "delete-message": cmd_delete_message,
     "get-message": cmd_get_message,
     "download": cmd_download,
     "create": cmd_create,
@@ -1777,8 +1777,8 @@ _COMMANDS = {
     "archive": cmd_archive,
     "invite": cmd_invite,
     "kick": cmd_kick,
-    "update": cmd_update,
-    "delete-conversation": cmd_delete_conversation,
+    "edit-channel": cmd_edit_channel,
+    "delete-channel": cmd_delete_channel,
     "inbox": cmd_inbox,
     "watch": cmd_watch,
     "env": cmd_env,
