@@ -1473,49 +1473,47 @@ class PopcornParser(argparse.ArgumentParser):
 def build_parser() -> PopcornParser:
     epilog = """\
 Sites:
-  pop           Deploy site to a channel
-  status        Show site deployment status
-  log           Show site version history
+  pop             Deploy site to a channel
+  status          Show site deployment status
+  log             Show site version history
 
 Messages:
-  list-messages Read message history
-  send-message  Send a message
-  get-message   Get a single message by ID
-  edit-message  Edit a message
-  delete-message Delete a message
-  react         React to a message
-  search        Search channels, DMs, users, or messages
-  inbox         Show notifications
-  download      Download a file attachment
-  watch         Watch for new messages
+  send-message    Send a message
+  list-messages   Read message history
+  get-message     Get a single message by ID
+  edit-message    Edit a message
+  delete-message  Delete a message
+  react           React to a message
+  search          Search channels, DMs, users, or messages
+  inbox           Show notifications
+  download        Download a file attachment
+  watch           Watch for new messages
 
 Channels:
-  info          Show channel info and members
-  create-channel Create a channel
-  join-channel  Join a channel
-  leave-channel Leave a channel
-  invite        Invite users to a channel
-  kick          Remove a user from a channel
-  edit-channel  Update channel name or description
+  create-channel  Create a channel
+  info            Show channel info and members
+  join-channel    Join a channel
+  leave-channel   Leave a channel
+  invite          Invite users to a channel
+  kick            Remove a user from a channel
+  edit-channel    Update channel name or description
   archive-channel Archive a channel
   delete-channel  Delete a channel
 
 Webhooks:
-  webhook       Manage webhooks
-
-Integrations:
-  check-access  Check repo access
+  webhook         Manage webhooks
 
 Auth & identity:
-  auth          Authentication commands
-  workspace     Workspace commands
-  env           Show or switch environment
-  whoami        Show current user and workspace
+  auth            Authentication commands
+  workspace       Workspace commands
+  env             Show or switch environment
+  whoami          Show current user and workspace
 
 Other:
-  api           Raw API call (like gh api)
-  completion    Generate shell completions
-  commands      Dump CLI schema as JSON"""
+  api             Raw API call (like gh api)
+  check-access    Check repo access
+  completion      Generate shell completions
+  commands        Dump CLI schema as JSON"""
 
     parser = PopcornParser(
         prog="popcorn",
