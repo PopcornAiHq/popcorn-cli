@@ -1,6 +1,6 @@
 # Popcorn CLI
 
-CLI for the [Popcorn](https://popcorn.ai) API. Read channels, send messages, search conversations, and manage your workspace from the terminal.
+CLI for the [Popcorn](https://popcorn.ai) API. Deploy sites, send messages, search conversations, and manage your workspace from the terminal.
 
 ## Install
 
@@ -24,14 +24,17 @@ popcorn auth login
 # See who you are
 popcorn whoami
 
+# Deploy a site
+popcorn pop
+
 # Read messages
-popcorn read '#general'
-popcorn read '#general' --thread <thread-id>
+popcorn list-messages '#general'
+popcorn list-messages '#general' --thread <thread-id>
 
 # Send a message
-popcorn send '#general' "Hello from the CLI!"
-echo "piped message" | popcorn send '#general'
-popcorn send '#general' "see attached" --file ./screenshot.png
+popcorn send-message '#general' "Hello from the CLI!"
+echo "piped message" | popcorn send-message '#general'
+popcorn send-message '#general' "see attached" --file ./screenshot.png
 
 # Search
 popcorn search channels
@@ -46,40 +49,65 @@ popcorn watch '#general'
 
 ## Commands
 
+Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page.
+
 | Command | Purpose |
 |---------|---------|
-| `popcorn auth login` | Browser OAuth login (`--with-token` for stdin, `--force` to re-auth) |
+| **Sites** | |
+| `popcorn pop [NAME] [--context "..."] [--force]` | Deploy site to a channel |
+| `popcorn status [channel]` | Show site deployment status |
+| `popcorn log [channel] [--limit N]` | Show site version history |
+| **Messages** | |
+| `popcorn send-message <conv> "msg" [--thread ID] [--file PATH]` | Send a message |
+| `popcorn list-messages <conv> [--thread ID] [--limit N] [--cursor C]` | Read message history |
+| `popcorn get-message <msg_id>` | Get a single message by ID |
+| `popcorn edit-message <conv> <msg_id> "content"` | Edit a message |
+| `popcorn delete-message <conv> <msg_id>` | Delete a message |
+| `popcorn react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
+| `popcorn search channels\|dms\|users [query]` | Search/list entities |
+| `popcorn search messages <query>` | Full-text message search |
+| `popcorn inbox [--unread\|--read] [--limit N] [--cursor C]` | Notifications |
+| `popcorn download <file_key> [-o PATH]` | Download a file |
+| `popcorn watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
+| **Channels** | |
+| `popcorn create-channel <name> [--type TYPE]` | Create a channel |
+| `popcorn info <conv>` | Channel details + members |
+| `popcorn join-channel <conv>` | Join a channel |
+| `popcorn leave-channel <conv>` | Leave a channel |
+| `popcorn invite <conv> <user_ids>` | Invite users to a channel |
+| `popcorn kick <conv> <user_id>` | Remove a user from a channel |
+| `popcorn edit-channel <conv> [--name N] [--description D]` | Update channel name or description |
+| `popcorn archive-channel <conv> [--undo]` | Archive/unarchive a channel |
+| `popcorn delete-channel <conv>` | Delete a channel |
+| **Webhooks** | |
+| `popcorn webhook create <conv> <url> [--events E]` | Create a webhook |
+| `popcorn webhook list <conv>` | List webhooks |
+| `popcorn webhook deliveries <webhook_id>` | List webhook deliveries |
+| **Auth & identity** | |
+| `popcorn auth login [--with-token] [--force] [--workspace NAME]` | Log in |
 | `popcorn auth status` | Show auth state |
 | `popcorn auth logout` | Clear tokens |
-| `popcorn auth token` | Print token to stdout (for piping) |
+| `popcorn auth token` | Print token to stdout |
 | `popcorn env [name]` | Show or switch profile |
 | `popcorn workspace list` | List workspaces |
 | `popcorn workspace switch [name\|uuid]` | Switch active workspace |
 | `popcorn whoami` | Current user + workspace |
-| `popcorn search channels\|dms\|users [query]` | Search/list entities |
-| `popcorn search messages <query>` | Full-text message search |
-| `popcorn read <conv> [--thread ID] [--limit N]` | Message history |
-| `popcorn info <conv>` | Conversation details + members |
-| `popcorn send <conv> "msg" [--thread ID] [--file PATH]` | Post a message |
-| `popcorn react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
-| `popcorn edit <conv> <msg_id> "content"` | Edit a message |
-| `popcorn delete <conv> <msg_id>` | Delete a message |
-| `popcorn inbox [--unread\|--read] [--limit N]` | Notifications |
-| `popcorn watch <conv> [--interval N]` | Live-tail a channel |
-| `popcorn download <file_key> [-o PATH]` | Download a file |
-| `popcorn create <name> [--type TYPE]` | Create a channel |
-| `popcorn join <conv>` | Join a channel |
-| `popcorn leave <conv>` | Leave a channel |
-| `popcorn archive <conv> [--undo]` | Archive/unarchive a channel |
-| `popcorn api <path> [-X METHOD] [-d DATA]` | Raw API call |
+| **Other** | |
+| `popcorn api <path> [-X METHOD] [-d DATA] [--raw]` | Raw API call |
+| `popcorn check-access <owner/repo>` | Check repo access |
+| `popcorn commands` | Dump CLI schema as JSON |
 | `popcorn completion bash\|zsh` | Generate shell completions |
 
 ## Flags
 
-- `--json` — Raw JSON output (for scripting)
-- `-e` / `--env` — Profile name to use
-- `--workspace <uuid>` — Override workspace
-- `--no-color` — Disable color output
+| Flag | Purpose |
+|------|---------|
+| `--json` | JSON output (envelope: `{"ok": true, "data": ...}`) |
+| `-q` / `--quiet` | Suppress informational stderr messages |
+| `--timeout N` | HTTP request timeout in seconds (default: 30) |
+| `-e` / `--env` | Profile name to use |
+| `--workspace <uuid>` | Override workspace |
+| `--no-color` | Disable color output |
 
 ## Conversation References
 

@@ -9,10 +9,10 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (119 tests)
+├── tests/                     ← pytest (189 tests)
 ├── scripts/                   ← test-install.sh (Docker-based install tests)
 ├── pyproject.toml             ← Single package config
-├── Makefile                   ← fmt, lint, typecheck, test, check
+├── Makefile                   ← fmt, lint, typecheck, test, check, dev
 └── .pre-commit-config.yaml
 ```
 
@@ -20,6 +20,7 @@ popcorn-cli/
 
 ```bash
 make install    # uv sync + pre-commit install
+make dev        # create bin/popcorn wrapper for local dev
 make fmt        # ruff format
 make lint       # ruff check --fix
 make typecheck  # mypy
