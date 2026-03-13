@@ -26,7 +26,7 @@ Usage:
     echo "msg" | popcorn send <conversation>
     cat batch.ndjson | popcorn send --batch --json
 
-Flags: --json (raw output), -q/--quiet (suppress status), --timeout N,
+Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
        -e/--env, --no-color, --workspace UUID
 Conversations can be specified as #channel-name or UUID.
 
@@ -1484,6 +1484,7 @@ Reading:
   read          Read message history
   info          Show conversation info and members
   get-message   Get a single message by ID
+  download      Download a file attachment
   watch         Watch a channel for new messages
 
 Writing:
@@ -1523,7 +1524,7 @@ Other:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--version", action="version", version=f"popcorn {__version__}")
-    parser.add_argument("--json", action="store_true", help="Output raw JSON")
+    parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--workspace", type=str, help="Override workspace ID")
     parser.add_argument("-e", "--env", type=str, help="Profile/environment name to use")
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
