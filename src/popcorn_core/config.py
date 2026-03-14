@@ -4,11 +4,81 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .errors import PopcornError
+
+# ---------------------------------------------------------------------------
+# Keyring helpers — optional secure token storage
+# ---------------------------------------------------------------------------
+
+_SERVICE_NAME = "popcorn-cli"
+_keyring_available: bool | None = None
+
+
+def _warn(msg: str) -> None:
+    print(f"Warning: {msg}", file=sys.stderr)
+
+
+def _has_keyring() -> bool:
+    """Check if keyring is importable and functional."""
+    global _keyring_available
+    if _keyring_available is not None:
+        return _keyring_available
+    try:
+        import keyring as _kr  # type: ignore[import-not-found]
+
+        # Probe — some backends (e.g. chainer with no backends) silently fail
+        _kr.get_credential(_SERVICE_NAME, None)
+        _keyring_available = True
+    except ImportError:
+        _keyring_available = False
+    except Exception as exc:
+        _warn(
+            f"keyring is installed but not functional ({type(exc).__name__}: {exc}). "
+            "Tokens will be stored in plaintext."
+        )
+        _keyring_available = False
+    return _keyring_available
+
+
+def _keyring_set(key: str, value: str) -> bool:
+    """Store a secret in the system keychain. Returns False on failure."""
+    try:
+        import keyring as _kr  # type: ignore[import-not-found]
+
+        _kr.set_password(_SERVICE_NAME, key, value)
+        return True
+    except Exception as exc:
+        _warn(f"Failed to store {key.split('/')[-1]} in keyring ({exc}). Using plaintext.")
+        return False
+
+
+def _keyring_get(key: str) -> str | None:
+    """Retrieve a secret from the system keychain."""
+    try:
+        import keyring as _kr  # type: ignore[import-not-found]
+
+        result: str | None = _kr.get_password(_SERVICE_NAME, key)
+        return result
+    except Exception as exc:
+        _warn(f"Failed to read {key.split('/')[-1]} from keyring ({exc}).")
+        return None
+
+
+def _keyring_delete(key: str) -> None:
+    """Delete a secret from the system keychain."""
+    import contextlib
+
+    import keyring as _kr  # type: ignore[import-not-found]
+    import keyring.errors  # type: ignore[import-not-found]
+
+    with contextlib.suppress(keyring.errors.PasswordDeleteError):
+        _kr.delete_password(_SERVICE_NAME, key)
+
 
 DEFAULT_ENV: dict[str, str] = {
     "api_url": "https://api.popcorn.ai",
@@ -94,11 +164,22 @@ def load_config() -> Config:
             f"  Fix: Delete the file and run 'popcorn auth login'"
         ) from e
     try:
+        use_kr = _has_keyring()
         cfg = Config(
             version=data.get("version", 1),
             default_profile=data.get("default_profile", "default"),
         )
         for name, pdata in data.get("profiles", {}).items():
+            if use_kr:
+                for fld in _KEYRING_FIELDS:
+                    if pdata.get(fld) == _KEYRING_SENTINEL:
+                        val = _keyring_get(f"{name}/{fld}")
+                        if val is None:
+                            _warn(
+                                f"Token '{fld}' was stored in keyring but is no longer "
+                                "available. Run: popcorn auth login"
+                            )
+                        pdata[fld] = val or ""
             cfg.profiles[name] = Profile.from_dict(pdata)
         return cfg
     except (KeyError, TypeError, AttributeError) as e:
@@ -109,12 +190,26 @@ def load_config() -> Config:
         ) from e
 
 
+_KEYRING_FIELDS = ("id_token", "refresh_token", "access_token")
+_KEYRING_SENTINEL = "__keyring__"
+
+
 def save_config(cfg: Config) -> None:
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    use_kr = _has_keyring()
+    profiles_data: dict[str, Any] = {}
+    for name, profile in cfg.profiles.items():
+        d = profile.to_dict()
+        if use_kr:
+            for fld in _KEYRING_FIELDS:
+                val = d.get(fld, "")
+                if val and _keyring_set(f"{name}/{fld}", val):
+                    d[fld] = _KEYRING_SENTINEL
+        profiles_data[name] = d
     data = {
         "version": cfg.version,
         "default_profile": cfg.default_profile,
-        "profiles": {k: v.to_dict() for k, v in cfg.profiles.items()},
+        "profiles": profiles_data,
     }
     CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n")
     CONFIG_FILE.chmod(0o600)

@@ -79,7 +79,10 @@ class TestToDict:
 
     def test_auth_error_to_dict(self):
         d = AuthError("not logged in").to_dict()
-        assert d == {"error": "not logged in", "code": "AuthError", "retryable": False}
+        assert d["error"] == "not logged in"
+        assert d["code"] == "AuthError"
+        assert d["retryable"] is False
+        assert d["hint"] == "popcorn auth login"
 
     def test_api_error_to_dict_with_status(self):
         err = APIError("not found", status_code=404, body='{"detail": "nope"}')
@@ -112,3 +115,28 @@ class TestToDict:
     def test_api_error_retry_after_absent(self):
         d = APIError("rate limited", status_code=429).to_dict()
         assert "retry_after" not in d
+
+    def test_popcorn_error_hint(self):
+        e = PopcornError("bad input")
+        e.hint = "popcorn help"
+        d = e.to_dict()
+        assert d["hint"] == "popcorn help"
+
+    def test_popcorn_error_no_hint(self):
+        d = PopcornError("bad input").to_dict()
+        assert "hint" not in d
+
+    def test_api_error_hint(self):
+        e = APIError("not found", status_code=404)
+        e.hint = "popcorn search channels"
+        d = e.to_dict()
+        assert d["hint"] == "popcorn search channels"
+
+    def test_api_error_request_id(self):
+        e = APIError("server error", status_code=500, request_id="req-abc-123")
+        d = e.to_dict()
+        assert d["request_id"] == "req-abc-123"
+
+    def test_api_error_request_id_absent(self):
+        d = APIError("server error", status_code=500).to_dict()
+        assert "request_id" not in d

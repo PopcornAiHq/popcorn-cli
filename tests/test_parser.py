@@ -130,6 +130,19 @@ class TestReadingCommands:
         with pytest.raises(SystemExit):
             parser.parse_args(["inbox", "--unread", "--read"])
 
+    def test_list_threads(self, parser):
+        args = parser.parse_args(["list-threads", "#general"])
+        assert args.command == "list-threads"
+        assert args.conversation == "#general"
+
+    def test_list_threads_with_limit(self, parser):
+        args = parser.parse_args(["list-threads", "#general", "--limit", "10"])
+        assert args.limit == 10
+
+    def test_list_threads_with_offset(self, parser):
+        args = parser.parse_args(["list-threads", "#general", "--offset", "50"])
+        assert args.offset == 50
+
     def test_list_messages_cursor(self, parser):
         args = parser.parse_args(["list-messages", "#general", "--cursor", "abc123"])
         assert args.cursor == "abc123"
@@ -233,6 +246,10 @@ class TestWebhook:
         args = parser.parse_args(["webhook", "list", "#general"])
         assert args.webhook_command == "list"
 
+    def test_webhook_event_types(self, parser):
+        args = parser.parse_args(["webhook", "event-types"])
+        assert args.webhook_command == "event-types"
+
 
 class TestDidYouMean:
     def test_close_typo_suggests(self):
@@ -323,3 +340,39 @@ class TestCommands:
         assert "arguments" in send_cmd
         arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_cmd["arguments"]]
         assert "conversation" in arg_names
+
+    def test_commands_have_categories(self, capsys):
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        args = argparse.Namespace(command="commands")
+        cmd_commands(args)
+        out = capsys.readouterr().out
+        schema = json.loads(out)
+        pop_cmd = next(c for c in schema["commands"] if c["name"] == "pop")
+        assert pop_cmd["category"] == "sites"
+        send_cmd = next(c for c in schema["commands"] if c["name"] == "send-message")
+        assert send_cmd["category"] == "messages"
+        auth_cmd = next(c for c in schema["commands"] if c["name"] == "auth")
+        assert auth_cmd["category"] == "auth"
+
+
+class TestNewFlags:
+    def test_debug_flag(self, parser):
+        args = parser.parse_args(["--debug", "whoami"])
+        assert args.debug is True
+
+    def test_debug_flag_hoisted(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        result = _hoist_global_flags(["list-messages", "--debug", "#general"])
+        assert result == ["--debug", "list-messages", "#general"]
+
+    def test_fail_fast_flag(self, parser):
+        args = parser.parse_args(["send-message", "--batch", "--fail-fast"])
+        assert args.fail_fast is True
+
+    def test_if_not_exists_flag(self, parser):
+        args = parser.parse_args(["create-channel", "test-ch", "--if-not-exists"])
+        assert args.if_not_exists is True

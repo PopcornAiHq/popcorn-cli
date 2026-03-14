@@ -106,6 +106,20 @@ def search_messages(client: APIClient, query: str, cursor: str = "") -> dict[str
 # ---------------------------------------------------------------------------
 
 
+def list_threads(
+    client: APIClient,
+    conversation: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List threads in a conversation, ordered by most recent reply."""
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    if offset:
+        params["offset"] = offset
+    return client.get("/api/messages/threads", params)
+
+
 def read_messages(
     client: APIClient,
     conversation: str,

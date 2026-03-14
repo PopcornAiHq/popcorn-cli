@@ -17,8 +17,9 @@ from .errors import APIError, AuthError
 class APIClient:
     """Synchronous HTTP client with auth + workspace injection."""
 
-    def __init__(self, profile: Profile, timeout: float = 30.0) -> None:
+    def __init__(self, profile: Profile, timeout: float = 30.0, debug: bool = False) -> None:
         self.profile = profile
+        self._debug = debug
         self._client = httpx.Client(timeout=timeout)
 
     def _token(self) -> str:
@@ -133,6 +134,12 @@ class APIClient:
         params = self._inject_workspace(params or {})
         return self._request(method.upper(), path, params=params, json_data=data)
 
+    def _log_debug(self, msg: str) -> None:
+        if self._debug:
+            import sys
+
+            print(f"[debug] {msg}", file=sys.stderr, flush=True)
+
     def _do_request(
         self,
         method: str,
@@ -141,8 +148,17 @@ class APIClient:
         json_data: dict[str, Any] | None,
     ) -> httpx.Response:
         """Execute a single HTTP request, translating httpx errors to APIError."""
+        if self._debug:
+            import json
+
+            parts = [f"{method} {url}"]
+            if params:
+                parts.append(f"  params={json.dumps(params, default=str)}")
+            if json_data:
+                parts.append(f"  body={json.dumps(json_data, default=str)}")
+            self._log_debug("\n".join(parts))
         try:
-            return self._client.request(
+            resp = self._client.request(
                 method, url, headers=self._headers(), params=params, json=json_data
             )
         except httpx.ConnectError as e:
@@ -151,6 +167,9 @@ class APIClient:
             raise APIError(f"Request timed out: {method} {url}") from e
         except httpx.HTTPError as e:
             raise APIError(f"Network error ({type(e).__name__}): {e}") from e
+        if self._debug:
+            self._log_debug(f"  → {resp.status_code} ({len(resp.content)} bytes)")
+        return resp
 
     def _request(
         self,
@@ -198,11 +217,13 @@ class APIClient:
             if raw_retry:
                 with contextlib.suppress(ValueError):
                     retry_after = float(raw_retry)
+            request_id = resp.headers.get("x-request-id")
             raise APIError(
                 msg or f"HTTP {resp.status_code}",
                 status_code=resp.status_code,
                 body=resp.text,
                 retry_after=retry_after,
+                request_id=request_id,
             )
 
         try:

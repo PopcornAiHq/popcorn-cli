@@ -85,3 +85,58 @@ class TestLoadSave:
 
         with pytest.raises(PopcornError, match="unexpected structure"):
             load_config()
+
+
+class TestKeyringIntegration:
+    """Test that keyring storage works when available (mocked)."""
+
+    def test_save_uses_keyring_when_available(self, tmp_path, monkeypatch):
+        from popcorn_core.config import _KEYRING_SENTINEL
+
+        config_file = tmp_path / "auth.json"
+        monkeypatch.setattr("popcorn_core.config.CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("popcorn_core.config.CONFIG_FILE", config_file)
+
+        store: dict[str, str] = {}
+
+        def mock_set(k: str, v: str) -> bool:
+            store[k] = v
+            return True
+
+        monkeypatch.setattr("popcorn_core.config._keyring_available", True)
+        monkeypatch.setattr("popcorn_core.config._keyring_set", mock_set)
+        monkeypatch.setattr("popcorn_core.config._keyring_get", lambda k: store.get(k))
+
+        cfg = Config()
+        cfg.profiles["default"] = Profile(
+            email="a@b.com", id_token="secret-tok", refresh_token="secret-ref"
+        )
+        save_config(cfg)
+
+        # Tokens stored in keyring
+        assert store["default/id_token"] == "secret-tok"
+        assert store["default/refresh_token"] == "secret-ref"
+
+        # File has sentinel, not real tokens
+        raw = json.loads(config_file.read_text())
+        assert raw["profiles"]["default"]["id_token"] == _KEYRING_SENTINEL
+        assert raw["profiles"]["default"]["refresh_token"] == _KEYRING_SENTINEL
+
+        # Load reads back from keyring
+        loaded = load_config()
+        assert loaded.profiles["default"].id_token == "secret-tok"
+        assert loaded.profiles["default"].refresh_token == "secret-ref"
+
+    def test_save_falls_back_without_keyring(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "auth.json"
+        monkeypatch.setattr("popcorn_core.config.CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("popcorn_core.config.CONFIG_FILE", config_file)
+        monkeypatch.setattr("popcorn_core.config._keyring_available", False)
+
+        cfg = Config()
+        cfg.profiles["default"] = Profile(email="a@b.com", id_token="plain-tok")
+        save_config(cfg)
+
+        # Token stored in plaintext
+        raw = json.loads(config_file.read_text())
+        assert raw["profiles"]["default"]["id_token"] == "plain-tok"

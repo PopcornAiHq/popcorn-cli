@@ -110,9 +110,13 @@ def _get_client(args: argparse.Namespace) -> APIClient:
     env = cfg.default_profile
 
     if not profile.id_token:
-        raise AuthError("Not logged in. Run: popcorn auth login")
+        e = AuthError("Not logged in")
+        e.hint = "popcorn auth login"
+        raise e
     if not profile.workspace_id:
-        raise AuthError("No workspace selected. Run: popcorn auth login")
+        e = AuthError("No workspace selected")
+        e.hint = "popcorn auth login --workspace <name>"
+        raise e
 
     if getattr(args, "workspace", None):
         profile.workspace_id = args.workspace
@@ -121,7 +125,13 @@ def _get_client(args: argparse.Namespace) -> APIClient:
         _status(f"[{env}] {profile.email} / {profile.workspace_name}")
 
     timeout = getattr(args, "timeout", None)
-    return APIClient(profile, timeout=timeout) if timeout else APIClient(profile)
+    debug = getattr(args, "debug", False)
+    kwargs: dict[str, Any] = {}
+    if timeout:
+        kwargs["timeout"] = timeout
+    if debug:
+        kwargs["debug"] = True
+    return APIClient(profile, **kwargs)
 
 
 def _json_ok(data: Any) -> str:
@@ -357,15 +367,24 @@ def cmd_auth_token(args: argparse.Namespace) -> None:
 
 
 def cmd_auth_logout(args: argparse.Namespace) -> None:
+    from popcorn_core.config import _KEYRING_FIELDS, _has_keyring, _keyring_delete
+
     cfg = load_config()
+    profile_name = cfg.default_profile
     profile = cfg.active_profile()
     profile.access_token = ""
     profile.refresh_token = ""
     profile.id_token = ""
     profile.email = ""
     profile.expires_at = 0
+
+    # Clear keyring entries if available
+    if _has_keyring():
+        for fld in _KEYRING_FIELDS:
+            _keyring_delete(f"{profile_name}/{fld}")
+
     save_config(cfg)
-    print(f"Logged out of profile: {cfg.default_profile}")
+    print(f"Logged out of profile: {profile_name}")
 
 
 # ---------------------------------------------------------------------------
@@ -455,6 +474,14 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     resp = operations.get_whoami(client)
     user = extract(resp, "user", label="whoami")
     ws = extract(resp, "workspace", label="whoami")
+
+    # For JSON mode, include all workspaces for full agent bootstrapping
+    if getattr(args, "json", False):
+        workspaces = operations.list_workspaces(client)
+        resp["workspaces"] = workspaces
+        print(_json_ok(resp))
+        return
+
     formatted = (
         f"User:      {user.get('display_name', '')} ({user.get('username', '')})\n"
         f"Email:     {user.get('email', '')}\n"
@@ -462,7 +489,7 @@ def cmd_whoami(args: argparse.Namespace) -> None:
         f"Workspace: {ws.get('name', '')} (id: {ws.get('id', '')})\n"
         f"Role:      {(user.get('workspace_info') or {}).get('workspace_role', 'member')}"
     )
-    _output(args, resp, formatted)
+    print(formatted)
 
 
 def cmd_search(args: argparse.Namespace) -> None:
@@ -516,6 +543,41 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines) if lines else "No messages.")
 
 
+def cmd_list_threads(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.list_threads(
+        client,
+        args.conversation,
+        limit=args.limit or 50,
+        offset=getattr(args, "offset", 0) or 0,
+    )
+    threads = resp.get("threads", [])
+
+    if getattr(args, "json", False):
+        print(_json_ok(resp))
+        return
+
+    if not threads:
+        print("No threads found.")
+        return
+
+    for t in threads:
+        parent = t.get("parent_message", {})
+        author = parent.get("author", {})
+        name = author.get("display_name") or author.get("username") or "?"
+        reply_count = t.get("reply_count", 0)
+        last_reply = t.get("last_reply_at", "")
+        preview = ""
+        for part in parent.get("content", []):
+            if part.get("type") == "text":
+                preview = part.get("text", "")[:80]
+                break
+        print(
+            f"  {parent.get('id', '?')}  {reply_count} replies  "
+            f"last: {format_timestamp(last_reply)}  {name}: {preview}"
+        )
+
+
 def cmd_info(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.get_conversation_info(client, args.conversation)
@@ -552,7 +614,9 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
 
     if not getattr(args, "conversation", None):
-        raise PopcornError("conversation is required (or use --batch for NDJSON stdin)")
+        e = PopcornError("conversation is required (or use --batch for NDJSON stdin)")
+        e.hint = 'popcorn send-message <#channel> "message"'
+        raise e
 
     message = getattr(args, "message", None)
     if message == "-" or (message is None and not sys.stdin.isatty()):
@@ -560,7 +624,9 @@ def cmd_send_message(args: argparse.Namespace) -> None:
 
     file_path = getattr(args, "file", None)
     if not message and not file_path:
-        raise PopcornError("Provide a message, --file, or pipe text via stdin")
+        e = PopcornError("Provide a message, --file, or pipe text via stdin")
+        e.hint = 'popcorn send-message <#channel> "message"'
+        raise e
 
     file_parts = []
     if file_path:
@@ -579,6 +645,7 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
     """Send messages from NDJSON stdin. Each line: {"conversation": "...", "message": "..."}."""
     client = _get_client(args)
     json_mode = getattr(args, "json", False)
+    fail_fast = getattr(args, "fail_fast", False)
     results: list[dict[str, Any]] = []
 
     for line_num, line in enumerate(sys.stdin, 1):
@@ -589,6 +656,8 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
             item = json.loads(line)
         except json.JSONDecodeError as e:
             results.append({"line": line_num, "error": f"Invalid JSON: {e}", "ok": False})
+            if fail_fast:
+                break
             continue
 
         conv = item.get("conversation")
@@ -597,9 +666,13 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
 
         if not conv:
             results.append({"line": line_num, "error": "Missing 'conversation' field", "ok": False})
+            if fail_fast:
+                break
             continue
         if not msg_text:
             results.append({"line": line_num, "error": "Missing 'message' field", "ok": False})
+            if fail_fast:
+                break
             continue
 
         try:
@@ -608,6 +681,8 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
             results.append({"line": line_num, "ok": True, "message_id": sent_msg.get("id", "?")})
         except PopcornError as e:
             results.append({"line": line_num, "error": str(e), "ok": False})
+            if fail_fast:
+                break
 
     if json_mode:
         print(_json_ok({"results": results}))
@@ -680,14 +755,44 @@ def cmd_download(args: argparse.Namespace) -> None:
 
 def cmd_create_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
+    if_not_exists = getattr(args, "if_not_exists", False)
+
+    # --if-not-exists: search for existing channel first
+    if if_not_exists:
+        existing = operations.search_channels(client, args.name)
+        for conv in existing.get("conversations", []):
+            if (conv.get("name") or "").lower() == args.name.lower():
+                resp = {"conversation": conv, "already_existed": True}
+                _output(
+                    args,
+                    resp,
+                    f"Already exists: {conv.get('name', '')} (id: {conv.get('id', '?')})",
+                )
+                return
+
     members = args.members.split(",") if getattr(args, "members", None) else None
-    resp = operations.create_conversation(
-        client,
-        name=args.name,
-        conv_type=getattr(args, "type", "public_channel") or "public_channel",
-        description=getattr(args, "description", "") or "",
-        members=members,
-    )
+    try:
+        resp = operations.create_conversation(
+            client,
+            name=args.name,
+            conv_type=getattr(args, "type", "public_channel") or "public_channel",
+            description=getattr(args, "description", "") or "",
+            members=members,
+        )
+    except APIError as e:
+        # Handle race: channel created between our search and create (--if-not-exists)
+        if if_not_exists and e.status_code == 409:
+            existing = operations.search_channels(client, args.name)
+            for conv in existing.get("conversations", []):
+                if (conv.get("name") or "").lower() == args.name.lower():
+                    resp = {"conversation": conv, "already_existed": True}
+                    _output(
+                        args,
+                        resp,
+                        f"Already exists: {conv.get('name', '')} (id: {conv.get('id', '?')})",
+                    )
+                    return
+        raise
     conv = resp.get("conversation", resp)
     _output(args, resp, f"Created: {conv.get('name', '')} (id: {conv.get('id', '?')})")
 
@@ -700,7 +805,16 @@ def cmd_join_channel(args: argparse.Namespace) -> None:
 
 def cmd_leave_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.leave_conversation(client, args.conversation)
+    try:
+        resp = operations.leave_conversation(client, args.conversation)
+    except APIError as e:
+        # Backend returns 404 with "Member" in the message when not a member.
+        # Don't swallow 404s for missing conversations — only for membership.
+        if e.status_code == 404 and "member" in str(e).lower():
+            resp = {"ok": True, "already_left": True}
+            _output(args, resp, f"Already not a member of {args.conversation}")
+            return
+        raise
     _output(args, resp, f"Left {args.conversation}")
 
 
@@ -749,9 +863,60 @@ def cmd_delete_channel(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+_WEBHOOK_EVENT_TYPES: list[dict[str, Any]] = [
+    {
+        "source": "github",
+        "detection": "X-GitHub-Event header",
+        "events": [
+            "push",
+            "pull_request",
+            "issues",
+            "issue_comment",
+            "release",
+            "create",
+            "delete",
+            "workflow_run",
+            "check_run",
+            "deployment",
+            "deployment_status",
+        ],
+    },
+    {
+        "source": "linear",
+        "detection": "Linear-Event header",
+        "events": ["Issue", "Comment", "Project", "Cycle", "Label", "Reaction"],
+    },
+    {
+        "source": "slack",
+        "detection": "X-Slack-Signature header",
+        "events": ["event_callback", "url_verification"],
+    },
+    {
+        "source": "sentry",
+        "detection": "Sentry-Hook-Resource header",
+        "events": ["error", "issue", "metric_alert", "comment"],
+    },
+]
+
+_WEBHOOK_ACTION_MODES = ["silent", "as_is", "ai_enhanced"]
+
+
 def cmd_webhook(args: argparse.Namespace) -> None:
-    client = _get_client(args)
     sub = getattr(args, "webhook_command", None)
+
+    if sub == "event-types":
+        data = {"sources": _WEBHOOK_EVENT_TYPES, "action_modes": _WEBHOOK_ACTION_MODES}
+        if getattr(args, "json", False):
+            print(_json_ok(data))
+        else:
+            for src in _WEBHOOK_EVENT_TYPES:
+                print(f"{src['source']}  (detected via {src['detection']})")
+                for ev in src["events"]:
+                    print(f"  - {ev}")
+            print(f"\nAction modes: {', '.join(_WEBHOOK_ACTION_MODES)}")
+        return
+
+    client = _get_client(args)
 
     if sub == "create":
         events = args.events.split(",") if getattr(args, "events", None) else None
@@ -774,7 +939,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             lines.append(f"  {d.get('id', '?')}  {status}  {ts}")
         _output(args, resp, "\n".join(lines))
     else:
-        raise PopcornError("Usage: popcorn webhook [create|list|deliveries]")
+        raise PopcornError("Usage: popcorn webhook [create|list|deliveries|event-types]")
 
 
 # ---------------------------------------------------------------------------
@@ -1233,7 +1398,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami search list-messages get-message info inbox watch send-message react edit-message delete-message create-channel join-channel leave-channel invite kick edit-channel archive-channel delete-channel webhook api check-access pop completion --json --workspace -e --env --no-color --quiet --timeout" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami search list-messages list-threads get-message info inbox watch send-message react edit-message delete-message create-channel join-channel leave-channel invite kick edit-channel archive-channel delete-channel webhook api check-access pop status log completion commands help version --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1245,7 +1410,7 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "channels dms users messages" -- "$cur"))
             ;;
         webhook)
-            COMPREPLY=($(compgen -W "create list deliveries" -- "$cur"))
+            COMPREPLY=($(compgen -W "create list deliveries event-types" -- "$cur"))
             ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
@@ -1269,6 +1434,7 @@ _popcorn() {
         'whoami:Show current user and workspace'
         'search:Search channels, DMs, users, or messages'
         'list-messages:Read message history'
+        'list-threads:List threads in a channel'
         'get-message:Get a single message by ID'
         'info:Show conversation info and members'
         'inbox:Show notifications'
@@ -1307,7 +1473,7 @@ _popcorn() {
                 auth) _values 'subcommand' login status logout token ;;
                 workspace) _values 'subcommand' list switch ;;
                 search) _values 'type' channels dms users messages ;;
-                webhook) _values 'subcommand' create list deliveries ;;
+                webhook) _values 'subcommand' create list deliveries event-types ;;
                 completion) _values 'shell' bash zsh ;;
             esac
             ;;
@@ -1359,6 +1525,41 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
     return args_out
 
 
+_COMMAND_CATEGORIES: dict[str, str] = {
+    "pop": "sites",
+    "status": "sites",
+    "log": "sites",
+    "send-message": "messages",
+    "list-messages": "messages",
+    "list-threads": "messages",
+    "get-message": "messages",
+    "edit-message": "messages",
+    "delete-message": "messages",
+    "react": "messages",
+    "search": "messages",
+    "inbox": "messages",
+    "download": "messages",
+    "watch": "messages",
+    "create-channel": "channels",
+    "info": "channels",
+    "join-channel": "channels",
+    "leave-channel": "channels",
+    "invite": "channels",
+    "kick": "channels",
+    "edit-channel": "channels",
+    "archive-channel": "channels",
+    "delete-channel": "channels",
+    "webhook": "webhooks",
+    "auth": "auth",
+    "workspace": "auth",
+    "env": "auth",
+    "whoami": "auth",
+    "api": "other",
+    "check-access": "other",
+    "completion": "other",
+    "commands": "other",
+}
+
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "auth": "Authentication commands (login, logout, status, token)",
     "workspace": "List or switch workspaces",
@@ -1367,6 +1568,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "inbox": "Show notifications (mentions, replies, reactions)",
     "search": "Search channels, DMs, users, or messages",
     "list-messages": "Read message history from a channel or thread",
+    "list-threads": "List threads in a channel with reply counts",
     "info": "Show conversation info and members",
     "get-message": "Get a single message by ID",
     "download": "Download a file attachment",
@@ -1383,7 +1585,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "edit-channel": "Update channel name or description",
     "archive-channel": "Archive or unarchive a channel",
     "delete-channel": "Delete a channel",
-    "webhook": "Manage webhooks (create, list, deliveries)",
+    "webhook": "Manage webhooks (create, list, deliveries, event-types)",
     "api": "Raw API call (escape hatch, like gh api)",
     "pop": "Push site resources to a channel",
     "status": "Show site deployment status",
@@ -1408,6 +1610,8 @@ def cmd_commands(_args: argparse.Namespace) -> None:
     if sub_action:
         for name, sub_parser in sub_action.choices.items():
             cmd: dict[str, Any] = {"name": name}
+            if name in _COMMAND_CATEGORIES:
+                cmd["category"] = _COMMAND_CATEGORIES[name]
             if name in _COMMAND_DESCRIPTIONS:
                 cmd["description"] = _COMMAND_DESCRIPTIONS[name]
             # Check for nested subcommands (auth, workspace, webhook)
@@ -1480,6 +1684,7 @@ Sites:
 Messages:
   send-message    Send a message
   list-messages   Read message history
+  list-threads    List threads in a channel
   get-message     Get a single message by ID
   edit-message    Edit a message
   delete-message  Delete a message
@@ -1531,6 +1736,11 @@ Other:
     )
     parser.add_argument(
         "--timeout", type=float, default=None, help="HTTP request timeout in seconds (default: 30)"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Log HTTP requests and responses to stderr (may include sensitive data)",
     )
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
@@ -1584,6 +1794,11 @@ Other:
     read_p.add_argument("--limit", type=int, help="Max messages (default 25)")
     read_p.add_argument("--cursor", type=str, help="Pagination cursor from previous response")
 
+    threads_p = sub.add_parser("list-threads", help=_h)
+    threads_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    threads_p.add_argument("--limit", type=int, help="Max threads (default 50)")
+    threads_p.add_argument("--offset", type=int, help="Pagination offset")
+
     info_p = sub.add_parser("info", help=_h)
     info_p.add_argument("conversation", help="Channel name (#general) or UUID")
 
@@ -1621,6 +1836,11 @@ Other:
         action="store_true",
         help='Read NDJSON from stdin: {"conversation": "...", "message": "..."}',
     )
+    send_p.add_argument(
+        "--fail-fast",
+        action="store_true",
+        help="Stop batch processing on first error",
+    )
 
     react_p = sub.add_parser("react", help=_h)
     react_p.add_argument("conversation", help="Channel name (#general) or UUID")
@@ -1649,6 +1869,11 @@ Other:
     )
     create_p.add_argument("--description", type=str, help="Channel description")
     create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
+    create_p.add_argument(
+        "--if-not-exists",
+        action="store_true",
+        help="Return existing channel instead of failing on duplicate name",
+    )
 
     join_p = sub.add_parser("join-channel", help=_h)
     join_p.add_argument("conversation", help="Channel name (#general) or UUID")
@@ -1688,6 +1913,7 @@ Other:
     wh_list.add_argument("conversation", help="Channel name or UUID")
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
     wh_del.add_argument("webhook_id", help="Webhook UUID")
+    wh_sub.add_parser("event-types", help="List supported webhook sources and event types")
 
     # --- Escape hatch ---
 
@@ -1762,6 +1988,7 @@ _COMMANDS = {
     "whoami": cmd_whoami,
     "search": cmd_search,
     "list-messages": cmd_list_messages,
+    "list-threads": cmd_list_threads,
     "info": cmd_info,
     "send-message": cmd_send_message,
     "react": cmd_react,
@@ -1803,7 +2030,7 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
     hoisted: list[str] = []
 
     # Boolean flags
-    for flag in ("--json", "--quiet", "-q"):
+    for flag in ("--json", "--quiet", "-q", "--debug"):
         if flag in args:
             hoisted.append(flag)
             args = [a for a in args if a != flag]
@@ -1874,7 +2101,10 @@ def main() -> None:
         if getattr(args, "json", False):
             print(_json_err(e.to_dict()), file=sys.stderr)
         else:
-            print(f"Error: {e}", file=sys.stderr)
+            msg = f"Error: {e}"
+            if e.hint:
+                msg += f"\n  Run: {e.hint}"
+            print(msg, file=sys.stderr)
         sys.exit(e.exit_code)
     except KeyboardInterrupt:
         print("\nCancelled.", file=sys.stderr)

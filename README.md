@@ -58,8 +58,9 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn status [channel]` | Show site deployment status |
 | `popcorn log [channel] [--limit N]` | Show site version history |
 | **Messages** | |
-| `popcorn send-message <conv> "msg" [--thread ID] [--file PATH]` | Send a message |
+| `popcorn send-message <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
 | `popcorn list-messages <conv> [--thread ID] [--limit N] [--cursor C]` | Read message history |
+| `popcorn list-threads <conv> [--limit N] [--offset N]` | List threads with reply counts |
 | `popcorn get-message <msg_id>` | Get a single message by ID |
 | `popcorn edit-message <conv> <msg_id> "content"` | Edit a message |
 | `popcorn delete-message <conv> <msg_id>` | Delete a message |
@@ -70,7 +71,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn download <file_key> [-o PATH]` | Download a file |
 | `popcorn watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
 | **Channels** | |
-| `popcorn create-channel <name> [--type TYPE]` | Create a channel |
+| `popcorn create-channel <name> [--type TYPE] [--if-not-exists]` | Create a channel |
 | `popcorn info <conv>` | Channel details + members |
 | `popcorn join-channel <conv>` | Join a channel |
 | `popcorn leave-channel <conv>` | Leave a channel |
@@ -83,6 +84,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn webhook create <conv> <url> [--events E]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |
 | `popcorn webhook deliveries <webhook_id>` | List webhook deliveries |
+| `popcorn webhook event-types` | List supported sources and event types |
 | **Auth & identity** | |
 | `popcorn auth login [--with-token] [--force] [--workspace NAME]` | Log in |
 | `popcorn auth status` | Show auth state |
@@ -108,6 +110,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `-e` / `--env` | Profile name to use |
 | `--workspace <uuid>` | Override workspace |
 | `--no-color` | Disable color output |
+| `--debug` | Log HTTP requests/responses to stderr |
 
 ## Conversation References
 
