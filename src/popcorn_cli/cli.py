@@ -1081,6 +1081,11 @@ def cmd_pop(args: argparse.Namespace) -> None:
     site_name = args.name or f"pop-{Path.cwd().name}"
     json_mode = getattr(args, "json", False)
     force = getattr(args, "force", False)
+    verbose = getattr(args, "verbose", False)
+
+    def _progress(msg: str) -> None:
+        if verbose and not json_mode:
+            print(msg, file=sys.stderr)
 
     # Read .popcorn.local.json
     local_json = Path(".popcorn.local.json")
@@ -1111,7 +1116,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
         elif sys.stdin.isatty():
             answer = input("Channel no longer exists. Create new? [Y/n] ")
             if answer.strip().lower() in ("n", "no"):
-                raise PopcornError("Aborted.")
+                return
             local_json.unlink(missing_ok=True)
             conversation_id = None
         else:
@@ -1121,12 +1126,14 @@ def cmd_pop(args: argparse.Namespace) -> None:
             conversation_id = None
 
     # Create tarball
+    _progress("Packaging files...")
     tarball = create_tarball()
     suggested_name = None
 
     try:
         # Create channel with site (first deploy)
         if not conversation_id:
+            _progress(f"Creating channel #{site_name}...")
             create_result, site_name = _create_with_collision_retry(client, site_name, json_mode)
             conversation_id = str(
                 extract(create_result, "conversation", "id", label="deploy_create")
@@ -1141,16 +1148,18 @@ def cmd_pop(args: argparse.Namespace) -> None:
             raise PopcornError("No conversation_id available for deploy")
 
         # Presign
-
+        _progress("Requesting upload URL...")
         presign = operations.deploy_presign(client, conversation_id)
         upload_url = extract(presign, "upload_url", label="deploy_presign")
         upload_fields = extract(presign, "upload_fields", label="deploy_presign")
         s3_key = extract(presign, "s3_key", label="deploy_presign")
 
         # Upload to S3
+        _progress("Uploading...")
         operations.deploy_upload(upload_url, upload_fields, tarball)
 
         # Publish with retry on 502 (items 1, 2)
+        _progress("Publishing...")
         try:
             result = _publish_with_retry(
                 client, conversation_id, s3_key, args.context, force, json_mode
@@ -1945,6 +1954,7 @@ Other:
     pop_p.add_argument("name", nargs="?", default=None, help="Site name (default: pop-<dirname>)")
     pop_p.add_argument("--context", type=str, default="", help="Deploy context message")
     pop_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
+    pop_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
 
     # --- Site status & log ---
 
