@@ -955,15 +955,14 @@ def _write_local_json(path: Path, conversation_id: str, site_name: str) -> None:
 
 
 def _validate_channel(client: APIClient, conversation_id: str) -> bool:
-    """Check if a conversation still exists and has a provisioned site.
+    """Check if a conversation still exists.
 
-    Returns True if valid, False if stale (404 or no site).
+    Returns True if valid, False if stale (404).
     Raises APIError for unexpected failures.
     """
     try:
-        info = client.get("/api/conversations/info", {"conversation_id": conversation_id})
-        conv = info.get("conversation", {})
-        return conv.get("site") is not None
+        client.get("/api/conversations/info", {"conversation_id": conversation_id})
+        return True
     except APIError as e:
         if e.status_code == 404:
             return False
