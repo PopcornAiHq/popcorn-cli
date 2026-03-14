@@ -1,10 +1,14 @@
-.PHONY: install dev fmt lint typecheck test check clean
+.PHONY: install install-local dev fmt lint typecheck test check clean
 
 # ── Setup ────────────────────────────────────────────────────────────
 
 install:  ## Install package + dev deps
 	uv sync
 	uv run pre-commit install
+
+install-local:  ## Install CLI globally from local repo (uv tool)
+	uv tool install --force "$(CURDIR)"
+	@popcorn --version
 
 dev:  ## Create bin/popcorn wrapper for local dev (doesn't affect global install)
 	@mkdir -p bin
