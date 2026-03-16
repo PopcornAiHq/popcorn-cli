@@ -15,6 +15,19 @@ pipx install git+https://github.com/PopcornAiHq/popcorn-cli.git
 pip install git+https://github.com/PopcornAiHq/popcorn-cli.git
 ```
 
+## Update
+
+```bash
+# uv
+uv tool install --force git+https://github.com/PopcornAiHq/popcorn-cli.git
+
+# pipx
+pipx install --force git+https://github.com/PopcornAiHq/popcorn-cli.git
+
+# pip
+pip install --upgrade git+https://github.com/PopcornAiHq/popcorn-cli.git
+```
+
 ## Quick Start
 
 ```bash
