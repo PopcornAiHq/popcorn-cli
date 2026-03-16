@@ -404,13 +404,22 @@ def download_file(client: APIClient, file_key: str) -> dict[str, Any]:
 
 
 def create_webhook(
-    client: APIClient, conversation: str, url: str, events: list[str] | None = None
+    client: APIClient,
+    conversation: str,
+    name: str,
+    description: str | None = None,
+    avatar_url: str | None = None,
+    action_mode: str | None = None,
 ) -> dict[str, Any]:
     """Create a webhook for a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    body: dict[str, Any] = {"conversation_id": conv_id, "url": url}
-    if events:
-        body["events"] = events
+    body: dict[str, Any] = {"conversation_id": conv_id, "name": name}
+    if description:
+        body["description"] = description
+    if avatar_url:
+        body["avatar_url"] = avatar_url
+    if action_mode:
+        body["action_mode"] = action_mode
     return client.post("/api/webhooks/create", data=body)
 
 
@@ -420,9 +429,21 @@ def list_webhooks(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.get("/api/webhooks/list", {"conversation_id": conv_id})
 
 
-def list_webhook_deliveries(client: APIClient, webhook_id: str) -> dict[str, Any]:
-    """List deliveries for a webhook."""
-    return client.get("/api/webhooks/deliveries", {"webhook_id": webhook_id})
+def list_webhook_deliveries(
+    client: APIClient,
+    conversation: str,
+    limit: int = 50,
+    since: str | None = None,
+    status: str | None = None,
+) -> dict[str, Any]:
+    """List webhook deliveries for a conversation."""
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    if since:
+        params["since"] = since
+    if status:
+        params["status"] = status
+    return client.get("/api/webhooks/deliveries", params)
 
 
 # ---------------------------------------------------------------------------

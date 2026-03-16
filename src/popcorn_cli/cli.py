@@ -863,83 +863,44 @@ def cmd_delete_channel(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-_WEBHOOK_EVENT_TYPES: list[dict[str, Any]] = [
-    {
-        "source": "github",
-        "detection": "X-GitHub-Event header",
-        "events": [
-            "push",
-            "pull_request",
-            "issues",
-            "issue_comment",
-            "release",
-            "create",
-            "delete",
-            "workflow_run",
-            "check_run",
-            "deployment",
-            "deployment_status",
-        ],
-    },
-    {
-        "source": "linear",
-        "detection": "Linear-Event header",
-        "events": ["Issue", "Comment", "Project", "Cycle", "Label", "Reaction"],
-    },
-    {
-        "source": "slack",
-        "detection": "X-Slack-Signature header",
-        "events": ["event_callback", "url_verification"],
-    },
-    {
-        "source": "sentry",
-        "detection": "Sentry-Hook-Resource header",
-        "events": ["error", "issue", "metric_alert", "comment"],
-    },
-]
-
-_WEBHOOK_ACTION_MODES = ["silent", "as_is", "ai_enhanced"]
-
-
 def cmd_webhook(args: argparse.Namespace) -> None:
     sub = getattr(args, "webhook_command", None)
-
-    if sub == "event-types":
-        data = {"sources": _WEBHOOK_EVENT_TYPES, "action_modes": _WEBHOOK_ACTION_MODES}
-        if getattr(args, "json", False):
-            print(_json_ok(data))
-        else:
-            for src in _WEBHOOK_EVENT_TYPES:
-                print(f"{src['source']}  (detected via {src['detection']})")
-                for ev in src["events"]:
-                    print(f"  - {ev}")
-            print(f"\nAction modes: {', '.join(_WEBHOOK_ACTION_MODES)}")
-        return
-
     client = _get_client(args)
 
     if sub == "create":
-        events = args.events.split(",") if getattr(args, "events", None) else None
-        resp = operations.create_webhook(client, args.conversation, args.url, events)
-        _output(args, resp, f"Created webhook for {args.conversation}")
+        resp = operations.create_webhook(
+            client,
+            args.conversation,
+            args.name,
+            description=getattr(args, "description", None),
+            avatar_url=getattr(args, "avatar_url", None),
+            action_mode=getattr(args, "action_mode", None),
+        )
+        _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
     elif sub == "list":
         resp = operations.list_webhooks(client, args.conversation)
         hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
         lines = [f"Webhooks for {args.conversation} ({len(hooks)}):"]
         for h in hooks:
-            lines.append(f"  {h.get('id', '?')}  {h.get('url', '?')}")
+            lines.append(f"  {h.get('id', '?')}  {h.get('name', '?')}")
         _output(args, resp, "\n".join(lines))
     elif sub == "deliveries":
-        resp = operations.list_webhook_deliveries(client, args.webhook_id)
+        resp = operations.list_webhook_deliveries(
+            client,
+            args.conversation,
+            limit=getattr(args, "limit", 50),
+            since=getattr(args, "since", None),
+            status=getattr(args, "status", None),
+        )
         deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
-        lines = [f"Deliveries for {args.webhook_id} ({len(deliveries)}):"]
+        lines = [f"Deliveries for {args.conversation} ({len(deliveries)}):"]
         for d in deliveries:
-            status = d.get("status_code", "?")
+            wh_name = d.get("webhook_name", d.get("webhook_id", "?"))
             ts = d.get("created_at", "?")
-            lines.append(f"  {d.get('id', '?')}  {status}  {ts}")
+            lines.append(f"  {d.get('id', '?')}  {wh_name}  {ts}")
         _output(args, resp, "\n".join(lines))
     else:
-        raise PopcornError("Usage: popcorn webhook [create|list|deliveries|event-types]")
+        raise PopcornError("Usage: popcorn webhook [create|list|deliveries]")
 
 
 # ---------------------------------------------------------------------------
@@ -1418,7 +1379,7 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "channels dms users messages" -- "$cur"))
             ;;
         webhook)
-            COMPREPLY=($(compgen -W "create list deliveries event-types" -- "$cur"))
+            COMPREPLY=($(compgen -W "create list deliveries" -- "$cur"))
             ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
@@ -1481,7 +1442,7 @@ _popcorn() {
                 auth) _values 'subcommand' login status logout token ;;
                 workspace) _values 'subcommand' list switch ;;
                 search) _values 'type' channels dms users messages ;;
-                webhook) _values 'subcommand' create list deliveries event-types ;;
+                webhook) _values 'subcommand' create list deliveries ;;
                 completion) _values 'shell' bash zsh ;;
             esac
             ;;
@@ -1593,7 +1554,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "edit-channel": "Update channel name or description",
     "archive-channel": "Archive or unarchive a channel",
     "delete-channel": "Delete a channel",
-    "webhook": "Manage webhooks (create, list, deliveries, event-types)",
+    "webhook": "Manage webhooks (create, list, deliveries)",
     "api": "Raw API call (escape hatch, like gh api)",
     "pop": "Push site resources to a channel",
     "status": "Show site deployment status",
@@ -1915,13 +1876,22 @@ Other:
     wh_sub = wh_parser.add_subparsers(dest="webhook_command")
     wh_create = wh_sub.add_parser("create", help="Create a webhook")
     wh_create.add_argument("conversation", help="Channel name or UUID")
-    wh_create.add_argument("url", help="Webhook URL")
-    wh_create.add_argument("--events", type=str, help="Comma-separated event types")
+    wh_create.add_argument("name", help="Webhook name")
+    wh_create.add_argument("--description", type=str, help="Webhook description")
+    wh_create.add_argument("--avatar-url", type=str, help="Avatar URL")
+    wh_create.add_argument(
+        "--action-mode",
+        type=str,
+        choices=["silent", "as_is", "ai_enhanced"],
+        help="How deliveries are processed",
+    )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
-    wh_del.add_argument("webhook_id", help="Webhook UUID")
-    wh_sub.add_parser("event-types", help="List supported webhook sources and event types")
+    wh_del.add_argument("conversation", help="Channel name or UUID")
+    wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
+    wh_del.add_argument("--since", type=str, help="ISO timestamp — deliveries after this")
+    wh_del.add_argument("--status", type=str, help="Filter: completed,ignored,failed,processing")
 
     # --- Escape hatch ---
 

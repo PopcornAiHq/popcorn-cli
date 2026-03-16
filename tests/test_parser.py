@@ -237,18 +237,37 @@ class TestApiEscapeHatch:
 
 class TestWebhook:
     def test_webhook_create(self, parser):
-        args = parser.parse_args(["webhook", "create", "#general", "https://example.com/hook"])
+        args = parser.parse_args(["webhook", "create", "#general", "my-hook"])
         assert args.command == "webhook"
         assert args.webhook_command == "create"
-        assert args.url == "https://example.com/hook"
+        assert args.name == "my-hook"
+
+    def test_webhook_create_with_options(self, parser):
+        args = parser.parse_args(
+            [
+                "webhook",
+                "create",
+                "#general",
+                "my-hook",
+                "--description",
+                "A test hook",
+                "--action-mode",
+                "silent",
+            ]
+        )
+        assert args.name == "my-hook"
+        assert args.description == "A test hook"
+        assert args.action_mode == "silent"
 
     def test_webhook_list(self, parser):
         args = parser.parse_args(["webhook", "list", "#general"])
         assert args.webhook_command == "list"
 
-    def test_webhook_event_types(self, parser):
-        args = parser.parse_args(["webhook", "event-types"])
-        assert args.webhook_command == "event-types"
+    def test_webhook_deliveries(self, parser):
+        args = parser.parse_args(["webhook", "deliveries", "#general", "--limit", "10"])
+        assert args.webhook_command == "deliveries"
+        assert args.conversation == "#general"
+        assert args.limit == 10
 
 
 class TestDidYouMean:
