@@ -77,13 +77,13 @@ uv publish
 
 ## API Alignment
 
-The backend (FastAPI) serves its OpenAPI spec at `/openapi.json`. Validate CLI operations against it:
+**The backend OpenAPI spec is the source of truth.** Always fetch and check it when adding or modifying commands:
 
 ```bash
 popcorn api /openapi.json --raw > /tmp/popcorn-openapi.json
 ```
 
-When adding or modifying commands, check the spec for correct field names, HTTP methods, and parameter types. The spec is auto-generated from Pydantic models — it's the ground truth.
+The spec is auto-generated from FastAPI's Pydantic models and route definitions. It gives you exact field names, types, HTTP methods, and required/optional status for every endpoint. Do not guess or assume — fetch the spec.
 
 ## Conventions
 
