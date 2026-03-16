@@ -59,7 +59,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn log [channel] [--limit N]` | Show site version history |
 | **Messages** | |
 | `popcorn send-message <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
-| `popcorn list-messages <conv> [--thread ID] [--limit N] [--cursor C]` | Read message history |
+| `popcorn list-messages <conv> [--thread ID] [--limit N] [--before ID] [--after ID]` | Read message history |
 | `popcorn list-threads <conv> [--limit N] [--offset N]` | List threads with reply counts |
 | `popcorn get-message <msg_id>` | Get a single message by ID |
 | `popcorn edit-message <conv> <msg_id> "content"` | Edit a message |
@@ -67,11 +67,11 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
 | `popcorn search channels\|dms\|users [query]` | Search/list entities |
 | `popcorn search messages <query>` | Full-text message search |
-| `popcorn inbox [--unread\|--read] [--limit N] [--cursor C]` | Notifications |
+| `popcorn inbox [--unread\|--read] [--limit N]` | Notifications |
 | `popcorn download <file_key> [-o PATH]` | Download a file |
 | `popcorn watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
 | **Channels** | |
-| `popcorn create-channel <name> [--type TYPE] [--if-not-exists]` | Create a channel |
+| `popcorn create-channel <name> [--type TYPE] [--members IDS] [--if-not-exists]` | Create a channel |
 | `popcorn info <conv>` | Channel details + members |
 | `popcorn join-channel <conv>` | Join a channel |
 | `popcorn leave-channel <conv>` | Leave a channel |
@@ -81,10 +81,9 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn archive-channel <conv> [--undo]` | Archive/unarchive a channel |
 | `popcorn delete-channel <conv>` | Delete a channel |
 | **Webhooks** | |
-| `popcorn webhook create <conv> <url> [--events E]` | Create a webhook |
+| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |
-| `popcorn webhook deliveries <webhook_id>` | List webhook deliveries |
-| `popcorn webhook event-types` | List supported sources and event types |
+| `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | **Auth & identity** | |
 | `popcorn auth login [--with-token] [--force] [--workspace NAME]` | Log in |
 | `popcorn auth status` | Show auth state |

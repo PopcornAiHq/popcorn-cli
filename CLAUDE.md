@@ -9,7 +9,7 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (214 tests)
+├── tests/                     ← pytest (~205 tests)
 ├── scripts/                   ← test-install.sh (Docker-based install tests)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check, dev
@@ -74,6 +74,16 @@ make bump v=X.Y.Z
 uv build
 uv publish
 ```
+
+## API Alignment
+
+The backend (FastAPI) serves its OpenAPI spec at `/openapi.json`. Validate CLI operations against it:
+
+```bash
+popcorn api /openapi.json --raw > /tmp/popcorn-openapi.json
+```
+
+When adding or modifying commands, check the spec for correct field names, HTTP methods, and parameter types. The spec is auto-generated from Pydantic models — it's the ground truth.
 
 ## Conventions
 
