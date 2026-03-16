@@ -410,8 +410,12 @@ class TestPop:
                 "version": 1,
                 "commit_hash": "abc123",
             },
-            {"url": "https://pop-test.popcorn.ai", "site_name": "pop-test", "version": 1},
         ]
+        mock_client.get.return_value = {
+            "url": "https://pop-test.popcorn.ai",
+            "site_name": "pop-test",
+            "version": 1,
+        }
 
         with (
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
@@ -433,9 +437,12 @@ class TestPop:
             json.dumps({"conversation_id": "conv-existing", "site_name": "pop-test"})
         )
 
-        mock_client.get.return_value = {
-            "conversation": {"id": "conv-existing", "site": {"name": "pop-test"}},
-        }
+        mock_client.get.side_effect = [
+            {
+                "conversation": {"id": "conv-existing", "site": {"name": "pop-test"}},
+            },
+            _SITE_STATUS,
+        ]
         mock_client.post.side_effect = [
             {
                 "upload_url": "https://s3.example.com/upload",
@@ -448,7 +455,6 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "def456",
             },
-            _SITE_STATUS,
         ]
 
         with (
@@ -461,7 +467,7 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        assert mock_client.post.call_count == 3  # presign + publish + site-status
+        assert mock_client.post.call_count == 2  # presign + publish
 
     def test_pop_409_conflict_retries_with_suffix(
         self, mock_client, tmp_path, monkeypatch, pop_args
@@ -702,9 +708,12 @@ class TestPop:
         )
         (tmp_path / ".gitignore").write_text("")
 
-        mock_client.get.return_value = {
-            "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
-        }
+        mock_client.get.side_effect = [
+            {
+                "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
+            },
+            _SITE_STATUS,
+        ]
         mock_client.post.side_effect = [
             {
                 "upload_url": "https://s3.example.com/upload",
@@ -718,7 +727,6 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "abc",
             },
-            _SITE_STATUS,
         ]
 
         with (
@@ -732,8 +740,8 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        # presign + publish(502) + publish(success) + site-status = 4 post calls
-        assert mock_client.post.call_count == 4
+        # presign + publish(502) + publish(success) = 3 post calls
+        assert mock_client.post.call_count == 3
 
     def test_pop_force_flag_passed_to_publish(self, mock_client, tmp_path, monkeypatch, pop_args):
         """--force passes force=True to deploy_publish."""
@@ -744,9 +752,12 @@ class TestPop:
         )
         (tmp_path / ".gitignore").write_text("")
 
-        mock_client.get.return_value = {
-            "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
-        }
+        mock_client.get.side_effect = [
+            {
+                "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
+            },
+            _SITE_STATUS,
+        ]
         mock_client.post.side_effect = [
             {
                 "upload_url": "https://s3.example.com/upload",
@@ -759,7 +770,6 @@ class TestPop:
                 "version": 2,
                 "commit_hash": "abc",
             },
-            _SITE_STATUS,
         ]
 
         with (
@@ -772,8 +782,8 @@ class TestPop:
 
             cmd_pop(pop_args)
 
-        # Check the publish call includes force=True (second-to-last post, before site-status)
-        publish_call = mock_client.post.call_args_list[-2]
+        # Check the publish call includes force=True (last post call)
+        publish_call = mock_client.post.call_args_list[-1]
         assert publish_call[1]["data"]["force"] is True
 
 
@@ -784,7 +794,7 @@ class TestStatus:
             json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
         )
 
-        mock_client.post.return_value = {
+        mock_client.get.return_value = {
             "site_name": "my-site",
             "url": "https://my-site.popcorn.ai",
             "version": 3,
@@ -810,10 +820,10 @@ class TestStatus:
             json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
         )
 
-        mock_client.post.side_effect = APIError("Not found", status_code=404)
-        mock_client.get.return_value = {
-            "conversation": {"name": "my-site"},
-        }
+        mock_client.get.side_effect = [
+            APIError("Not found", status_code=404),
+            {"conversation": {"name": "my-site"}},
+        ]
 
         args = MagicMock()
         args.channel = None
@@ -851,7 +861,7 @@ class TestLog:
             json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
         )
 
-        mock_client.post.return_value = {
+        mock_client.get.return_value = {
             "versions": [
                 {
                     "version": 3,
@@ -893,7 +903,7 @@ class TestLog:
             json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
         )
 
-        mock_client.post.side_effect = APIError("Not found", status_code=404)
+        mock_client.get.side_effect = APIError("Not found", status_code=404)
 
         args = MagicMock()
         args.channel = None

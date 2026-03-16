@@ -122,7 +122,7 @@ class TestConversations:
         result = operations.create_conversation(mock_client, "test-channel")
         mock_client.post.assert_called_once_with(
             "/api/conversations/create",
-            data={"name": "test-channel", "type": "public_channel"},
+            data={"name": "test-channel", "conversation_type": "public_channel"},
         )
         assert result["id"] == "c1"
 
@@ -132,30 +132,28 @@ class TestConversations:
             mock_client,
             "secret",
             conv_type="private_channel",
-            description="Top secret",
-            members=["u1", "u2"],
+            member_ids=["u1", "u2"],
         )
         call_data = mock_client.post.call_args[1]["data"]
-        assert call_data["type"] == "private_channel"
-        assert call_data["description"] == "Top secret"
-        assert call_data["members"] == ["u1", "u2"]
+        assert call_data["conversation_type"] == "private_channel"
+        assert call_data["member_ids"] == ["u1", "u2"]
 
     def test_join_conversation(self, mock_client):
         mock_client.post.return_value = {"ok": True}
         operations.join_conversation(mock_client, "conv-id")
         mock_client.post.assert_called_once_with(
-            "/api/conversations/join", data={"conversation_id": "conv-id"}
+            "/api/conversations/join", data={"conversation": "conv-id"}
         )
 
     def test_archive_unarchive(self, mock_client):
         mock_client.post.return_value = {"ok": True}
         operations.archive_conversation(mock_client, "conv-id")
         mock_client.post.assert_called_with(
-            "/api/conversations/archive", data={"conversation_id": "conv-id"}
+            "/api/conversations/archive", data={"conversation": "conv-id"}
         )
         operations.unarchive_conversation(mock_client, "conv-id")
         mock_client.post.assert_called_with(
-            "/api/conversations/unarchive", data={"conversation_id": "conv-id"}
+            "/api/conversations/unarchive", data={"conversation": "conv-id"}
         )
 
 
@@ -198,43 +196,38 @@ class TestRawApi:
 
 class TestSiteStatus:
     def test_get_site_status(self, mock_client):
-        mock_client.post.return_value = {
+        mock_client.get.return_value = {
             "site_name": "my-site",
             "status": "deployed",
             "url": "https://my-site.popcorn.ai",
         }
         result = operations.get_site_status(mock_client, "conv-1")
-        mock_client.post.assert_called_once_with(
-            "/api/conversations/site-status",
-            data={"conversation_id": "conv-1"},
-        )
+        mock_client.get.assert_called_once_with("/api/conversations/conv-1/site/status")
         assert result["status"] == "deployed"
         assert result["site_name"] == "my-site"
 
     def test_get_site_status_fallback(self, mock_client):
-        mock_client.post.side_effect = APIError("Not found", status_code=404)
-        mock_client.get.return_value = {"conversation": {"id": "conv-1", "name": "my-site"}}
+        mock_client.get.side_effect = [
+            APIError("Not found", status_code=404),
+            {"conversation": {"id": "conv-1", "name": "my-site"}},
+        ]
         result = operations.get_site_status(mock_client, "conv-1")
-        mock_client.get.assert_called_once_with(
-            "/api/conversations/info", {"conversation_id": "conv-1"}
-        )
+        assert mock_client.get.call_count == 2
+        mock_client.get.assert_called_with("/api/conversations/info", {"conversation_id": "conv-1"})
         assert result["fallback"] is True
         assert result["conversation"]["id"] == "conv-1"
 
     def test_get_site_log(self, mock_client):
-        mock_client.post.return_value = {
+        mock_client.get.return_value = {
             "versions": [{"version": 1, "commit_hash": "abc123"}],
         }
         result = operations.get_site_log(mock_client, "conv-1")
-        mock_client.post.assert_called_once_with(
-            "/api/conversations/site-log",
-            data={"conversation_id": "conv-1", "limit": 10},
-        )
+        mock_client.get.assert_called_once_with("/api/conversations/conv-1/site/log", {"limit": 10})
         assert len(result["versions"]) == 1
         assert result["versions"][0]["version"] == 1
 
     def test_get_site_log_fallback(self, mock_client):
-        mock_client.post.side_effect = APIError("Not found", status_code=404)
+        mock_client.get.side_effect = APIError("Not found", status_code=404)
         result = operations.get_site_log(mock_client, "conv-1")
         assert result["fallback"] is True
         assert result["versions"] == []

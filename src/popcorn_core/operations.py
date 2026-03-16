@@ -89,15 +89,17 @@ def search_users(client: APIClient, query: str = "") -> dict[str, Any]:
     return {"users": users}
 
 
-def search_messages(client: APIClient, query: str, cursor: str = "") -> dict[str, Any]:
+def search_messages(
+    client: APIClient, query: str, limit: int = 50, offset: int = 0
+) -> dict[str, Any]:
     """Full-text search across messages."""
     if not query:
         raise PopcornError(
             "Query required for message search. Usage: popcorn search messages <query>"
         )
-    params: dict[str, Any] = {"query": query, "limit": 50}
-    if cursor:
-        params["cursor"] = cursor
+    params: dict[str, Any] = {"query": query, "limit": limit}
+    if offset:
+        params["offset"] = offset
     return client.get("/api/search/", params)
 
 
@@ -125,13 +127,16 @@ def read_messages(
     conversation: str,
     thread_id: str = "",
     limit: int = 25,
-    cursor: str = "",
+    latest: str = "",
+    oldest: str = "",
 ) -> dict[str, Any]:
     """Read message history from a channel, DM, or thread."""
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"limit": limit, "conversation_id": conv_id}
-    if cursor:
-        params["cursor"] = cursor
+    if latest:
+        params["latest"] = latest
+    if oldest:
+        params["oldest"] = oldest
     if thread_id:
         params["thread_ts"] = thread_id
         return client.get("/api/messages/thread", params)
@@ -233,40 +238,37 @@ def create_conversation(
     client: APIClient,
     name: str,
     conv_type: str = "public_channel",
-    description: str = "",
-    members: list[str] | None = None,
+    member_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a new conversation (channel or DM)."""
-    body: dict[str, Any] = {"name": name, "type": conv_type}
-    if description:
-        body["description"] = description
-    if members:
-        body["members"] = members
+    body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
+    if member_ids:
+        body["member_ids"] = member_ids
     return client.post("/api/conversations/create", data=body)
 
 
 def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Join a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/conversations/join", data={"conversation_id": conv_id})
+    return client.post("/api/conversations/join", data={"conversation": conv_id})
 
 
 def leave_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Leave a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/conversations/leave", data={"conversation_id": conv_id})
+    return client.post("/api/conversations/leave", data={"conversation": conv_id})
 
 
 def archive_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Archive a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/conversations/archive", data={"conversation_id": conv_id})
+    return client.post("/api/conversations/archive", data={"conversation": conv_id})
 
 
 def unarchive_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Unarchive a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/conversations/unarchive", data={"conversation_id": conv_id})
+    return client.post("/api/conversations/unarchive", data={"conversation": conv_id})
 
 
 def update_conversation(
@@ -278,13 +280,13 @@ def update_conversation(
 ) -> dict[str, Any]:
     """Update conversation details."""
     conv_id = resolve_conversation(client, conversation)
-    body: dict[str, Any] = {"conversation_id": conv_id}
+    body: dict[str, Any] = {"conversation": conv_id}
     if name:
         body["name"] = name
     if description:
         body["description"] = description
     if conv_type:
-        body["type"] = conv_type
+        body["conversation_type"] = conv_type
     return client.post("/api/conversations/update", data=body)
 
 
@@ -295,7 +297,7 @@ def invite_to_conversation(
     conv_id = resolve_conversation(client, conversation)
     return client.post(
         "/api/conversations/invite",
-        data={"conversation_id": conv_id, "user_ids": user_ids},
+        data={"conversation": conv_id, "users": user_ids},
     )
 
 
@@ -304,14 +306,14 @@ def kick_from_conversation(client: APIClient, conversation: str, user_id: str) -
     conv_id = resolve_conversation(client, conversation)
     return client.post(
         "/api/conversations/kick",
-        data={"conversation_id": conv_id, "user_id": user_id},
+        data={"conversation": conv_id, "user": user_id},
     )
 
 
 def delete_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Delete a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.post("/api/conversations/delete", data={"conversation_id": conv_id})
+    return client.post("/api/conversations/delete", data={"conversation": conv_id})
 
 
 # ---------------------------------------------------------------------------
@@ -320,12 +322,12 @@ def delete_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
 
 
 def get_inbox(
-    client: APIClient, filter_type: str = "all", limit: int = 20, cursor: str = ""
+    client: APIClient, filter_type: str = "all", limit: int = 20, offset: int = 0
 ) -> dict[str, Any]:
     """Fetch notifications (mentions, replies, reactions)."""
     params: dict[str, Any] = {"limit": limit}
-    if cursor:
-        params["cursor"] = cursor
+    if offset:
+        params["offset"] = offset
     if filter_type == "unread":
         params["is_read"] = "false"
     elif filter_type == "read":
@@ -539,10 +541,7 @@ def deploy_upload(
 def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
     """Get site deployment status, falling back to conversation info."""
     try:
-        return client.post(
-            "/api/conversations/site-status",
-            data={"conversation_id": conversation_id},
-        )
+        return client.get(f"/api/conversations/{conversation_id}/site/status")
     except APIError as e:
         if e.status_code == 404:
             info = client.get("/api/conversations/info", {"conversation_id": conversation_id})
@@ -553,10 +552,7 @@ def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
 def get_site_log(client: APIClient, conversation_id: str, limit: int = 10) -> dict[str, Any]:
     """Get site version history."""
     try:
-        return client.post(
-            "/api/conversations/site-log",
-            data={"conversation_id": conversation_id, "limit": limit},
-        )
+        return client.get(f"/api/conversations/{conversation_id}/site/log", {"limit": limit})
     except APIError as e:
         if e.status_code == 404:
             return {"versions": [], "fallback": True}

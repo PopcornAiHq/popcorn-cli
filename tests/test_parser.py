@@ -143,17 +143,13 @@ class TestReadingCommands:
         args = parser.parse_args(["list-threads", "#general", "--offset", "50"])
         assert args.offset == 50
 
-    def test_list_messages_cursor(self, parser):
-        args = parser.parse_args(["list-messages", "#general", "--cursor", "abc123"])
-        assert args.cursor == "abc123"
+    def test_list_messages_before(self, parser):
+        args = parser.parse_args(["list-messages", "#general", "--before", "msg123"])
+        assert args.before == "msg123"
 
-    def test_inbox_cursor(self, parser):
-        args = parser.parse_args(["inbox", "--cursor", "xyz"])
-        assert args.cursor == "xyz"
-
-    def test_search_cursor(self, parser):
-        args = parser.parse_args(["search", "messages", "hello", "--cursor", "c1"])
-        assert args.cursor == "c1"
+    def test_list_messages_after(self, parser):
+        args = parser.parse_args(["list-messages", "#general", "--after", "msg456"])
+        assert args.after == "msg456"
 
     def test_watch_count(self, parser):
         args = parser.parse_args(["watch", "#general", "--count", "5"])

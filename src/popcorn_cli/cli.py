@@ -520,7 +520,7 @@ def cmd_search(args: argparse.Namespace) -> None:
         _output(args, resp, fmt)
 
     elif search_type == "messages":
-        resp = operations.search_messages(client, query, getattr(args, "cursor", "") or "")
+        resp = operations.search_messages(client, query)
         messages = resp.get("messages", [])
         lines = [fmt_message(item.get("message") or item) for item in messages]
         fmt = "Messages:\n" + "\n".join(lines) if lines else "No messages found."
@@ -534,7 +534,8 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
         args.conversation,
         args.thread or "",
         args.limit or 25,
-        getattr(args, "cursor", "") or "",
+        latest=getattr(args, "before", "") or "",
+        oldest=getattr(args, "after", "") or "",
     )
     messages = resp.get("messages", [])
     lines = [fmt_message(m) for m in messages]
@@ -770,14 +771,13 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
                 )
                 return
 
-    members = args.members.split(",") if getattr(args, "members", None) else None
+    member_ids = args.members.split(",") if getattr(args, "members", None) else None
     try:
         resp = operations.create_conversation(
             client,
             name=args.name,
             conv_type=getattr(args, "type", "public_channel") or "public_channel",
-            description=getattr(args, "description", "") or "",
-            members=members,
+            member_ids=member_ids,
         )
     except APIError as e:
         # Handle race: channel created between our search and create (--if-not-exists)
@@ -1292,9 +1292,7 @@ def cmd_api(args: argparse.Namespace) -> None:
 def cmd_inbox(args: argparse.Namespace) -> None:
     client = _get_client(args)
     filter_type = "unread" if args.unread else ("read" if args.read else "all")
-    resp = operations.get_inbox(
-        client, filter_type, args.limit or 20, getattr(args, "cursor", "") or ""
-    )
+    resp = operations.get_inbox(client, filter_type, args.limit or 20)
 
     activity_data = extract(resp, "activity", label="inbox")
     activities = activity_data.get("activities", [])
@@ -1748,20 +1746,19 @@ Other:
     inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
     inbox_grp.add_argument("--read", action="store_true", help="Show only read")
     inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
-    inbox_p.add_argument("--cursor", type=str, help="Pagination cursor from previous response")
 
     search_p = sub.add_parser("search", help=_h)
     search_p.add_argument(
         "search_type", choices=["channels", "dms", "users", "messages"], help="What to search"
     )
     search_p.add_argument("query", nargs="?", default="", help="Search query")
-    search_p.add_argument("--cursor", type=str, help="Pagination cursor (messages only)")
 
     read_p = sub.add_parser("list-messages", help=_h)
     read_p.add_argument("conversation", help="Channel name (#general) or UUID")
     read_p.add_argument("--thread", type=str, help="Thread ID to read replies")
     read_p.add_argument("--limit", type=int, help="Max messages (default 25)")
-    read_p.add_argument("--cursor", type=str, help="Pagination cursor from previous response")
+    read_p.add_argument("--before", type=str, help="Message ID — show messages before this")
+    read_p.add_argument("--after", type=str, help="Message ID — show messages after this")
 
     threads_p = sub.add_parser("list-threads", help=_h)
     threads_p.add_argument("conversation", help="Channel name (#general) or UUID")
@@ -1836,7 +1833,6 @@ Other:
         default="public_channel",
         help="Conversation type",
     )
-    create_p.add_argument("--description", type=str, help="Channel description")
     create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
     create_p.add_argument(
         "--if-not-exists",
