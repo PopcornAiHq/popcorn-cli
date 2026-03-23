@@ -1249,7 +1249,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
 
     # Use final version from verify if available
     display_version = result.get("version")
-    if verify_data and verify_data.get("version"):
+    if verify_data and verify_data.get("version") is not None:
         display_version = verify_data["version"]
 
     # Fetch site URL for output (non-fatal)
@@ -1268,9 +1268,9 @@ def cmd_pop(args: argparse.Namespace) -> None:
         output_data["suggested_name"] = suggested_name
     if verify_data:
         output_data["verify"] = verify_data
-        if verify_data.get("version"):
+        if verify_data.get("version") is not None:
             output_data["version"] = verify_data["version"]
-        if verify_data.get("commit_hash"):
+        if verify_data.get("commit_hash") is not None:
             output_data["commit_hash"] = verify_data["commit_hash"]
 
     # Format human output
@@ -1288,7 +1288,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
             n = len(fixes)
             human_line += f"\n⚠ Fixed {n} issue{'s' if n != 1 else ''} (v{original_version} → v{display_version}):"
             for fix in fixes:
-                human_line += f"\n  • {fix['file']}: {fix['description']}"
+                human_line += f"\n  • {fix.get('file', 'unknown')}: {fix.get('description', '')}"
         elif errors:
             n = len(errors)
             if fixes:
