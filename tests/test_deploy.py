@@ -71,6 +71,30 @@ class TestDeployPublish:
         assert result["version"] == 1
         assert result["commit_hash"] == "abc123"
 
+    def test_deploy_publish_with_verify(self, mock_client):
+        mock_client.post.return_value = {
+            "conversation_id": "conv-1",
+            "site_name": "my-site",
+            "version": 3,
+            "commit_hash": "abc123",
+            "verify_task_id": "task-uuid",
+        }
+        result = operations.deploy_publish(mock_client, "conv-1", "s3-key-1", verify=True)
+        call_data = mock_client.post.call_args[1]["data"]
+        assert call_data["verify"] is True
+        assert result["verify_task_id"] == "task-uuid"
+
+    def test_deploy_publish_without_verify(self, mock_client):
+        mock_client.post.return_value = {
+            "conversation_id": "conv-1",
+            "site_name": "my-site",
+            "version": 3,
+            "commit_hash": "abc123",
+        }
+        operations.deploy_publish(mock_client, "conv-1", "s3-key-1")
+        call_data = mock_client.post.call_args[1]["data"]
+        assert "verify" not in call_data
+
     def test_deploy_publish_with_context(self, mock_client):
         mock_client.post.return_value = {
             "conversation_id": "conv-1",

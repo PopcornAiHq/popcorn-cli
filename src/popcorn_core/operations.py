@@ -498,6 +498,7 @@ def deploy_publish(
     s3_key: str,
     context: str = "",
     force: bool = False,
+    verify: bool = False,
 ) -> dict[str, Any]:
     """Publish a tarball from S3 to the conversation's site."""
     data: dict[str, Any] = {"conversation_id": conversation_id, "s3_key": s3_key}
@@ -505,6 +506,8 @@ def deploy_publish(
         data["context"] = context
     if force:
         data["force"] = True
+    if verify:
+        data["verify"] = True
     return client.post("/api/conversations/publish", data=data)
 
 
