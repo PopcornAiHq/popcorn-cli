@@ -72,6 +72,11 @@ Response:
 }
 ```
 
+**`healthy` field values:**
+- `null` — task is still in progress (status is not "done")
+- `true` — site is healthy (passed checks, or agent fixed it)
+- `false` — site is unhealthy (agent tried but couldn't fully fix)
+
 ### Backend Async Verify Flow (VM-side)
 
 ```
@@ -112,6 +117,16 @@ def deploy_publish(client, conversation_id, s3_key, context="", force=False, ver
     return client.post("/api/conversations/publish", data=data)
 ```
 
+### Modified: `_publish_with_retry()` in `cli.py`
+
+Thread `verify` parameter through to `deploy_publish()`. The retry wrapper at `cli.py:1000` calls `deploy_publish()` and must forward the new parameter.
+
+```python
+def _publish_with_retry(client, conversation_id, s3_key, context, force, json_mode, verify=False):
+    # ... existing retry logic ...
+    return operations.deploy_publish(client, conversation_id, s3_key, context, force=force, verify=verify)
+```
+
 ### New: `deploy_verify_status()` in `operations.py`
 
 ```python
@@ -130,6 +145,8 @@ New argument:
 pop_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
 ```
 
+**`--skip-check` behavior:** When set, `verify` is not included in the publish payload. Without `--skip-check`, `verify: true` is always sent — the backend decides whether to skip (e.g., for static sites) and communicates this via the response shape.
+
 After publish returns, new phases:
 
 ```
@@ -139,12 +156,18 @@ Phase 8: Check publish response
 
 Phase 9: Poll loop
   Call deploy_verify_status() every 2 seconds
-  Render progress:
+  Render progress (always shown, not gated by --verbose):
     ⠋ Restarting site...
     ⠋ Checking health...
     ⠋ Fixing issues...
+  Use _status() for progress (writes to stderr, respects --no-color)
   Timeout: 5 minutes
   On timeout: warn, report last known status, continue to output
+
+  Poll error handling:
+    Transient errors (network, 5xx): retry silently, count toward timeout
+    404: treat as "backend doesn't support verify", stop polling, output normally
+    Persistent errors (3+ consecutive): warn and stop polling, output normally
 
 Phase 10: Report result (replaces current output phase)
 ```
@@ -159,7 +182,7 @@ Published to #my-site (v3) https://my-site.popcorn.site
 **Agent fixed issues:**
 ```
 Published to #my-site (v4) https://my-site.popcorn.site
-⚠ Fixed 2 issues before publishing:
+⚠ Fixed 2 issues (v3 → v4):
   • server.js: added missing express import
   • package.json: added cors dependency
 ```
@@ -167,7 +190,7 @@ Published to #my-site (v4) https://my-site.popcorn.site
 **Agent couldn't fully fix:**
 ```
 Published to #my-site (v4) https://my-site.popcorn.site
-⚠ 1 issue remains:
+⚠ 1 issue remains after auto-fix (v3 → v4):
   • server crashes on startup: Cannot find module 'foo'
 ```
 
@@ -206,8 +229,13 @@ Published to #my-site (v3) https://my-site.popcorn.site
 |----------|-----------|
 | Published, healthy (or static/skipped) | 0 |
 | Published, agent fixed it | 0 |
-| Published, still unhealthy | 1 (EXIT_VALIDATION) |
+| Published, still unhealthy | 5 (EXIT_UNHEALTHY) |
 | Poll timeout | 0 (warn, don't fail) |
+| Poll error (backend doesn't support verify) | 0 (degrade gracefully) |
+
+**New exit code:** `EXIT_UNHEALTHY = 5` in `errors.py`. This is distinct from `EXIT_VALIDATION` (bad input) and `EXIT_SERVER` (API failure). It signals: "the deploy succeeded but the site isn't working." CI scripts can distinguish between "bad arguments" (1), "auth failure" (2), "API error" (3/4), and "site unhealthy" (5).
+
+**JSON note:** `"ok": true` is always set when the publish API call succeeded, even when `healthy: false`. The `ok` field reflects the API operation, not site health. Consumers should check `data.verify.healthy` for site status.
 
 ## Testing
 
@@ -246,6 +274,24 @@ test_cmd_pop_verify_json_output
 
 test_cmd_pop_verify_progress_messages
   Assert: progress messages printed for each status transition
+
+test_cmd_pop_verify_poll_transient_error
+  Mock verify-status → 500, 500, then {status: "done", healthy: true}
+  Assert: retries silently, exit 0
+
+test_cmd_pop_verify_poll_404
+  Mock verify-status → 404
+  Assert: stops polling, outputs normally (graceful degradation), exit 0
+
+test_cmd_pop_verify_poll_persistent_error
+  Mock verify-status → 500 three times consecutively
+  Assert: warns and stops polling, exit 0
+
+test_cmd_pop_verify_version_display
+  Mock publish → {version: 3, verify_task_id: "abc"}
+  Mock verify-status → {status: "done", healthy: true, version: 4, fixes: [...]}
+  Assert: output shows v4 (final version from verify, not original publish)
+  Assert: fix message shows "v3 → v4"
 ```
 
 ## Scope Boundary
