@@ -1226,7 +1226,7 @@ def cmd_log(args: argparse.Namespace) -> None:
         print("Version history not available yet")
         return
 
-    versions = resp.get("versions", [])
+    versions = resp.get("versions") or resp.get("entries") or []
     if not versions:
         print("No versions found")
         return
