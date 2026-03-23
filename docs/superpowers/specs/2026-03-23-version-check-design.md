@@ -29,7 +29,7 @@ On every CLI invocation, check if a newer version exists (cached, 5min TTL). If 
 GET https://raw.githubusercontent.com/PopcornAiHq/popcorn-cli/main/pyproject.toml
 ```
 
-Parse `version = "X.Y.Z"` from the response body. Timeout: 2 seconds.
+Parse version with a regex anchored to start-of-line: `^version = "([^"]+)"` (multiline). This avoids matching dependency versions elsewhere in the TOML. Import httpx lazily inside `_fetch_latest_version()` to avoid adding startup latency. Timeout: 2 seconds.
 
 Switch to PyPI or GitHub releases API later when available.
 
@@ -88,10 +88,20 @@ Fetch latest version (bypass cache, 2s timeout)
 Auto-update is skipped (silently) when:
 - `popcorn upgrade` is the current command (avoid infinite loop)
 - `popcorn version --check` is the current command (explicit check is informational)
+- `popcorn version`, `popcorn help`, `popcorn --help`, or no command (informational commands)
+- `--quiet` / `-q` flag is set (scripted/agent usage)
 - Installer is undetectable (unknown install method)
 - Fetch fails (network, timeout, parse error)
 - Subprocess upgrade fails (print warning, continue)
 - `POPCORN_NO_UPDATE_CHECK` env var is set (CI/scripts opt-out)
+
+## Version Comparison
+
+Use `packaging.version.Version` for proper semver comparison:
+- `current < latest` → outdated, trigger auto-update
+- `current >= latest` → up to date (covers dev builds ahead of published)
+
+`packaging` is a transitive dependency (via `hatchling`/`pip`), always available.
 
 ## CLI Interface
 
@@ -133,8 +143,23 @@ popcorn 0.5.6 (could not check for updates)
 ## Implementation
 
 **Files:**
-- `src/popcorn_cli/cli.py` — `_fetch_latest_version()`, `_read_version_cache()`, `_write_version_cache()`, `_check_and_update()`, modify `cmd_version()` to support `--check`, call `_check_and_update()` in `main()`
+- `src/popcorn_cli/cli.py` — `_fetch_latest_version()`, `_read_version_cache()`, `_write_version_cache()`, `_check_and_update()`, new `cmd_version()` handler with `--check` support, call `_check_and_update()` in `main()`
 - `tests/test_upgrade.py` — add version check tests
+
+**Routing changes:**
+- Add `--check` flag to the `version` subparser in `build_parser()`
+- Create `cmd_version(args)` function
+- Add `"version": cmd_version` to `_COMMANDS` dict
+- Remove the inline `version` handling in `main()` (the `if args.command == "version": print(...); sys.exit(0)` block)
+
+**Placement of `_check_and_update()` in `main()`:**
+- After argument parsing and color setup
+- Before command dispatch
+- Specifically: after the `set_color(...)` call, before the `if not args.command` block
+
+**Re-exec note:** After `os.execvp`, the new process runs `main()` from scratch. It will call `_check_and_update()` again, but the cache will be fresh (just written) and the version will match, so it no-ops. This is expected behavior.
+
+**Symlink resolution:** `_detect_installer()` should resolve symlinks via `Path(sys.executable).resolve()` before checking path segments, to handle cases where the interpreter is symlinked.
 
 **Functions:**
 
