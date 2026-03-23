@@ -1104,6 +1104,74 @@ def _poll_verify(
     return {"status": "timeout", "healthy": None}
 
 
+# ---------------------------------------------------------------------------
+# Upgrade
+# ---------------------------------------------------------------------------
+
+_GITHUB_URL = "git+https://github.com/PopcornAiHq/popcorn-cli.git"
+
+_UPGRADE_COMMANDS: dict[str, list[str]] = {
+    "uv": ["uv", "tool", "install", "--force", _GITHUB_URL],
+    "pipx": ["pipx", "install", "--force", _GITHUB_URL],
+    "pip": ["pip", "install", "--upgrade", _GITHUB_URL],
+}
+
+
+def _detect_installer() -> str | None:
+    """Detect how popcorn was installed by inspecting the Python interpreter path."""
+    import sys as _sys
+
+    path = _sys.executable
+    if "/uv/" in path:
+        return "uv"
+    if "/pipx/" in path:
+        return "pipx"
+    return None
+
+
+def cmd_upgrade(args: argparse.Namespace) -> None:
+    """Upgrade popcorn to the latest version."""
+    import subprocess
+
+    old_version = __version__
+    installer = _detect_installer()
+
+    if installer is None:
+        print(
+            "Could not detect how popcorn was installed. Run one of:\n"
+            f"  uv tool install --force {_GITHUB_URL}\n"
+            f"  pipx install --force {_GITHUB_URL}\n"
+            f"  pip install --upgrade {_GITHUB_URL}",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_VALIDATION)
+
+    _status(f"Upgrading via {installer}...")
+    cmd = _UPGRADE_COMMANDS[installer]
+    result = subprocess.run(cmd)
+
+    if result.returncode != 0:
+        manual_cmd = " ".join(cmd)
+        print(
+            f"Upgrade failed (exit code {result.returncode}). Run manually:\n  {manual_cmd}",
+            file=sys.stderr,
+        )
+        sys.exit(EXIT_VALIDATION)
+
+    # Read new version via subprocess (importlib.metadata caches in-process)
+    try:
+        raw = subprocess.check_output(["popcorn", "--version"], text=True)
+        out = raw.decode() if isinstance(raw, bytes) else raw
+        new_version = out.strip().replace("popcorn ", "")
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        new_version = old_version
+
+    if new_version != old_version:
+        _status(f"✓ popcorn {old_version} → {new_version}")
+    else:
+        _status(f"✓ popcorn {new_version} (already up to date)")
+
+
 def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
     site_name = args.name or f"pop-{Path.cwd().name}"
@@ -2068,6 +2136,7 @@ Other:
     sub.add_parser("commands", help=_h)
     sub.add_parser("help", help=_h)
     sub.add_parser("version", help=_h)
+    sub.add_parser("upgrade", help=_h)
 
     # Hide the auto-generated subparser list — the epilog handles display
     sub._choices_actions = []
@@ -2113,6 +2182,7 @@ _COMMANDS = {
     "status": cmd_status,
     "log": cmd_log,
     "commands": cmd_commands,
+    "upgrade": cmd_upgrade,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
