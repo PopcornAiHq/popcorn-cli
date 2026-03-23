@@ -45,6 +45,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import sys
 import time
 import webbrowser
@@ -1119,9 +1120,9 @@ _UPGRADE_COMMANDS: dict[str, list[str]] = {
 
 def _detect_installer() -> str | None:
     """Detect how popcorn was installed by inspecting the Python interpreter path."""
-    import sys as _sys
+    from pathlib import Path as _Path
 
-    path = _sys.executable
+    path = str(_Path(sys.executable).resolve())
     if "/uv/" in path:
         return "uv"
     if "/pipx/" in path:
@@ -1170,6 +1171,140 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
         _status(f"✓ popcorn {old_version} → {new_version}")
     else:
         _status(f"✓ popcorn {new_version} (already up to date)")
+
+
+# ---------------------------------------------------------------------------
+# Version check + auto-update
+# ---------------------------------------------------------------------------
+
+_VERSION_CHECK_URL = "https://raw.githubusercontent.com/PopcornAiHq/popcorn-cli/main/pyproject.toml"
+_VERSION_CACHE_TTL = 300  # 5 minutes
+
+
+def _fetch_latest_version(timeout: float = 2.0) -> str | None:
+    """Fetch latest version from GitHub. Returns version string or None on failure."""
+    import re as _re
+
+    import httpx
+
+    try:
+        resp = httpx.get(_VERSION_CHECK_URL, timeout=timeout, follow_redirects=True)
+        resp.raise_for_status()
+    except (httpx.HTTPError, httpx.TimeoutException):
+        return None
+
+    match = _re.search(r'^version = "([^"]+)"', resp.text, _re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _read_version_cache() -> tuple[str | None, float]:
+    """Read cached version. Returns (version, checked_at) or (None, 0)."""
+    from popcorn_core.config import CONFIG_DIR
+
+    cache_file = CONFIG_DIR / "version-check.json"
+    try:
+        data = json.loads(cache_file.read_text())
+        return data.get("latest_version"), data.get("checked_at", 0)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return None, 0
+
+
+def _write_version_cache(version: str) -> None:
+    """Write version + timestamp to cache file. Silent on failure."""
+    from popcorn_core.config import CONFIG_DIR
+
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        cache_file = CONFIG_DIR / "version-check.json"
+        cache_file.write_text(json.dumps({"latest_version": version, "checked_at": time.time()}))
+    except OSError:
+        pass
+
+
+def _is_outdated(current: str, latest: str) -> bool:
+    """Check if current version is older than latest using proper version comparison."""
+    try:
+        from packaging.version import Version
+
+        return Version(current) < Version(latest)
+    except Exception:
+        return current != latest
+
+
+def _check_and_update() -> None:
+    """Check for updates and auto-upgrade if outdated. Called from main()."""
+    import subprocess
+
+    # Skip conditions
+    if os.environ.get("POPCORN_NO_UPDATE_CHECK"):
+        return
+    if _quiet:
+        return
+    args = sys.argv[1:]
+    if not args:
+        return
+    # Detect the subcommand (skip flags)
+    subcmd = None
+    for a in args:
+        if not a.startswith("-"):
+            subcmd = a
+            break
+    if subcmd in ("upgrade", "help", "version", "completion"):
+        return
+
+    # Read cache
+    cached_version, checked_at = _read_version_cache()
+    now = time.time()
+    cache_fresh = (now - checked_at) < _VERSION_CACHE_TTL
+
+    if cache_fresh:
+        latest = cached_version
+    else:
+        latest = _fetch_latest_version()
+        if latest is None:
+            return
+        _write_version_cache(latest)
+
+    if latest is None or not _is_outdated(__version__, latest):
+        return
+
+    # Auto-upgrade
+    installer = _detect_installer()
+    if installer is None:
+        return
+
+    _status(f"Updating popcorn {__version__} → {latest}...")
+    upgrade_cmd = _UPGRADE_COMMANDS[installer]
+    result = subprocess.run(upgrade_cmd, capture_output=True)
+
+    if result.returncode != 0:
+        _status(f"Update to {latest} failed — run: popcorn upgrade")
+        return
+
+    _status("✓ Updated")
+    # Re-exec with new version
+    popcorn_path = shutil.which("popcorn")
+    if popcorn_path:
+        os.execvp(popcorn_path, ["popcorn"] + sys.argv[1:])
+
+
+def cmd_version(args: argparse.Namespace) -> None:
+    """Print version, optionally check for updates."""
+    check = getattr(args, "check", False)
+    if not check:
+        print(f"popcorn {__version__}")
+        return
+
+    latest = _fetch_latest_version()
+    if latest is not None:
+        _write_version_cache(latest)
+
+    if latest is None:
+        print(f"popcorn {__version__} (could not check for updates)")
+    elif _is_outdated(__version__, latest):
+        print(f"popcorn {__version__} ({latest} available — run: popcorn upgrade)")
+    else:
+        print(f"popcorn {__version__} (up to date)")
 
 
 def cmd_pop(args: argparse.Namespace) -> None:
@@ -2135,7 +2270,8 @@ Other:
 
     sub.add_parser("commands", help=_h)
     sub.add_parser("help", help=_h)
-    sub.add_parser("version", help=_h)
+    version_p = sub.add_parser("version", help=_h)
+    version_p.add_argument("--check", action="store_true", help="Check for updates")
     sub.add_parser("upgrade", help=_h)
 
     # Hide the auto-generated subparser list — the epilog handles display
@@ -2183,6 +2319,7 @@ _COMMANDS = {
     "log": cmd_log,
     "commands": cmd_commands,
     "upgrade": cmd_upgrade,
+    "version": cmd_version,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
@@ -2233,11 +2370,10 @@ def main() -> None:
         and not getattr(args, "json", False)
     )
 
+    _check_and_update()
+
     if not args.command or args.command == "help":
         parser.print_help()
-        sys.exit(0)
-    if args.command == "version":
-        print(f"popcorn {__version__}")
         sys.exit(0)
 
     try:
