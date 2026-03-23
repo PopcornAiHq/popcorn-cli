@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from popcorn_cli.cli import _poll_verify, build_parser
-from popcorn_core.errors import APIError
+from popcorn_core.errors import EXIT_UNHEALTHY, APIError
 
 # Shared mocks
 _PUBLISH_RESULT = {
@@ -191,3 +193,167 @@ class TestPollVerify:
         assert result["status"] == "error"
         assert result["healthy"] is None
         assert mock_client.get.call_count == 3
+
+
+class TestCmdPopVerifyIntegration:
+    """Test the full cmd_pop flow with verify enabled."""
+
+    def _run_pop(self, tmp_path, monkeypatch, publish_result, verify_responses, capsys):
+        """Helper to run cmd_pop with mocked responses."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client = MagicMock()
+        get_responses = [{}]  # validate_channel
+        if isinstance(verify_responses, list):
+            get_responses.extend(verify_responses)
+        get_responses.append(_SITE_STATUS)  # get_site_status
+        mock_client.get.side_effect = get_responses
+        mock_client.post.side_effect = [
+            {"upload_url": "https://s3/", "upload_fields": {}, "s3_key": "k"},
+            publish_result,
+        ]
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("time.sleep"),
+        ):
+            (tmp_path / "t.tar.gz").write_bytes(b"fake")
+
+            parser = build_parser()
+            args = parser.parse_args(["pop"])
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(args)
+
+        return capsys.readouterr()
+
+    def test_verify_healthy_no_warning(self, tmp_path, monkeypatch, capsys):
+        out, err = self._run_pop(
+            tmp_path,
+            monkeypatch,
+            publish_result=_PUBLISH_RESULT_WITH_VERIFY,
+            verify_responses=[
+                {
+                    "status": "done",
+                    "healthy": True,
+                    "site_type": "node",
+                    "fixes": [],
+                    "errors": [],
+                    "version": 3,
+                    "commit_hash": "abc123",
+                },
+            ],
+            capsys=capsys,
+        )
+        assert "Published to #my-site (v3)" in out
+        assert "Fixed" not in out
+        assert "issue" not in out
+
+    def test_verify_fixed_shows_fixes(self, tmp_path, monkeypatch, capsys):
+        out, err = self._run_pop(
+            tmp_path,
+            monkeypatch,
+            publish_result=_PUBLISH_RESULT_WITH_VERIFY,
+            verify_responses=[
+                {
+                    "status": "done",
+                    "healthy": True,
+                    "site_type": "node",
+                    "fixes": [{"file": "server.js", "description": "added express import"}],
+                    "errors": [],
+                    "version": 4,
+                    "commit_hash": "def456",
+                },
+            ],
+            capsys=capsys,
+        )
+        assert "Published to #my-site (v4)" in out
+        assert "Fixed 1 issue" in out
+        assert "server.js" in out
+
+    def test_verify_still_broken_exits_5(self, tmp_path, monkeypatch, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            self._run_pop(
+                tmp_path,
+                monkeypatch,
+                publish_result=_PUBLISH_RESULT_WITH_VERIFY,
+                verify_responses=[
+                    {
+                        "status": "done",
+                        "healthy": False,
+                        "site_type": "node",
+                        "fixes": [],
+                        "errors": ["Cannot find module 'foo'"],
+                        "version": 3,
+                        "commit_hash": "abc123",
+                    },
+                ],
+                capsys=capsys,
+            )
+        assert exc_info.value.code == EXIT_UNHEALTHY
+
+    def test_static_site_no_polling(self, tmp_path, monkeypatch, capsys):
+        static_publish = {
+            **_PUBLISH_RESULT,
+            "verify": {"skipped": True, "reason": "static"},
+        }
+        out, err = self._run_pop(
+            tmp_path,
+            monkeypatch,
+            publish_result=static_publish,
+            verify_responses=[],
+            capsys=capsys,
+        )
+        assert "Published to #my-site (v3)" in out
+
+    def test_json_output_includes_verify(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / ".popcorn.local.json").write_text(
+            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
+        )
+
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [
+            {},  # validate_channel
+            {
+                "status": "done",
+                "healthy": True,
+                "site_type": "node",
+                "fixes": [],
+                "errors": [],
+                "version": 3,
+                "commit_hash": "abc123",
+            },
+            _SITE_STATUS,
+        ]
+        mock_client.post.side_effect = [
+            {"upload_url": "https://s3/", "upload_fields": {}, "s3_key": "k"},
+            _PUBLISH_RESULT_WITH_VERIFY,
+        ]
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("time.sleep"),
+        ):
+            (tmp_path / "t.tar.gz").write_bytes(b"fake")
+
+            parser = build_parser()
+            args = parser.parse_args(["--json", "pop"])
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(args)
+
+        out = capsys.readouterr().out
+        data = json.loads(out)
+        assert data["ok"] is True
+        assert "verify" in data["data"]
+        assert data["data"]["verify"]["healthy"] is True

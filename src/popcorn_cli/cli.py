@@ -67,6 +67,7 @@ from popcorn_core.auth import (
 from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
 from popcorn_core.errors import (
     EXIT_INTERRUPT,
+    EXIT_UNHEALTHY,
     EXIT_VALIDATION,
     APIError,
     AuthError,
@@ -1234,7 +1235,24 @@ def cmd_pop(args: argparse.Namespace) -> None:
         if ".popcorn.local.json" not in content:
             gitignore.write_text(content.rstrip() + "\n.popcorn.local.json\n")
 
-    # Fetch site URL for output (non-fatal — URL is a convenience field)
+    # --- Verify health (if backend returned verify_task_id) ---
+    verify_data = None
+    verify_task_id = result.get("verify_task_id")
+    original_version = result.get("version")
+
+    if verify_task_id:
+        verify_data = _poll_verify(client, result_conv_id, verify_task_id, json_mode)
+
+    # If publish returned a static skip, capture that
+    if not verify_data and "verify" in result:
+        verify_data = result["verify"]
+
+    # Use final version from verify if available
+    display_version = result.get("version")
+    if verify_data and verify_data.get("version"):
+        display_version = verify_data["version"]
+
+    # Fetch site URL for output (non-fatal)
     site_url = None
     try:
         site_status = operations.get_site_status(client, result_conv_id)
@@ -1248,11 +1266,43 @@ def cmd_pop(args: argparse.Namespace) -> None:
         output_data["site_url"] = site_url
     if suggested_name:
         output_data["suggested_name"] = suggested_name
+    if verify_data:
+        output_data["verify"] = verify_data
+        if verify_data.get("version"):
+            output_data["version"] = verify_data["version"]
+        if verify_data.get("commit_hash"):
+            output_data["commit_hash"] = verify_data["commit_hash"]
 
-    human_line = f"Published to #{result_site_name} (v{result['version']})"
+    # Format human output
+    human_line = f"Published to #{result_site_name} (v{display_version})"
     if site_url:
         human_line += f"\n{site_url}"
+
+    # Append verify results to human output
+    if verify_data and verify_data.get("status") == "done":
+        fixes = verify_data.get("fixes", [])
+        errors = verify_data.get("errors", [])
+        healthy = verify_data.get("healthy")
+
+        if fixes and healthy:
+            n = len(fixes)
+            human_line += f"\n⚠ Fixed {n} issue{'s' if n != 1 else ''} (v{original_version} → v{display_version}):"
+            for fix in fixes:
+                human_line += f"\n  • {fix['file']}: {fix['description']}"
+        elif errors:
+            n = len(errors)
+            if fixes:
+                human_line += f"\n⚠ {n} issue{'s' if n != 1 else ''} remain{'s' if n == 1 else ''} after auto-fix (v{original_version} → v{display_version}):"
+            else:
+                human_line += f"\n⚠ {n} issue{'s' if n != 1 else ''}:"
+            for error in errors:
+                human_line += f"\n  • {error}"
+
     _output(args, output_data, human_line)
+
+    # Exit code based on health
+    if verify_data and verify_data.get("status") == "done" and verify_data.get("healthy") is False:
+        sys.exit(EXIT_UNHEALTHY)
 
 
 def cmd_status(args: argparse.Namespace) -> None:
