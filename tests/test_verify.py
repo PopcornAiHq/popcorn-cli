@@ -327,7 +327,7 @@ class TestCmdPopVerifyIntegration:
         return capsys.readouterr()
 
     def test_verify_healthy_no_warning(self, tmp_path, monkeypatch, capsys):
-        out, err = self._run_pop(
+        out, _err = self._run_pop(
             tmp_path,
             monkeypatch,
             publish_result=_PUBLISH_RESULT_WITH_VERIFY,
@@ -349,7 +349,7 @@ class TestCmdPopVerifyIntegration:
         assert "issue" not in out
 
     def test_verify_fixed_shows_fixes(self, tmp_path, monkeypatch, capsys):
-        out, err = self._run_pop(
+        out, _err = self._run_pop(
             tmp_path,
             monkeypatch,
             publish_result=_PUBLISH_RESULT_WITH_VERIFY,
@@ -396,7 +396,7 @@ class TestCmdPopVerifyIntegration:
             **_PUBLISH_RESULT,
             "verify": {"skipped": True, "reason": "static"},
         }
-        out, err = self._run_pop(
+        out, _err = self._run_pop(
             tmp_path,
             monkeypatch,
             publish_result=static_publish,
