@@ -6,11 +6,16 @@ from popcorn_core.errors import (
     EXIT_AUTH,
     EXIT_CLIENT,
     EXIT_SERVER,
+    EXIT_UNHEALTHY,
     EXIT_VALIDATION,
     APIError,
     AuthError,
     PopcornError,
 )
+
+
+def test_exit_unhealthy_is_5():
+    assert EXIT_UNHEALTHY == 5
 
 
 class TestErrorHierarchy:

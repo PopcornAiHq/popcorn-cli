@@ -11,6 +11,7 @@ EXIT_VALIDATION = 1  # Bad input, missing args, invalid state
 EXIT_AUTH = 2  # Auth failures — re-login required
 EXIT_CLIENT = 3  # 4xx API errors — request is wrong
 EXIT_SERVER = 4  # 5xx API errors — retryable
+EXIT_UNHEALTHY = 5  # Deploy succeeded but site is unhealthy
 EXIT_INTERRUPT = 130  # Ctrl+C
 
 
