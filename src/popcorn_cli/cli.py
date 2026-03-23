@@ -1004,6 +1004,7 @@ def _publish_with_retry(
     context: str,
     force: bool,
     json_mode: bool,
+    verify: bool = False,
 ) -> dict[str, Any]:
     """Call deploy_publish with retry on 502 (up to 3 retries, exponential backoff)."""
     import time
@@ -1011,7 +1012,9 @@ def _publish_with_retry(
     max_retries = 3
     for attempt in range(max_retries + 1):
         try:
-            return operations.deploy_publish(client, conversation_id, s3_key, context, force=force)
+            return operations.deploy_publish(
+                client, conversation_id, s3_key, context, force=force, verify=verify
+            )
         except APIError as e:
             if e.status_code != 502 or attempt == max_retries:
                 raise
@@ -1043,6 +1046,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
     json_mode = getattr(args, "json", False)
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
+    skip_check = getattr(args, "skip_check", False)
 
     def _progress(msg: str) -> None:
         if verbose and not json_mode:
@@ -1123,7 +1127,13 @@ def cmd_pop(args: argparse.Namespace) -> None:
         _progress("Publishing...")
         try:
             result = _publish_with_retry(
-                client, conversation_id, s3_key, args.context, force, json_mode
+                client,
+                conversation_id,
+                s3_key,
+                args.context,
+                force,
+                json_mode,
+                verify=not skip_check,
             )
         except APIError as e:
             vm_error = _parse_vm_error(e)
@@ -1921,6 +1931,7 @@ Other:
     pop_p.add_argument("--context", type=str, default="", help="Deploy context message")
     pop_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
     pop_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
+    pop_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
 
     # --- Site status & log ---
 
