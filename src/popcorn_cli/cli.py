@@ -1285,7 +1285,7 @@ def _check_and_update() -> None:
     # Re-exec with new version
     popcorn_path = shutil.which("popcorn")
     if popcorn_path:
-        os.execvp(popcorn_path, ["popcorn"] + sys.argv[1:])
+        os.execvp(popcorn_path, ["popcorn", *sys.argv[1:]])
 
 
 def cmd_version(args: argparse.Namespace) -> None:
