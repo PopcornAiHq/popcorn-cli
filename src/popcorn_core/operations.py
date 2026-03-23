@@ -541,6 +541,14 @@ def deploy_upload(
 # ---------------------------------------------------------------------------
 
 
+def deploy_verify_status(client: APIClient, conversation_id: str, task_id: str) -> dict[str, Any]:
+    """Poll the verify task status after a publish with verify=true."""
+    return client.get(
+        f"/api/conversations/{conversation_id}/verify-status",
+        {"task_id": task_id},
+    )
+
+
 def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
     """Get site deployment status, falling back to conversation info."""
     try:

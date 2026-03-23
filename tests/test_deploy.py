@@ -113,6 +113,40 @@ class TestDeployPublish:
         )
 
 
+class TestDeployVerifyStatus:
+    def test_deploy_verify_status(self, mock_client):
+        mock_client.get.return_value = {
+            "status": "done",
+            "healthy": True,
+            "site_type": "node",
+            "fixes": [],
+            "errors": [],
+            "version": 3,
+            "commit_hash": "abc123",
+        }
+        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid")
+        mock_client.get.assert_called_once_with(
+            "/api/conversations/conv-1/verify-status",
+            {"task_id": "task-uuid"},
+        )
+        assert result["status"] == "done"
+        assert result["healthy"] is True
+
+    def test_deploy_verify_status_in_progress(self, mock_client):
+        mock_client.get.return_value = {
+            "status": "fixing",
+            "healthy": None,
+            "site_type": "node",
+            "fixes": [],
+            "errors": [],
+            "version": 3,
+            "commit_hash": "abc123",
+        }
+        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid")
+        assert result["status"] == "fixing"
+        assert result["healthy"] is None
+
+
 class TestDeployUpload:
     def test_deploy_upload(self, tmp_path):
         tarball = tmp_path / "test.tar.gz"
