@@ -9,7 +9,7 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (~205 tests)
+├── tests/                     ← pytest (~228 tests)
 ├── scripts/                   ← test-install.sh (Docker-based install tests)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check, dev
@@ -66,10 +66,25 @@ Multiple profiles are stored in the config file. Switch with `popcorn env <name>
 
 Builds the wheel and verifies it installs correctly with each package manager in isolated containers.
 
+## Versioning
+
+**Bump the version after every meaningful commit to main** (direct or PR merge).
+
+- **Patch** (0.5.5 → 0.5.6): default for most changes — bug fixes, small features, refactors
+- **Minor** (0.5.x → 0.6.0): larger features, new commands, breaking-ish changes
+- **Major**: never bump unless explicitly told
+
+```bash
+make bump v=X.Y.Z    # Updates pyproject.toml + uv lock
+```
+
+Version lives only in `pyproject.toml` — runtime reads it via `importlib.metadata`.
+
+A pre-commit hook (`scripts/check-version-bump.sh`) warns if `src/` files are staged without a `pyproject.toml` change, as a reminder to bump.
+
 ## Publishing
 
 ```bash
-# Bump version in pyproject.toml
 make bump v=X.Y.Z
 uv build
 uv publish
@@ -90,4 +105,4 @@ The spec is auto-generated from FastAPI's Pydantic models and route definitions.
 - Color output respects `NO_COLOR` env var and `--no-color` flag
 - All API errors surfaced as `PopcornError` subclasses (no tracebacks for users)
 - Channel name resolution cached 5 min (`#name` → UUID)
-- Pre-commit runs ruff (format + lint) on every commit
+- Pre-commit runs ruff (format + lint) and version-bump reminder on every commit
