@@ -161,8 +161,13 @@ Phase 9: Poll loop
     ⠋ Checking health...
     ⠋ Fixing issues...
   Use _status() for progress (writes to stderr, respects --no-color)
-  Timeout: 5 minutes
+  Timeout: 5 minutes (poll interval increases to 5s during "fixing" status)
   On timeout: warn, report last known status, continue to output
+  On Ctrl+C: print "Published to #site (vN) — health check cancelled", exit 0
+
+  Version display fallback:
+    Use final version from verify-status response when available.
+    On timeout, poll error, or Ctrl+C: fall back to version from original publish response.
 
   Poll error handling:
     Transient errors (network, 5xx): retry silently, count toward timeout
@@ -237,6 +242,14 @@ Published to #my-site (v3) https://my-site.popcorn.site
 
 **JSON note:** `"ok": true` is always set when the publish API call succeeded, even when `healthy: false`. The `ok` field reflects the API operation, not site health. Consumers should check `data.verify.healthy` for site status.
 
+**JSON `verify` field contract:**
+- `--skip-check` → `"verify"` key absent from `data`
+- Static site → `"verify": {"skipped": true, "reason": "static"}`
+- Verify completed → `"verify": {"status": "done", "healthy": bool, "site_type": "...", "fixes": [...], "errors": [...]}`
+- Timeout/poll error → `"verify": {"status": "timeout", "healthy": null}` or `"verify": {"status": "error", "healthy": null}`
+
+The `verify` dict is added to `output_data` before passing to `_output()`, so the existing `{"ok": true, "data": ...}` envelope handles it.
+
 ## Testing
 
 ### Unit Tests (CLI-side)
@@ -255,7 +268,7 @@ test_cmd_pop_verify_fixed
 
 test_cmd_pop_verify_still_broken
   Mock verify-status → {status: "done", healthy: false, errors: ["..."]}
-  Assert: exit 1, error output
+  Assert: exit 5 (EXIT_UNHEALTHY), error output
 
 test_cmd_pop_verify_timeout
   Mock verify-status → never reaches "done"
