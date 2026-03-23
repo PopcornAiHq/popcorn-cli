@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from unittest.mock import MagicMock, patch
 
-from popcorn_cli.cli import build_parser
+from popcorn_cli.cli import _poll_verify, build_parser
+from popcorn_core.errors import APIError
 
 # Shared mocks
 _PUBLISH_RESULT = {
@@ -95,3 +96,98 @@ class TestSkipCheck:
         publish_call = mock_client.post.call_args_list[1]
         publish_data = publish_call[1]["data"]  # keyword arg
         assert publish_data["verify"] is True
+
+
+class TestPollVerify:
+    def test_poll_verify_immediate_done(self):
+        """Backend returns done on first poll."""
+        mock_client = MagicMock()
+        mock_client.get.return_value = {
+            "status": "done",
+            "healthy": True,
+            "site_type": "node",
+            "fixes": [],
+            "errors": [],
+            "version": 3,
+            "commit_hash": "abc123",
+        }
+        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        assert result["status"] == "done"
+        assert result["healthy"] is True
+
+    def test_poll_verify_progression(self):
+        """Backend progresses through statuses before done."""
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [
+            {"status": "restarting", "healthy": None},
+            {"status": "checking", "healthy": None},
+            {
+                "status": "done",
+                "healthy": True,
+                "site_type": "node",
+                "fixes": [],
+                "errors": [],
+                "version": 3,
+                "commit_hash": "abc",
+            },
+        ]
+        with patch("time.sleep"):
+            result = _poll_verify(
+                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+            )
+        assert result["status"] == "done"
+        assert mock_client.get.call_count == 3
+
+    def test_poll_verify_timeout(self):
+        """Returns timeout status when deadline exceeded."""
+        mock_client = MagicMock()
+        mock_client.get.return_value = {"status": "fixing", "healthy": None}
+
+        with patch("time.monotonic", side_effect=[0, 0, 999]), patch("time.sleep"):
+            result = _poll_verify(
+                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=2.0
+            )
+        assert result["status"] == "timeout"
+        assert result["healthy"] is None
+
+    def test_poll_verify_404_graceful_degradation(self):
+        """404 means backend doesn't support verify — degrade gracefully."""
+        mock_client = MagicMock()
+        mock_client.get.side_effect = APIError("Not found", status_code=404)
+        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        assert result is None
+
+    def test_poll_verify_transient_errors_retry(self):
+        """Transient 500s are retried silently."""
+        mock_client = MagicMock()
+        mock_client.get.side_effect = [
+            APIError("Server error", status_code=500),
+            APIError("Server error", status_code=500),
+            {
+                "status": "done",
+                "healthy": True,
+                "site_type": "node",
+                "fixes": [],
+                "errors": [],
+                "version": 3,
+                "commit_hash": "abc",
+            },
+        ]
+        with patch("time.sleep"):
+            result = _poll_verify(
+                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+            )
+        assert result["status"] == "done"
+        assert result["healthy"] is True
+
+    def test_poll_verify_persistent_errors(self):
+        """3+ consecutive errors → stop polling, return error status."""
+        mock_client = MagicMock()
+        mock_client.get.side_effect = APIError("Server error", status_code=500)
+        with patch("time.sleep"):
+            result = _poll_verify(
+                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+            )
+        assert result["status"] == "error"
+        assert result["healthy"] is None
+        assert mock_client.get.call_count == 3

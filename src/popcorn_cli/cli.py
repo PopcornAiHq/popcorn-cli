@@ -1040,6 +1040,69 @@ def _parse_vm_error(e: APIError) -> str | None:
     return None
 
 
+def _poll_verify(
+    client: APIClient,
+    conversation_id: str,
+    task_id: str,
+    json_mode: bool,
+    timeout: float = 300.0,
+    poll_interval: float = 2.0,
+) -> dict[str, Any] | None:
+    """Poll verify-status until done, timeout, or failure.
+
+    Returns the final verify status dict, or None on graceful degradation (404).
+    """
+    import time
+
+    _status_messages = {
+        "restarting": "Restarting site...",
+        "checking": "Checking health...",
+        "fixing": "Fixing issues...",
+    }
+
+    deadline = time.monotonic() + timeout
+    consecutive_errors = 0
+    last_status = None
+
+    try:
+        while time.monotonic() < deadline:
+            try:
+                result = operations.deploy_verify_status(client, conversation_id, task_id)
+                consecutive_errors = 0
+            except APIError as e:
+                if e.status_code == 404:
+                    return None
+                consecutive_errors += 1
+                if consecutive_errors >= 3:
+                    if not json_mode:
+                        _status("Health check unavailable — skipping.")
+                    return {"status": "error", "healthy": None}
+                time.sleep(poll_interval)
+                continue
+
+            status = result.get("status", "")
+
+            if status != last_status and not json_mode:
+                msg = _status_messages.get(status)
+                if msg:
+                    _status(msg)
+                last_status = status
+
+            if status == "done":
+                return result
+
+            interval = 5.0 if status == "fixing" else poll_interval
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        if not json_mode:
+            _status("Health check cancelled.")
+        return {"status": "cancelled", "healthy": None}
+
+    if not json_mode:
+        _status("Health check timed out — site may still be verifying.")
+    return {"status": "timeout", "healthy": None}
+
+
 def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
     site_name = args.name or f"pop-{Path.cwd().name}"
