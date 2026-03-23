@@ -22,19 +22,22 @@ Add `popcorn upgrade` that auto-detects the package installer and runs the corre
 
 ## Installer Detection
 
-Resolve the path of the running `popcorn` binary and inspect it:
+Check `sys.executable` (the Python interpreter running this process). When installed via uv or pipx, the interpreter lives inside their managed venv, so the path contains distinctive segments:
 
 ```
-sys.executable or shutil.which("popcorn") → resolve symlinks → check path components
+sys.executable → resolve symlinks → check path
   ├─ contains /uv/      → "uv"
   ├─ contains /pipx/    → "pipx"
   └─ neither            → None (unknown)
 ```
 
-Detection heuristic:
-- **uv:** binary lives under a path containing `/uv/` (e.g., `~/.local/share/uv/tools/popcorn-cli/...`)
-- **pipx:** binary lives under a path containing `/pipx/` (e.g., `~/.local/share/pipx/venvs/popcorn-cli/...`)
-- **fallback:** if neither matches, installer is unknown
+Examples:
+- **uv:** `~/.local/share/uv/tools/popcorn-cli/bin/python` → contains `/uv/`
+- **pipx:** `~/.local/share/pipx/venvs/popcorn-cli/bin/python` → contains `/pipx/`
+- **pip:** `/usr/local/bin/python` or `~/.local/bin/python` → no match → unknown
+- **dev (make dev):** local venv python → no match → unknown
+
+pip installs are intentionally undetectable (no distinctive path). They fall through to the "unknown" case which shows all 3 manual commands.
 
 ## Upgrade Commands
 
@@ -57,18 +60,19 @@ This is a one-line constant change.
 popcorn upgrade    # detect installer, run upgrade, report result
 ```
 
-No flags needed.
+No flags. The global `--json` flag is not supported for this command — upgrade output is inherently interactive (streaming subprocess output).
 
 ## Flow
 
 ```
 1. Record current version (importlib.metadata)
-2. Detect installer from binary path
+2. Detect installer from sys.executable path
 3. If unknown → print all 3 manual commands, exit 1
 4. Print "Upgrading via {installer}..."
 5. Run upgrade command as subprocess, stream stdout/stderr
 6. If subprocess fails → print error + manual command, exit 1
-7. Read new version (re-import or run popcorn --version)
+7. Read new version via subprocess: popcorn --version (must be subprocess —
+   importlib.metadata caches within the same process and won't reflect the upgrade)
 8. If version changed → "✓ popcorn {old} → {new}"
 9. If version same → "✓ popcorn {version} (already up to date)"
 ```
@@ -158,4 +162,8 @@ test_cmd_upgrade_unknown_installer
 test_cmd_upgrade_subprocess_failure
   Mock _detect_installer → "pipx", mock subprocess → exit 1
   Assert: "Upgrade failed" + manual command in output, exit 1
+
+test_detect_installer_dev_environment
+  Mock sys.executable to local venv path (e.g., /Users/shaun/popcorn-cli/.venv/bin/python)
+  Assert: returns None
 ```
