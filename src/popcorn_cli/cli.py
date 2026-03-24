@@ -17,7 +17,9 @@ Usage:
     popcorn download <file_key> [-o PATH]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn watch <conversation> [--interval N]
-    popcorn pop [NAME] [--context "..."] [--force]
+    popcorn pop [NAME] [--context "..."] [--force] [--skip-check]
+    popcorn upgrade
+    popcorn version [--check]
     popcorn status [channel]
     popcorn log [channel] [--limit N]
     popcorn check-access <owner/repo>
