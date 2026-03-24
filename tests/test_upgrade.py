@@ -94,10 +94,17 @@ class TestCmdUpgrade:
 class TestFetchLatestVersion:
     def test_success(self):
         mock_resp = MagicMock()
-        mock_resp.text = '[project]\nname = "popcorn-cli"\nversion = "0.5.7"\n'
+        mock_resp.json.return_value = [{"name": "v0.5.7"}]
         mock_resp.raise_for_status = MagicMock()
         with patch("httpx.get", return_value=mock_resp):
             assert _fetch_latest_version() == "0.5.7"
+
+    def test_strips_v_prefix(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = [{"name": "v1.2.3"}]
+        mock_resp.raise_for_status = MagicMock()
+        with patch("httpx.get", return_value=mock_resp):
+            assert _fetch_latest_version() == "1.2.3"
 
     def test_timeout(self):
         import httpx
@@ -105,9 +112,16 @@ class TestFetchLatestVersion:
         with patch("httpx.get", side_effect=httpx.TimeoutException("timeout")):
             assert _fetch_latest_version() is None
 
+    def test_empty_tags(self):
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = []
+        mock_resp.raise_for_status = MagicMock()
+        with patch("httpx.get", return_value=mock_resp):
+            assert _fetch_latest_version() is None
+
     def test_parse_error(self):
         mock_resp = MagicMock()
-        mock_resp.text = "garbage content"
+        mock_resp.json.side_effect = ValueError("bad json")
         mock_resp.raise_for_status = MagicMock()
         with patch("httpx.get", return_value=mock_resp):
             assert _fetch_latest_version() is None

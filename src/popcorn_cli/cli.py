@@ -1190,24 +1190,33 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
 # Version check + auto-update
 # ---------------------------------------------------------------------------
 
-_VERSION_CHECK_URL = "https://raw.githubusercontent.com/PopcornAiHq/popcorn-cli/main/pyproject.toml"
+_VERSION_CHECK_URL = "https://api.github.com/repos/PopcornAiHq/popcorn-cli/tags?per_page=1"
 _VERSION_CACHE_TTL = 300  # 5 minutes
 
 
 def _fetch_latest_version(timeout: float = 2.0) -> str | None:
-    """Fetch latest version from GitHub. Returns version string or None on failure."""
-    import re as _re
-
+    """Fetch latest version from GitHub tags. Returns version string or None on failure."""
     import httpx
 
     try:
-        resp = httpx.get(_VERSION_CHECK_URL, timeout=timeout, follow_redirects=True)
+        resp = httpx.get(
+            _VERSION_CHECK_URL,
+            timeout=timeout,
+            follow_redirects=True,
+            headers={"Accept": "application/vnd.github+json"},
+        )
         resp.raise_for_status()
     except (httpx.HTTPError, httpx.TimeoutException):
         return None
 
-    match = _re.search(r'^version = "([^"]+)"', resp.text, _re.MULTILINE)
-    return match.group(1) if match else None
+    try:
+        tags = resp.json()
+        if tags and isinstance(tags, list):
+            name = tags[0].get("name", "")
+            return name.lstrip("v") if name else None
+    except (ValueError, KeyError, IndexError):
+        pass
+    return None
 
 
 def _read_version_cache() -> tuple[str | None, float]:

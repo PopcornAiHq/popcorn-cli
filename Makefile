@@ -1,4 +1,4 @@
-.PHONY: install install-local dev fmt lint typecheck test check clean
+.PHONY: install install-local dev fmt lint typecheck test check clean release
 
 # ── Setup ────────────────────────────────────────────────────────────
 
@@ -38,12 +38,24 @@ check: lint typecheck test  ## Run all checks (lint + typecheck + test)
 
 # ── Version ──────────────────────────────────────────────────────────
 
-bump:  ## Bump version: make bump v=0.2.0
+bump:  ## Bump version + tag: make bump v=0.2.0
 	@[ "$(v)" ] || { echo "Usage: make bump v=X.Y.Z"; exit 1; }
 	@echo "Bumping to $(v) ..."
 	@sed -i '' 's/^version = ".*"/version = "$(v)"/' pyproject.toml
 	@uv lock -q
-	@echo "Done — $(v)"
+	@git add pyproject.toml uv.lock
+	@git commit -m "chore: bump version to $(v)"
+	@git tag "v$(v)"
+	@echo "Done — $(v) (tagged v$(v))"
+	@echo "Run 'git push && git push --tags' to publish, then 'make release' for GitHub release"
+
+release:  ## Create GitHub release from latest tag
+	@tag=$$(git describe --tags --abbrev=0) && \
+	prev=$$(git describe --tags --abbrev=0 "$$tag^" 2>/dev/null || git rev-list --max-parents=0 HEAD) && \
+	notes=$$(git log --pretty=format:"- %s" "$$prev..$$tag" | grep -v "^- chore:") && \
+	echo "Creating release $$tag ..." && \
+	gh release create "$$tag" --title "$$tag" --notes "$$notes" && \
+	echo "Done — $$tag released"
 
 # ── Cleanup ──────────────────────────────────────────────────────────
 
