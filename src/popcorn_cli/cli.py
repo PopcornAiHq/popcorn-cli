@@ -1121,13 +1121,24 @@ _UPGRADE_COMMANDS: dict[str, list[str]] = {
 
 
 def _detect_installer() -> str | None:
-    """Detect how popcorn was installed by inspecting the Python interpreter path."""
+    """Detect how popcorn was installed by inspecting the Python interpreter path.
+
+    Check the unresolved path first (uv/pipx set the shebang to their managed
+    venv python), then the resolved path as fallback. Resolving can lose the
+    /uv/ or /pipx/ segment when the venv python is a symlink to a system interpreter.
+    """
+    path = sys.executable
+    if "/uv/" in path or "/pipx/" in path:
+        if "/uv/" in path:
+            return "uv"
+        return "pipx"
+    # Fallback: check resolved path (less reliable)
     from pathlib import Path as _Path
 
-    path = str(_Path(sys.executable).resolve())
-    if "/uv/" in path:
+    resolved = str(_Path(path).resolve())
+    if "/uv/" in resolved:
         return "uv"
-    if "/pipx/" in path:
+    if "/pipx/" in resolved:
         return "pipx"
     return None
 
