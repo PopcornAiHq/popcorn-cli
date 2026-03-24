@@ -1899,6 +1899,8 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "check-access": "Check repository access",
     "completion": "Generate shell completions (bash, zsh)",
     "commands": "Dump CLI schema as JSON for programmatic discovery",
+    "upgrade": "Upgrade popcorn to the latest version",
+    "version": "Show version (--check to check for updates)",
 }
 
 

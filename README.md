@@ -18,15 +18,12 @@ pip install git+https://github.com/PopcornAiHq/popcorn-cli.git
 ## Update
 
 ```bash
-# uv
-uv tool install --force git+https://github.com/PopcornAiHq/popcorn-cli.git
-
-# pipx
-pipx install --force git+https://github.com/PopcornAiHq/popcorn-cli.git
-
-# pip
-pip install --upgrade git+https://github.com/PopcornAiHq/popcorn-cli.git
+popcorn upgrade
 ```
+
+The CLI auto-detects how it was installed (uv, pipx) and runs the right upgrade command. It also checks for updates automatically every 5 minutes — if a new version is available, it upgrades and re-runs your command seamlessly.
+
+To disable auto-update (e.g., in CI): `export POPCORN_NO_UPDATE_CHECK=1`
 
 ## Quick Start
 
@@ -67,7 +64,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | Command | Purpose |
 |---------|---------|
 | **Sites** | |
-| `popcorn pop [NAME] [--context "..."] [--force]` | Deploy site to a channel |
+| `popcorn pop [NAME] [--context "..."] [--force] [--skip-check]` | Deploy site to a channel |
 | `popcorn status [channel]` | Show site deployment status |
 | `popcorn log [channel] [--limit N]` | Show site version history |
 | **Messages** | |
@@ -109,6 +106,8 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | **Other** | |
 | `popcorn api <path> [-X METHOD] [-d DATA] [--raw]` | Raw API call |
 | `popcorn check-access <owner/repo>` | Check repo access |
+| `popcorn upgrade` | Upgrade to the latest version |
+| `popcorn version [--check]` | Show version / check for updates |
 | `popcorn commands` | Dump CLI schema as JSON |
 | `popcorn completion bash\|zsh` | Generate shell completions |
 

@@ -1,6 +1,6 @@
 [project]
 name = "popcorn-cli"
-version = "0.5.9"
+version = "0.6.0"
 description = "CLI for the Popcorn API"
 readme = "README.md"
 license = "MIT"
@@ -17,6 +17,7 @@ classifiers = [
 ]
 dependencies = [
     "httpx>=0.27",
+    "packaging>=21.0",
     "pathspec>=0.11",
     "pyjwt>=2.0",
 ]
