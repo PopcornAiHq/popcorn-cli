@@ -1001,10 +1001,6 @@ class TestPopParser:
         args = parser.parse_args(["site", "deploy", "--force"])
         assert args.force is True
 
-    def test_pop_alias(self, parser):
-        args = parser.parse_args(["pop"])
-        assert args.command == "pop"
-
     def test_status_parser(self, parser):
         args = parser.parse_args(["site", "status"])
         assert args.command == "site"

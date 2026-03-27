@@ -2298,14 +2298,6 @@ Other:
     site_deploy_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
     site_deploy_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
 
-    # Hidden alias: top-level "pop" → "site deploy" for backwards compat
-    pop_p = sub.add_parser("pop", help=argparse.SUPPRESS)
-    pop_p.add_argument("name", nargs="?", default=None, help=argparse.SUPPRESS)
-    pop_p.add_argument("--context", type=str, default="", help=argparse.SUPPRESS)
-    pop_p.add_argument("--force", "-f", action="store_true", help=argparse.SUPPRESS)
-    pop_p.add_argument("--verbose", "-v", action="store_true", help=argparse.SUPPRESS)
-    pop_p.add_argument("--skip-check", action="store_true", help=argparse.SUPPRESS)
-
     site_log_p = site_sub.add_parser("log", help="Show site version history")
     site_log_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
     site_log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
@@ -2594,7 +2586,6 @@ _COMMANDS = {
     "commands": cmd_commands,
     "upgrade": cmd_upgrade,
     "version": cmd_version,
-    "pop": cmd_pop,  # hidden alias for "site deploy"
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
