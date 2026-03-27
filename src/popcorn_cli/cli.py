@@ -22,6 +22,11 @@ Usage:
     popcorn version [--check]
     popcorn status [channel]
     popcorn log [channel] [--limit N]
+    popcorn vm trace <channel> [item] [--list] [--watch] [--raw]
+    popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
+    popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
+    popcorn vm cancel <channel> [--item ID]
+    popcorn vm rollback <channel> [--version N]
     popcorn check-access <owner/repo>
     popcorn commands --json
     popcorn completion bash|zsh
