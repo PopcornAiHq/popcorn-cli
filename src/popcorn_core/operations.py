@@ -253,6 +253,105 @@ def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.post("/api/conversations/join", data={"conversation": conv_id})
 
 
+# ---------------------------------------------------------------------------
+# VM (workspace VM agent execution)
+# ---------------------------------------------------------------------------
+
+
+def vm_monitor(client: APIClient) -> dict[str, Any]:
+    """Fetch active workers and queue items from workspace VM."""
+    return client.get("/api/appchannels/monitor", {})
+
+
+def vm_usage(
+    client: APIClient,
+    hours: float | None = None,
+    days: int | None = None,
+    queue: str | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """Fetch token/cost usage analytics from workspace VM."""
+    params: dict[str, Any] = {}
+    if hours is not None:
+        params["hours"] = hours
+    if days is not None:
+        params["days"] = days
+    if queue:
+        params["queue"] = queue
+    if limit is not None:
+        params["limit"] = limit
+    return client.get("/api/appchannels/usage", params)
+
+
+def vm_trace_list(client: APIClient, queue_id: str, limit: int = 10) -> dict[str, Any]:
+    """List recent work items for a queue (from usage endpoint)."""
+    return client.get(
+        "/api/appchannels/usage",
+        {"queue": queue_id, "limit": limit},
+    )
+
+
+def vm_trace(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
+    """Fetch full execution trace for a work item."""
+    return client.get(f"/api/appchannels/trace/{queue_id}/{item_id}", {})
+
+
+def vm_trace_latest(
+    client: APIClient,
+    queue_id: str,
+    status: str | None = None,
+) -> dict[str, Any] | None:
+    """Fetch the latest trace for a queue, optionally filtered by status."""
+    usage = client.get(
+        "/api/appchannels/usage",
+        {"queue": queue_id, "limit": 20},
+    )
+    items = usage.get("recent_items", [])
+    if status:
+        items = [i for i in items if i.get("status") == status]
+    if not items:
+        return None
+    latest = items[0]
+    item_id = latest["item_id"]
+    return client.get(f"/api/appchannels/trace/{queue_id}/{item_id}", {})
+
+
+def vm_cancel(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
+    """Cancel a specific work item."""
+    return client.post(f"/api/appchannels/queues/{queue_id}/items/{item_id}/cancel")
+
+
+def vm_cancel_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
+    """Cancel the currently processing item in a queue.
+
+    Returns the cancel response, or None if no processing item found.
+    """
+    monitor = client.get("/api/appchannels/monitor", {})
+    items = monitor.get("items", [])
+    processing = [
+        i for i in items if i.get("queue_id") == queue_id and i.get("status") == "processing"
+    ]
+    if not processing:
+        return None
+    item_id = processing[0]["item_id"]
+    return client.post(f"/api/appchannels/queues/{queue_id}/items/{item_id}/cancel")
+
+
+def vm_rollback(
+    client: APIClient,
+    site_name: str,
+    version: int | None = None,
+) -> dict[str, Any]:
+    """Roll back a site to a previous version."""
+    data: dict[str, Any] = {}
+    if version is not None:
+        data["version"] = version
+    return client.post(
+        f"/api/appchannels/sites/{site_name}/rollback",
+        data=data,
+    )
+
+
 def leave_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Leave a conversation."""
     conv_id = resolve_conversation(client, conversation)
