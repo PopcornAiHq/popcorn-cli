@@ -229,8 +229,6 @@ def fmt_vm_trace_event(event: dict, prev_timestamp: str | None = None) -> str | 
     dur_str = ""
     if prev_timestamp and ts:
         try:
-            from datetime import datetime
-
             prev = datetime.fromisoformat(prev_timestamp.replace("Z", "+00:00"))
             curr = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             dur = (curr - prev).total_seconds()
@@ -243,8 +241,6 @@ def fmt_vm_trace_event(event: dict, prev_timestamp: str | None = None) -> str | 
     time_str = ""
     if ts:
         try:
-            from datetime import datetime
-
             dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             time_str = dt.strftime("%H:%M:%S")
         except (ValueError, TypeError):

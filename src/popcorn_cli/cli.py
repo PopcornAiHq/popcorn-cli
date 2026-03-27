@@ -2173,7 +2173,7 @@ def cmd_vm_rollback(args: argparse.Namespace) -> None:
     version = getattr(args, "version", None)
 
     resp = operations.vm_rollback(client, channel, version=version)
-    if getattr(args, "json", False):
+    if getattr(args, "raw", False):
         print(_json_ok(resp))
     else:
         new_ver = resp.get("version", "?")
@@ -2561,6 +2561,7 @@ Other:
     vm_rollback_p = vm_sub.add_parser("rollback", help="Roll back site to previous version")
     vm_rollback_p.add_argument("channel", help="Channel/site name")
     vm_rollback_p.add_argument("--version", type=int, help="Target version (default: previous)")
+    vm_rollback_p.add_argument("--raw", action="store_true", help="Output raw JSON")
 
     # --- Shell & discovery ---
 
