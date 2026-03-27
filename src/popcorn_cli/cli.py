@@ -83,6 +83,13 @@ from .formatting import (
     fmt_conversation,
     fmt_message,
     fmt_user,
+    fmt_vm_cost,
+    fmt_vm_duration,
+    fmt_vm_monitor,
+    fmt_vm_trace,
+    fmt_vm_trace_event,
+    fmt_vm_trace_list,
+    fmt_vm_usage,
     format_timestamp,
     set_color,
 )
@@ -1733,7 +1740,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami search list-messages list-threads get-message info inbox watch send-message react edit-message delete-message create-channel join-channel leave-channel invite kick edit-channel archive-channel delete-channel webhook api check-access pop status log completion commands help version --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami search list-messages list-threads get-message info inbox watch send-message react edit-message delete-message create-channel join-channel leave-channel invite kick edit-channel archive-channel delete-channel webhook vm api check-access pop status log completion commands help version --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1746,6 +1753,9 @@ _popcorn_completions() {
             ;;
         webhook)
             COMPREPLY=($(compgen -W "create list deliveries" -- "$cur"))
+            ;;
+        vm)
+            COMPREPLY=($(compgen -W "trace monitor usage cancel rollback" -- "$cur"))
             ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
@@ -1787,6 +1797,7 @@ _popcorn() {
         'archive-channel:Archive a channel'
         'delete-channel:Delete a channel'
         'webhook:Manage webhooks'
+        'vm:Workspace VM commands'
         'api:Raw API call'
         'check-access:Check repo access'
         'pop:Publish site resources to a channel'
@@ -1809,6 +1820,7 @@ _popcorn() {
                 workspace) _values 'subcommand' list switch ;;
                 search) _values 'type' channels dms users messages ;;
                 webhook) _values 'subcommand' create list deliveries ;;
+                vm) _values 'subcommand' trace monitor usage cancel rollback ;;
                 completion) _values 'shell' bash zsh ;;
             esac
             ;;
@@ -1885,6 +1897,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "archive-channel": "channels",
     "delete-channel": "channels",
     "webhook": "webhooks",
+    "vm": "vm",
     "auth": "auth",
     "workspace": "auth",
     "env": "auth",
@@ -1921,6 +1934,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "archive-channel": "Archive or unarchive a channel",
     "delete-channel": "Delete a channel",
     "webhook": "Manage webhooks (create, list, deliveries)",
+    "vm": "Workspace VM commands (trace, monitor, usage, cancel, rollback)",
     "api": "Raw API call (escape hatch, like gh api)",
     "pop": "Push site resources to a channel",
     "status": "Show site deployment status",
@@ -1987,6 +2001,181 @@ def cmd_commands(_args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# VM (workspace VM introspection)
+# ---------------------------------------------------------------------------
+
+
+def _strip_hash(channel: str) -> str:
+    """Strip leading # from channel name."""
+    return channel.lstrip("#")
+
+
+def cmd_vm_trace(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    channel = _strip_hash(args.channel)
+    raw = getattr(args, "raw", False)
+
+    if getattr(args, "list", False):
+        resp = operations.vm_trace_list(client, channel, limit=args.limit)
+        if raw:
+            print(_json_ok(resp))
+        else:
+            items = resp.get("recent_items", [])
+            print(fmt_vm_trace_list(channel, items))
+        return
+
+    if getattr(args, "watch", False):
+        _vm_trace_watch(client, channel, args)
+        return
+
+    if args.item_id:
+        resp = operations.vm_trace(client, channel, args.item_id)
+    else:
+        status_filter = getattr(args, "status", None)
+        resp = operations.vm_trace_latest(client, channel, status=status_filter)
+        if resp is None:
+            msg = f"No items found for {channel}"
+            if status_filter:
+                msg += f" with status={status_filter}"
+            print(msg, file=sys.stderr)
+            sys.exit(1)
+
+    if raw:
+        print(_json_ok(resp))
+    else:
+        print(fmt_vm_trace(resp))
+
+
+def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -> None:
+    """Tail a live trace, printing new events as they arrive."""
+    status_filter = getattr(args, "status", None) or "processing"
+    resp = operations.vm_trace_latest(client, channel, status=status_filter)
+    if resp is None:
+        resp = operations.vm_trace_latest(client, channel)
+    if resp is None:
+        print(f"No items found for {channel}", file=sys.stderr)
+        sys.exit(1)
+
+    item_id = resp["item_id"]
+    seen_events = len(resp.get("events", []))
+
+    name = resp.get("name") or item_id
+    _status(f"Watching: {name}  ({resp.get('status', '?')})")
+    _status("")
+
+    events = resp.get("events", [])
+    prev_ts = None
+    for event in events:
+        line = fmt_vm_trace_event(event, prev_ts)
+        if line:
+            print(line, flush=True)
+        if event.get("timestamp"):
+            prev_ts = event["timestamp"]
+
+    try:
+        while True:
+            time.sleep(3)
+            resp = operations.vm_trace(client, channel, item_id)
+            events = resp.get("events", [])
+            new_events = events[seen_events:]
+            seen_events = len(events)
+
+            for event in new_events:
+                line = fmt_vm_trace_event(event, prev_ts)
+                if line:
+                    print(line, flush=True)
+                if event.get("timestamp"):
+                    prev_ts = event["timestamp"]
+
+            status = resp.get("status", "")
+            if status in ("complete", "failed", "cancelled"):
+                _status(f"\nFinished: {status}")
+                if status == "failed" and resp.get("error"):
+                    print(f"Error: {resp['error']}", file=sys.stderr)
+                usage = resp.get("usage")
+                if usage:
+                    cost = fmt_vm_cost(usage.get("total_cost_usd", 0))
+                    dur = resp.get("duration_seconds", 0)
+                    _status(f"Duration: {fmt_vm_duration(dur)}  |  Cost: {cost}")
+                break
+    except KeyboardInterrupt:
+        _status("\nStopped watching.")
+
+
+def cmd_vm_monitor(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    raw = getattr(args, "raw", False)
+
+    if not getattr(args, "watch", False):
+        resp = operations.vm_monitor(client)
+        if raw:
+            print(_json_ok(resp))
+        else:
+            print(fmt_vm_monitor(resp))
+        return
+
+    interval = getattr(args, "interval", 5)
+    _status(f"Monitoring... (Ctrl+C to stop, polling every {interval}s)")
+    try:
+        while True:
+            resp = operations.vm_monitor(client)
+            if raw:
+                print(_json_ok(resp), flush=True)
+            else:
+                print("\033[2J\033[H", end="", flush=True)
+                print(fmt_vm_monitor(resp), flush=True)
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        _status("\nStopped monitoring.")
+
+
+def cmd_vm_usage(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    raw = getattr(args, "raw", False)
+
+    resp = operations.vm_usage(
+        client,
+        hours=getattr(args, "hours", None),
+        days=getattr(args, "days", None),
+        queue=getattr(args, "queue", None),
+        limit=getattr(args, "limit", None),
+    )
+    if raw:
+        print(_json_ok(resp))
+    else:
+        print(fmt_vm_usage(resp))
+
+
+def cmd_vm_cancel(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    channel = _strip_hash(args.channel)
+    item_id = getattr(args, "item", None)
+
+    if item_id:
+        operations.vm_cancel(client, channel, item_id)
+        print(f"Cancelled: {item_id} in {channel}")
+    else:
+        resp = operations.vm_cancel_current(client, channel)
+        if resp is None:
+            print(f"No active task in {channel}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Cancelled active task in {channel}")
+
+
+def cmd_vm_rollback(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    channel = _strip_hash(args.channel)
+    version = getattr(args, "version", None)
+
+    resp = operations.vm_rollback(client, channel, version=version)
+    if getattr(args, "json", False):
+        print(_json_ok(resp))
+    else:
+        new_ver = resp.get("version", "?")
+        print(f"Rolled back {channel} to v{new_ver}")
+
+
+# ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
 
@@ -2044,6 +2233,9 @@ Channels:
 
 Webhooks:
   webhook         Manage webhooks
+
+VM:
+  vm              Workspace VM commands (trace, monitor, usage, cancel, rollback)
 
 Auth & identity:
   auth            Authentication commands
@@ -2307,6 +2499,64 @@ Other:
     check_ra_p = sub.add_parser("check-access", help=_h)
     check_ra_p.add_argument("repo", help="Repository (owner/repo)")
 
+    # --- VM (workspace VM introspection) ---
+
+    vm_parser = sub.add_parser("vm", help=_h)
+    vm_sub = vm_parser.add_subparsers(dest="vm_command")
+
+    vm_trace_p = vm_sub.add_parser("trace", help="Show agent execution trace")
+    vm_trace_p.add_argument("channel", help="Channel/site name")
+    vm_trace_p.add_argument("item_id", nargs="?", default=None, help="Specific item ID")
+    vm_trace_p.add_argument("--list", action="store_true", help="List recent items")
+    vm_trace_p.add_argument("--watch", action="store_true", help="Tail live trace")
+    vm_trace_p.add_argument(
+        "--status",
+        type=str,
+        help="Filter by status (complete, failed, processing)",
+    )
+    vm_trace_p.add_argument("--raw", action="store_true", help="Output raw JSON")
+    vm_trace_p.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="Max items for --list (default 10)",
+    )
+
+    vm_monitor_p = vm_sub.add_parser("monitor", help="Show active workers and queue items")
+    vm_monitor_p.add_argument("--watch", action="store_true", help="Poll and refresh")
+    vm_monitor_p.add_argument(
+        "-n",
+        "--interval",
+        type=int,
+        default=5,
+        help="Poll interval in seconds (default 5)",
+    )
+    vm_monitor_p.add_argument("--raw", action="store_true", help="Output raw JSON")
+
+    vm_usage_p = vm_sub.add_parser("usage", help="Show token and cost analytics")
+    vm_usage_p.add_argument("--hours", type=float, help="Filter to last N hours")
+    vm_usage_p.add_argument("--days", type=int, help="Filter to last N days")
+    vm_usage_p.add_argument("--queue", type=str, help="Filter by channel name")
+    vm_usage_p.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Recent items limit (default 20)",
+    )
+    vm_usage_p.add_argument("--raw", action="store_true", help="Output raw JSON")
+
+    vm_cancel_p = vm_sub.add_parser("cancel", help="Cancel active agent task")
+    vm_cancel_p.add_argument("channel", help="Channel/site name")
+    vm_cancel_p.add_argument(
+        "--item",
+        type=str,
+        help="Specific item ID (default: current processing)",
+    )
+
+    vm_rollback_p = vm_sub.add_parser("rollback", help="Roll back site to previous version")
+    vm_rollback_p.add_argument("channel", help="Channel/site name")
+    vm_rollback_p.add_argument("--version", type=int, help="Target version (default: previous)")
+
     # --- Shell & discovery ---
 
     comp_p = sub.add_parser("completion", help=_h)
@@ -2367,7 +2617,7 @@ _COMMANDS = {
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "webhook"])
+_ALL_COMMAND_NAMES.extend([*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm"])
 
 
 def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
@@ -2442,6 +2692,19 @@ def main() -> None:
                 parser.parse_args(["workspace", "--help"])
         elif args.command == "webhook":
             cmd_webhook(args)
+        elif args.command == "vm":
+            vm_sub = {
+                "trace": cmd_vm_trace,
+                "monitor": cmd_vm_monitor,
+                "usage": cmd_vm_usage,
+                "cancel": cmd_vm_cancel,
+                "rollback": cmd_vm_rollback,
+            }
+            handler = vm_sub.get(getattr(args, "vm_command", None) or "")
+            if handler:
+                handler(args)
+            else:
+                parser.parse_args(["vm", "--help"])
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:
