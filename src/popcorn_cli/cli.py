@@ -20,9 +20,10 @@ Usage:
     popcorn message edit <conversation> <message_id> "content"
     popcorn message delete <conversation> <message_id>
     popcorn message react <conversation> <message_id> <emoji> [--remove]
-    popcorn message search channels|dms|users [query]
+    popcorn message search <query>
     popcorn message download <file_key> [-o PATH]
-    popcorn message watch <conversation> [--interval N]
+    popcorn channel list [query] [--dms]
+    popcorn channel watch <conversation> [--interval N]
     popcorn channel create <name> [--type] [--members] [--if-not-exists]
     popcorn channel info <conversation>
     popcorn channel join <conversation>
@@ -32,6 +33,7 @@ Usage:
     popcorn channel edit <conversation> [--name] [--description]
     popcorn channel archive <conversation> [--undo]
     popcorn channel delete <conversation>
+    popcorn users list [query]
     popcorn inbox [--unread|--read] [--limit N]
     popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
     popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
@@ -538,12 +540,15 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     print(formatted)
 
 
-def cmd_search(args: argparse.Namespace) -> None:
+def cmd_channel_list(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    search_type = args.search_type
-    query = args.query or ""
+    query = getattr(args, "query", "") or ""
 
-    if search_type == "channels":
+    if getattr(args, "dms", False):
+        resp = operations.search_dms(client, query)
+        convs = resp.get("conversations", [])
+        fmt = "DMs:\n" + "\n".join(fmt_conversation(c) for c in convs) if convs else "No DMs found."
+    else:
         resp = operations.search_channels(client, query)
         convs = resp.get("conversations", [])
         fmt = (
@@ -551,26 +556,26 @@ def cmd_search(args: argparse.Namespace) -> None:
             if convs
             else "No channels found."
         )
-        _output(args, resp, fmt)
+    _output(args, resp, fmt)
 
-    elif search_type == "dms":
-        resp = operations.search_dms(client, query)
-        convs = resp.get("conversations", [])
-        fmt = "DMs:\n" + "\n".join(fmt_conversation(c) for c in convs) if convs else "No DMs found."
-        _output(args, resp, fmt)
 
-    elif search_type == "users":
-        resp = operations.search_users(client, query)
-        users = resp.get("users", [])
-        fmt = "Users:\n" + "\n".join(fmt_user(u) for u in users) if users else "No users found."
-        _output(args, resp, fmt)
+def cmd_search_messages(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    query = args.query or ""
+    resp = operations.search_messages(client, query)
+    messages = resp.get("messages", [])
+    lines = [fmt_message(item.get("message") or item) for item in messages]
+    fmt = "Messages:\n" + "\n".join(lines) if lines else "No messages found."
+    _output(args, resp, fmt)
 
-    elif search_type == "messages":
-        resp = operations.search_messages(client, query)
-        messages = resp.get("messages", [])
-        lines = [fmt_message(item.get("message") or item) for item in messages]
-        fmt = "Messages:\n" + "\n".join(lines) if lines else "No messages found."
-        _output(args, resp, fmt)
+
+def cmd_search_users(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    query = getattr(args, "query", "") or ""
+    resp = operations.search_users(client, query)
+    users = resp.get("users", [])
+    fmt = "Users:\n" + "\n".join(fmt_user(u) for u in users) if users else "No users found."
+    _output(args, resp, fmt)
 
 
 def cmd_list_messages(args: argparse.Namespace) -> None:
@@ -1755,7 +1760,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "auth workspace env whoami message channel site inbox webhook vm api check-access completion commands help version upgrade --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
+            COMPREPLY=($(compgen -W "auth workspace env whoami message channel site inbox users webhook vm api check-access completion commands help version upgrade --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login status logout token" -- "$cur"))
@@ -1767,10 +1772,13 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "deploy status log trace cancel rollback" -- "$cur"))
             ;;
         message)
-            COMPREPLY=($(compgen -W "send list threads get edit delete react search download watch" -- "$cur"))
+            COMPREPLY=($(compgen -W "send list threads get edit delete react search download" -- "$cur"))
             ;;
         channel)
-            COMPREPLY=($(compgen -W "create info join leave invite kick edit archive delete" -- "$cur"))
+            COMPREPLY=($(compgen -W "list watch create info join leave invite kick edit archive delete" -- "$cur"))
+            ;;
+        users)
+            COMPREPLY=($(compgen -W "list" -- "$cur"))
             ;;
         webhook)
             COMPREPLY=($(compgen -W "create list deliveries" -- "$cur"))
@@ -1799,9 +1807,10 @@ _popcorn() {
         'env:Show or switch environment'
         'whoami:Show current user and workspace'
         'site:Site commands (deploy, status, log, trace, cancel, rollback)'
-        'message:Message commands (send, list, get, edit, delete, react, search, watch)'
-        'channel:Channel commands (create, info, join, leave, invite, kick, edit, archive, delete)'
+        'message:Message commands (send, list, threads, get, edit, delete, react, search, download)'
+        'channel:Channel commands (list, watch, create, info, join, leave, invite, kick, edit, archive, delete)'
         'inbox:Show notifications'
+        'users:User commands (list)'
         'webhook:Manage webhooks'
         'vm:Workspace VM commands (monitor, usage)'
         'api:Raw API call'
@@ -1824,8 +1833,9 @@ _popcorn() {
                 auth) _values 'subcommand' login status logout token ;;
                 workspace) _values 'subcommand' list switch ;;
                 site) _values 'subcommand' deploy status log trace cancel rollback ;;
-                message) _values 'subcommand' send list threads get edit delete react search download watch ;;
-                channel) _values 'subcommand' create info join leave invite kick edit archive delete ;;
+                message) _values 'subcommand' send list threads get edit delete react search download ;;
+                channel) _values 'subcommand' list watch create info join leave invite kick edit archive delete ;;
+                users) _values 'subcommand' list ;;
                 webhook) _values 'subcommand' create list deliveries ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
@@ -1884,6 +1894,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "message": "messages",
     "inbox": "messages",
     "channel": "channels",
+    "users": "users",
     "webhook": "webhooks",
     "vm": "vm",
     "auth": "auth",
@@ -1898,9 +1909,10 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (deploy, status, log, trace, cancel, rollback)",
-    "message": "Message commands (send, list, threads, get, edit, delete, react, search, download, watch)",
+    "message": "Message commands (send, list, threads, get, edit, delete, react, search, download)",
     "inbox": "Show notifications (mentions, replies, reactions)",
-    "channel": "Channel commands (create, info, join, leave, invite, kick, edit, archive, delete)",
+    "channel": "Channel commands (list, watch, create, info, join, leave, invite, kick, edit, archive, delete)",
+    "users": "User commands (list)",
     "webhook": "Manage webhooks (create, list, deliveries)",
     "vm": "Workspace VM commands (monitor, usage)",
     "auth": "Authentication commands (login, logout, status, token)",
@@ -2175,11 +2187,14 @@ Sites:
   site            Site commands (deploy, status, log, trace, cancel, rollback)
 
 Messages:
-  message         Message commands (send, list, get, edit, delete, react, search, watch)
+  message         Message commands (send, list, threads, get, edit, delete, react, search, download)
   inbox           Show notifications
 
 Channels:
-  channel         Channel commands (create, info, join, leave, invite, kick, edit, archive, delete)
+  channel         Channel commands (list, watch, create, info, join, leave, invite, kick, edit, archive, delete)
+
+Users:
+  users           User commands (list)
 
 Webhooks:
   webhook         Manage webhooks
@@ -2376,10 +2391,7 @@ Other:
         "--remove", action="store_true", help="Remove reaction instead of adding"
     )
 
-    msg_search_p = msg_sub.add_parser("search", help="Search channels, DMs, users, or messages")
-    msg_search_p.add_argument(
-        "search_type", choices=["channels", "dms", "users", "messages"], help="What to search"
-    )
+    msg_search_p = msg_sub.add_parser("search", help="Full-text message search")
     msg_search_p.add_argument("query", nargs="?", default="", help="Search query")
 
     msg_dl_p = msg_sub.add_parser("download", help="Download a file attachment")
@@ -2388,25 +2400,29 @@ Other:
         "-o", "--output", type=str, help="Output path (default: original filename)"
     )
 
-    msg_watch_p = msg_sub.add_parser("watch", help="Watch a channel for new messages")
-    msg_watch_p.add_argument("conversation", help="Channel name (#general) or UUID")
-    msg_watch_p.add_argument(
+    # --- Channel group ---
+
+    ch_parser = sub.add_parser("channel", help=_h)
+    ch_sub = ch_parser.add_subparsers(dest="channel_command")
+
+    ch_list_p = ch_sub.add_parser("list", help="List channels")
+    ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
+    ch_list_p.add_argument("--dms", action="store_true", help="List DMs instead of channels")
+
+    ch_watch_p = ch_sub.add_parser("watch", help="Watch a channel for new messages")
+    ch_watch_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    ch_watch_p.add_argument(
         "--interval", type=int, default=3, help="Poll interval in seconds (default 3)"
     )
-    msg_watch_p.add_argument(
+    ch_watch_p.add_argument(
         "--count", type=int, default=None, help="Exit after receiving N messages"
     )
-    msg_watch_p.add_argument(
+    ch_watch_p.add_argument(
         "--max-wait",
         type=float,
         default=None,
         help="Exit after N seconds even if no messages received",
     )
-
-    # --- Channel group ---
-
-    ch_parser = sub.add_parser("channel", help=_h)
-    ch_sub = ch_parser.add_subparsers(dest="channel_command")
 
     ch_create_p = ch_sub.add_parser("create", help="Create a channel")
     ch_create_p.add_argument("name", help="Channel name")
@@ -2474,6 +2490,14 @@ Other:
     wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
     wh_del.add_argument("--since", type=str, help="ISO timestamp — deliveries after this")
     wh_del.add_argument("--status", type=str, help="Filter: completed,ignored,failed,processing")
+
+    # --- Users ---
+
+    users_parser = sub.add_parser("users", help=_h)
+    users_sub = users_parser.add_subparsers(dest="users_command")
+
+    users_list_p = users_sub.add_parser("list", help="List workspace users")
+    users_list_p.add_argument("query", nargs="?", default="", help="Filter query")
 
     # --- Escape hatch ---
 
@@ -2573,7 +2597,7 @@ _COMMANDS = {
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
 _ALL_COMMAND_NAMES.extend(
-    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel"]
+    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel", "users"]
 )
 
 
@@ -2672,9 +2696,8 @@ def main() -> None:
                 "edit": cmd_edit_message,
                 "delete": cmd_delete_message,
                 "react": cmd_react,
-                "search": cmd_search,
+                "search": cmd_search_messages,
                 "download": cmd_download,
-                "watch": cmd_watch,
             }
             handler = msg_sub.get(getattr(args, "message_command", None) or "")
             if handler:
@@ -2682,10 +2705,12 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn message"
-                    " [send|list|threads|get|edit|delete|react|search|download|watch]"
+                    " [send|list|threads|get|edit|delete|react|search|download]"
                 )
         elif args.command == "channel":
             ch_sub = {
+                "list": cmd_channel_list,
+                "watch": cmd_watch,
                 "create": cmd_create_channel,
                 "info": cmd_info,
                 "join": cmd_join_channel,
@@ -2702,7 +2727,7 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn channel"
-                    " [create|info|join|leave|invite|kick|edit|archive|delete]"
+                    " [list|watch|create|info|join|leave|invite|kick|edit|archive|delete]"
                 )
         elif args.command == "vm":
             vm_sub = {
@@ -2714,6 +2739,15 @@ def main() -> None:
                 handler(args)
             else:
                 raise PopcornError("Usage: popcorn vm [monitor|usage]")
+        elif args.command == "users":
+            users_sub = {
+                "list": cmd_search_users,
+            }
+            handler = users_sub.get(getattr(args, "users_command", None) or "")
+            if handler:
+                handler(args)
+            else:
+                raise PopcornError("Usage: popcorn users [list]")
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:

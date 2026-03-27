@@ -110,11 +110,10 @@ class TestAuthCommands:
 
 class TestReadingCommands:
     def test_search(self, parser):
-        args = parser.parse_args(["message", "search", "channels", "test"])
+        args = parser.parse_args(["message", "search", "test query"])
         assert args.command == "message"
         assert args.message_command == "search"
-        assert args.search_type == "channels"
-        assert args.query == "test"
+        assert args.query == "test query"
 
     def test_list_messages(self, parser):
         args = parser.parse_args(["message", "list", "#general", "--limit", "10"])
@@ -158,12 +157,26 @@ class TestReadingCommands:
         assert args.after == "msg456"
 
     def test_watch_count(self, parser):
-        args = parser.parse_args(["message", "watch", "#general", "--count", "5"])
+        args = parser.parse_args(["channel", "watch", "#general", "--count", "5"])
         assert args.count == 5
 
     def test_watch_max_wait(self, parser):
-        args = parser.parse_args(["message", "watch", "#general", "--max-wait", "30"])
+        args = parser.parse_args(["channel", "watch", "#general", "--max-wait", "30"])
         assert args.max_wait == 30.0
+
+    def test_channel_list(self, parser):
+        args = parser.parse_args(["channel", "list"])
+        assert args.command == "channel"
+        assert args.channel_command == "list"
+
+    def test_channel_list_dms(self, parser):
+        args = parser.parse_args(["channel", "list", "--dms"])
+        assert args.dms is True
+
+    def test_users_list(self, parser):
+        args = parser.parse_args(["users", "list"])
+        assert args.command == "users"
+        assert args.users_command == "list"
 
 
 class TestWritingCommands:

@@ -46,15 +46,17 @@ popcorn message send '#general' "Hello from the CLI!"
 echo "piped message" | popcorn message send '#general'
 popcorn message send '#general' "see attached" --file ./screenshot.png
 
-# Search
-popcorn message search channels
-popcorn message search messages "deployment"
+# Search messages
+popcorn message search "deployment"
+
+# List channels
+popcorn channel list
 
 # Notifications
 popcorn inbox --unread
 
 # Watch a channel live
-popcorn message watch '#general'
+popcorn channel watch '#general'
 ```
 
 ## Commands
@@ -78,12 +80,12 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn message edit <conv> <msg_id> "content"` | Edit a message |
 | `popcorn message delete <conv> <msg_id>` | Delete a message |
 | `popcorn message react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
-| `popcorn message search channels\|dms\|users [query]` | Search/list entities |
-| `popcorn message search messages <query>` | Full-text message search |
+| `popcorn message search <query>` | Full-text message search |
 | `popcorn inbox [--unread\|--read] [--limit N]` | Notifications |
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
-| `popcorn message watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
 | **Channels** | |
+| `popcorn channel list [query] [--dms]` | List channels or DMs |
+| `popcorn channel watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
 | `popcorn channel create <name> [--type TYPE] [--members IDS] [--if-not-exists]` | Create a channel |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |
@@ -93,6 +95,8 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel edit <conv> [--name N] [--description D]` | Update channel name or description |
 | `popcorn channel archive <conv> [--undo]` | Archive/unarchive a channel |
 | `popcorn channel delete <conv>` | Delete a channel |
+| **Users** | |
+| `popcorn users list [query]` | List workspace users |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |
