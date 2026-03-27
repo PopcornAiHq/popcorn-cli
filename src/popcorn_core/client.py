@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import os
 import time
 from typing import Any
 
@@ -14,6 +15,10 @@ from .config import Profile, load_config, save_config
 from .errors import APIError, AuthError
 
 
+def _is_proxy_mode() -> bool:
+    return os.environ.get("POPCORN_PROXY_MODE", "") == "1"
+
+
 class APIClient:
     """Synchronous HTTP client with auth + workspace injection."""
 
@@ -22,8 +27,10 @@ class APIClient:
         self._debug = debug
         self._client = httpx.Client(timeout=timeout)
 
-    def _token(self) -> str:
-        """Return a valid token, refreshing if needed."""
+    def _token(self) -> str | None:
+        """Return a valid token, refreshing if needed. None in proxy mode."""
+        if _is_proxy_mode():
+            return None
         now = int(time.time())
         if self.profile.expires_at > 0 and self.profile.expires_at < now:
             self._refresh_token()
@@ -73,10 +80,18 @@ class APIClient:
             ) from e
 
     def _headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self._token()}",
-            "Content-Type": "application/json",
-        }
+        token = self._token()
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if token is not None:
+            headers["Authorization"] = f"Bearer {token}"
+        else:
+            # Proxy mode: send identity headers for the sidecar
+            user_id = os.environ.get("POPCORN_USER_ID", "")
+            if user_id:
+                headers["X-Actor-User-ID"] = user_id
+            if self.profile.workspace_id:
+                headers["X-Workspace-ID"] = self.profile.workspace_id
+        return headers
 
     def _inject_workspace(self, params: dict[str, Any]) -> dict[str, Any]:
         if "workspace_id" not in params and self.profile.workspace_id:
@@ -181,8 +196,8 @@ class APIClient:
         url = f"{self.profile.api_url}{path}"
         resp = self._do_request(method, url, params, json_data)
 
-        # Auto-retry on 401
-        if resp.status_code == 401:
+        # Auto-retry on 401 (skip in proxy mode — sidecar handles auth)
+        if resp.status_code == 401 and not _is_proxy_mode():
             self._refresh_token()
             resp = self._do_request(method, url, params, json_data)
             if resp.status_code == 401:
