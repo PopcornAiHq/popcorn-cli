@@ -52,28 +52,31 @@ class TestFlagHoisting:
     def test_json_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["list-messages", "--json", "#general"]) == [
+        assert _hoist_global_flags(["message", "list", "--json", "#general"]) == [
             "--json",
-            "list-messages",
+            "message",
+            "list",
             "#general",
         ]
 
     def test_quiet_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["list-messages", "-q", "#general"]) == [
+        assert _hoist_global_flags(["message", "list", "-q", "#general"]) == [
             "-q",
-            "list-messages",
+            "message",
+            "list",
             "#general",
         ]
 
     def test_timeout_after_subcommand(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        assert _hoist_global_flags(["list-messages", "--timeout", "60", "#general"]) == [
+        assert _hoist_global_flags(["message", "list", "--timeout", "60", "#general"]) == [
             "--timeout",
             "60",
-            "list-messages",
+            "message",
+            "list",
             "#general",
         ]
 
@@ -81,9 +84,9 @@ class TestFlagHoisting:
         from popcorn_cli.cli import _hoist_global_flags
 
         result = _hoist_global_flags(
-            ["list-messages", "--json", "-q", "--timeout", "10", "#general"]
+            ["message", "list", "--json", "-q", "--timeout", "10", "#general"]
         )
-        assert result == ["--json", "-q", "--timeout", "10", "list-messages", "#general"]
+        assert result == ["--json", "-q", "--timeout", "10", "message", "list", "#general"]
 
 
 class TestAuthCommands:
@@ -107,19 +110,21 @@ class TestAuthCommands:
 
 class TestReadingCommands:
     def test_search(self, parser):
-        args = parser.parse_args(["search", "channels", "test"])
-        assert args.command == "search"
+        args = parser.parse_args(["message", "search", "channels", "test"])
+        assert args.command == "message"
+        assert args.message_command == "search"
         assert args.search_type == "channels"
         assert args.query == "test"
 
     def test_list_messages(self, parser):
-        args = parser.parse_args(["list-messages", "#general", "--limit", "10"])
-        assert args.command == "list-messages"
+        args = parser.parse_args(["message", "list", "#general", "--limit", "10"])
+        assert args.command == "message"
+        assert args.message_command == "list"
         assert args.conversation == "#general"
         assert args.limit == 10
 
     def test_list_messages_thread(self, parser):
-        args = parser.parse_args(["list-messages", "#general", "--thread", "t-123"])
+        args = parser.parse_args(["message", "list", "#general", "--thread", "t-123"])
         assert args.thread == "t-123"
 
     def test_inbox_unread(self, parser):
@@ -131,84 +136,87 @@ class TestReadingCommands:
             parser.parse_args(["inbox", "--unread", "--read"])
 
     def test_list_threads(self, parser):
-        args = parser.parse_args(["list-threads", "#general"])
-        assert args.command == "list-threads"
+        args = parser.parse_args(["message", "threads", "#general"])
+        assert args.command == "message"
+        assert args.message_command == "threads"
         assert args.conversation == "#general"
 
     def test_list_threads_with_limit(self, parser):
-        args = parser.parse_args(["list-threads", "#general", "--limit", "10"])
+        args = parser.parse_args(["message", "threads", "#general", "--limit", "10"])
         assert args.limit == 10
 
     def test_list_threads_with_offset(self, parser):
-        args = parser.parse_args(["list-threads", "#general", "--offset", "50"])
+        args = parser.parse_args(["message", "threads", "#general", "--offset", "50"])
         assert args.offset == 50
 
     def test_list_messages_before(self, parser):
-        args = parser.parse_args(["list-messages", "#general", "--before", "msg123"])
+        args = parser.parse_args(["message", "list", "#general", "--before", "msg123"])
         assert args.before == "msg123"
 
     def test_list_messages_after(self, parser):
-        args = parser.parse_args(["list-messages", "#general", "--after", "msg456"])
+        args = parser.parse_args(["message", "list", "#general", "--after", "msg456"])
         assert args.after == "msg456"
 
     def test_watch_count(self, parser):
-        args = parser.parse_args(["watch", "#general", "--count", "5"])
+        args = parser.parse_args(["message", "watch", "#general", "--count", "5"])
         assert args.count == 5
 
     def test_watch_max_wait(self, parser):
-        args = parser.parse_args(["watch", "#general", "--max-wait", "30"])
+        args = parser.parse_args(["message", "watch", "#general", "--max-wait", "30"])
         assert args.max_wait == 30.0
 
 
 class TestWritingCommands:
     def test_send_message(self, parser):
-        args = parser.parse_args(["send-message", "#general", "hello world"])
-        assert args.command == "send-message"
+        args = parser.parse_args(["message", "send", "#general", "hello world"])
+        assert args.command == "message"
+        assert args.message_command == "send"
         assert args.conversation == "#general"
         assert args.message == "hello world"
 
     def test_send_message_batch(self, parser):
-        args = parser.parse_args(["send-message", "--batch"])
+        args = parser.parse_args(["message", "send", "--batch"])
         assert args.batch is True
         assert args.conversation is None
 
     def test_react(self, parser):
-        args = parser.parse_args(["react", "#general", "msg-1", "thumbsup"])
+        args = parser.parse_args(["message", "react", "#general", "msg-1", "thumbsup"])
         assert args.emoji == "thumbsup"
 
     def test_react_remove(self, parser):
-        args = parser.parse_args(["react", "#general", "msg-1", "thumbsup", "--remove"])
+        args = parser.parse_args(["message", "react", "#general", "msg-1", "thumbsup", "--remove"])
         assert args.remove is True
 
     def test_edit_message(self, parser):
-        args = parser.parse_args(["edit-message", "#general", "msg-1", "new content"])
+        args = parser.parse_args(["message", "edit", "#general", "msg-1", "new content"])
         assert args.content == "new content"
 
     def test_delete_message(self, parser):
-        args = parser.parse_args(["delete-message", "#general", "msg-1"])
+        args = parser.parse_args(["message", "delete", "#general", "msg-1"])
         assert args.message_id == "msg-1"
 
 
 class TestChannelManagement:
     def test_create_channel(self, parser):
-        args = parser.parse_args(["create-channel", "new-channel"])
-        assert args.command == "create-channel"
+        args = parser.parse_args(["channel", "create", "new-channel"])
+        assert args.command == "channel"
+        assert args.channel_command == "create"
         assert args.name == "new-channel"
 
     def test_create_channel_private(self, parser):
-        args = parser.parse_args(["create-channel", "secret", "--type", "private_channel"])
+        args = parser.parse_args(["channel", "create", "secret", "--type", "private_channel"])
         assert args.type == "private_channel"
 
     def test_join_channel(self, parser):
-        args = parser.parse_args(["join-channel", "#general"])
+        args = parser.parse_args(["channel", "join", "#general"])
         assert args.conversation == "#general"
 
     def test_archive_channel_undo(self, parser):
-        args = parser.parse_args(["archive-channel", "#general", "--undo"])
+        args = parser.parse_args(["channel", "archive", "#general", "--undo"])
         assert args.undo is True
 
     def test_invite(self, parser):
-        args = parser.parse_args(["invite", "#general", "u1,u2"])
+        args = parser.parse_args(["channel", "invite", "#general", "u1,u2"])
         assert args.user_ids == "u1,u2"
 
 
@@ -270,16 +278,16 @@ class TestDidYouMean:
     def test_close_typo_suggests(self):
         parser = build_parser()
         with pytest.raises(SystemExit) as exc_info:
-            parser.parse_args(["send-mesage"])
+            parser.parse_args(["mesage"])
         assert exc_info.value.code == 2
 
     def test_close_typo_message(self, capsys):
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(["send-mesage"])
+            parser.parse_args(["mesage"])
         err = capsys.readouterr().err
         assert "Did you mean" in err
-        assert "send-message" in err
+        assert "message" in err
 
     def test_distant_typo_no_suggestion(self, capsys):
         parser = build_parser()
@@ -324,7 +332,7 @@ class TestCommands:
         assert "commands" in schema
         # All top-level commands are present
         cmd_names = [c["name"] for c in schema["commands"]]
-        for expected in ["send-message", "list-messages", "auth", "pop", "commands"]:
+        for expected in ["message", "channel", "site", "auth", "commands"]:
             assert expected in cmd_names
 
     def test_commands_has_subcommands_for_auth(self, capsys):
@@ -342,7 +350,7 @@ class TestCommands:
         assert "login" in sub_names
         assert "status" in sub_names
 
-    def test_commands_send_message_has_arguments(self, capsys):
+    def test_commands_message_has_subcommands(self, capsys):
         import json
 
         from popcorn_cli.cli import cmd_commands
@@ -351,9 +359,13 @@ class TestCommands:
         cmd_commands(args)
         out = capsys.readouterr().out
         schema = json.loads(out)
-        send_cmd = next(c for c in schema["commands"] if c["name"] == "send-message")
-        assert "arguments" in send_cmd
-        arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_cmd["arguments"]]
+        msg_cmd = next(c for c in schema["commands"] if c["name"] == "message")
+        assert "subcommands" in msg_cmd
+        sub_names = [s["name"] for s in msg_cmd["subcommands"]]
+        assert "send" in sub_names
+        # send subcommand should have arguments
+        send_sub = next(s for s in msg_cmd["subcommands"] if s["name"] == "send")
+        arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_sub["arguments"]]
         assert "conversation" in arg_names
 
     def test_commands_have_categories(self, capsys):
@@ -365,10 +377,10 @@ class TestCommands:
         cmd_commands(args)
         out = capsys.readouterr().out
         schema = json.loads(out)
-        pop_cmd = next(c for c in schema["commands"] if c["name"] == "pop")
-        assert pop_cmd["category"] == "sites"
-        send_cmd = next(c for c in schema["commands"] if c["name"] == "send-message")
-        assert send_cmd["category"] == "messages"
+        site_cmd = next(c for c in schema["commands"] if c["name"] == "site")
+        assert site_cmd["category"] == "sites"
+        msg_cmd = next(c for c in schema["commands"] if c["name"] == "message")
+        assert msg_cmd["category"] == "messages"
         auth_cmd = next(c for c in schema["commands"] if c["name"] == "auth")
         assert auth_cmd["category"] == "auth"
 
@@ -381,13 +393,13 @@ class TestNewFlags:
     def test_debug_flag_hoisted(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        result = _hoist_global_flags(["list-messages", "--debug", "#general"])
-        assert result == ["--debug", "list-messages", "#general"]
+        result = _hoist_global_flags(["message", "list", "--debug", "#general"])
+        assert result == ["--debug", "message", "list", "#general"]
 
     def test_fail_fast_flag(self, parser):
-        args = parser.parse_args(["send-message", "--batch", "--fail-fast"])
+        args = parser.parse_args(["message", "send", "--batch", "--fail-fast"])
         assert args.fail_fast is True
 
     def test_if_not_exists_flag(self, parser):
-        args = parser.parse_args(["create-channel", "test-ch", "--if-not-exists"])
+        args = parser.parse_args(["channel", "create", "test-ch", "--if-not-exists"])
         assert args.if_not_exists is True

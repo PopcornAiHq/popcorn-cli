@@ -984,36 +984,43 @@ class TestPopParser:
     def parser(self):
         return build_parser()
 
-    def test_pop_defaults(self, parser):
-        args = parser.parse_args(["pop"])
-        assert args.command == "pop"
+    def test_deploy_defaults(self, parser):
+        args = parser.parse_args(["site", "deploy"])
+        assert args.command == "site"
+        assert args.site_command == "deploy"
         assert args.name is None
         assert args.context == ""
         assert args.force is False
 
-    def test_pop_with_options(self, parser):
-        args = parser.parse_args(["pop", "my-app", "--context", "initial release"])
+    def test_deploy_with_options(self, parser):
+        args = parser.parse_args(["site", "deploy", "my-app", "--context", "initial release"])
         assert args.name == "my-app"
         assert args.context == "initial release"
 
-    def test_pop_force_flag(self, parser):
-        args = parser.parse_args(["pop", "--force"])
+    def test_deploy_force_flag(self, parser):
+        args = parser.parse_args(["site", "deploy", "--force"])
         assert args.force is True
 
+    def test_pop_alias(self, parser):
+        args = parser.parse_args(["pop"])
+        assert args.command == "pop"
+
     def test_status_parser(self, parser):
-        args = parser.parse_args(["status"])
-        assert args.command == "status"
+        args = parser.parse_args(["site", "status"])
+        assert args.command == "site"
+        assert args.site_command == "status"
         assert args.channel is None
 
     def test_status_with_channel(self, parser):
-        args = parser.parse_args(["status", "my-channel"])
+        args = parser.parse_args(["site", "status", "my-channel"])
         assert args.channel == "my-channel"
 
     def test_log_parser(self, parser):
-        args = parser.parse_args(["log"])
-        assert args.command == "log"
+        args = parser.parse_args(["site", "log"])
+        assert args.command == "site"
+        assert args.site_command == "log"
         assert args.limit == 10
 
     def test_log_with_limit(self, parser):
-        args = parser.parse_args(["log", "--limit", "5"])
+        args = parser.parse_args(["site", "log", "--limit", "5"])
         assert args.limit == 5

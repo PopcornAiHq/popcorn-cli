@@ -14,3 +14,4 @@ node_modules/
 htmlcov/
 .worktrees/
 bin/
+.popcorn.local.json

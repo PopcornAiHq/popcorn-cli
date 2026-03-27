@@ -53,7 +53,7 @@ class TestSkipCheck:
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
 
             parser = build_parser()
-            args = parser.parse_args(["pop", "--skip-check"])
+            args = parser.parse_args(["site", "deploy", "--skip-check"])
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(args)
@@ -89,7 +89,7 @@ class TestSkipCheck:
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
 
             parser = build_parser()
-            args = parser.parse_args(["pop"])
+            args = parser.parse_args(["site", "deploy"])
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(args)
@@ -277,7 +277,7 @@ class TestPollVerifyEdgeCases:
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
 
             parser = build_parser()
-            args = parser.parse_args(["--json", "pop", "--skip-check"])
+            args = parser.parse_args(["--json", "site", "deploy", "--skip-check"])
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(args)
@@ -319,7 +319,7 @@ class TestCmdPopVerifyIntegration:
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
 
             parser = build_parser()
-            args = parser.parse_args(["pop"])
+            args = parser.parse_args(["site", "deploy"])
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(args)
@@ -440,7 +440,7 @@ class TestCmdPopVerifyIntegration:
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
 
             parser = build_parser()
-            args = parser.parse_args(["--json", "pop"])
+            args = parser.parse_args(["--json", "site", "deploy"])
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(args)
