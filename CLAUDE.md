@@ -56,6 +56,8 @@ Custom environments via env vars (for internal/dev use):
 
 Multiple profiles are stored in the config file. Switch with `popcorn env <name>`.
 
+**Proxy mode** (`POPCORN_PROXY_MODE=1`): For VM sidecar deployments. Skips auth entirely — no token refresh, no browser login. Sends `X-Actor-User-ID` and `X-Workspace-ID` headers instead of `Authorization`. Configured via `POPCORN_API_URL`, `POPCORN_WORKSPACE_ID`, `POPCORN_USER_ID`.
+
 **No internal URLs or credentials are shipped in this package.**
 
 ## Testing Installation

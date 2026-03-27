@@ -149,6 +149,19 @@ POPCORN_CLERK_ISSUER=https://clerk.example.com popcorn auth login
 POPCORN_CLERK_CLIENT_ID=your_client_id popcorn auth login
 ```
 
+### Proxy Mode (VM Sidecar)
+
+For deployments behind a local proxy/sidecar that handles authentication:
+
+```bash
+export POPCORN_PROXY_MODE=1
+export POPCORN_API_URL=http://sidecar:8091/popcorn
+export POPCORN_WORKSPACE_ID=ws-xxxx
+export POPCORN_USER_ID=user-xxxx
+```
+
+In proxy mode the CLI skips auth (no browser login or token refresh) and sends `X-Actor-User-ID` / `X-Workspace-ID` headers instead of `Authorization`.
+
 ## License
 
 MIT
