@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 def get_whoami(client: APIClient) -> dict[str, Any]:
     """Get current user and workspace info."""
-    return client.get("/api/users/me")
+    return client.get("/api/users/current-user")
 
 
 def list_workspaces(client: APIClient) -> list[dict[str, Any]]:

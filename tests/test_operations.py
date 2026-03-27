@@ -21,7 +21,7 @@ class TestIdentity:
     def test_get_whoami(self, mock_client):
         mock_client.get.return_value = {"user": {"id": "u1", "email": "a@b.com"}}
         result = operations.get_whoami(mock_client)
-        mock_client.get.assert_called_once_with("/api/users/me")
+        mock_client.get.assert_called_once_with("/api/users/current-user")
         assert result["user"]["id"] == "u1"
 
 
