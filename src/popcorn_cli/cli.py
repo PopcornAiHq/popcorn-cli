@@ -106,7 +106,27 @@ def _status(msg: str) -> None:
 
 
 def _get_client(args: argparse.Namespace) -> APIClient:
-    """Build an APIClient from stored config."""
+    """Build an APIClient from stored config or proxy env vars."""
+    # Proxy mode: skip profile validation, build client from env vars
+    if os.environ.get("POPCORN_PROXY_MODE") == "1":
+        preset = resolve_env()
+        workspace_id = os.environ.get("POPCORN_WORKSPACE_ID", "")
+        profile = Profile(
+            api_url=preset["api_url"],
+            workspace_id=workspace_id,
+        )
+        if getattr(args, "workspace", None):
+            profile.workspace_id = args.workspace
+        timeout = getattr(args, "timeout", None)
+        debug = getattr(args, "debug", False)
+        kwargs: dict[str, Any] = {}
+        if timeout:
+            kwargs["timeout"] = timeout
+        if debug:
+            kwargs["debug"] = True
+        return APIClient(profile, **kwargs)
+
+    # Normal mode: load config and validate auth
     cfg = load_config()
     if getattr(args, "env", None):
         cfg.default_profile = args.env
@@ -130,7 +150,7 @@ def _get_client(args: argparse.Namespace) -> APIClient:
 
     timeout = getattr(args, "timeout", None)
     debug = getattr(args, "debug", False)
-    kwargs: dict[str, Any] = {}
+    kwargs = {}
     if timeout:
         kwargs["timeout"] = timeout
     if debug:
