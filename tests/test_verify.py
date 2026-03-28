@@ -113,7 +113,9 @@ class TestPollVerify:
             "version": 3,
             "commit_hash": "abc123",
         }
-        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        result = _poll_verify(
+            mock_client, "conv-1", "task-uuid", "my-site", json_mode=False, timeout=10
+        )
         assert result["status"] == "done"
         assert result["healthy"] is True
 
@@ -135,7 +137,13 @@ class TestPollVerify:
         ]
         with patch("time.sleep"):
             result = _poll_verify(
-                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+                mock_client,
+                "conv-1",
+                "task-uuid",
+                "my-site",
+                json_mode=False,
+                timeout=10,
+                poll_interval=0.01,
             )
         assert result["status"] == "done"
         assert mock_client.get.call_count == 3
@@ -147,7 +155,13 @@ class TestPollVerify:
 
         with patch("time.monotonic", side_effect=[0, 0, 999]), patch("time.sleep"):
             result = _poll_verify(
-                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=2.0
+                mock_client,
+                "conv-1",
+                "task-uuid",
+                "my-site",
+                json_mode=False,
+                timeout=10,
+                poll_interval=2.0,
             )
         assert result["status"] == "timeout"
         assert result["healthy"] is None
@@ -156,7 +170,9 @@ class TestPollVerify:
         """404 means backend doesn't support verify — degrade gracefully."""
         mock_client = MagicMock()
         mock_client.get.side_effect = APIError("Not found", status_code=404)
-        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        result = _poll_verify(
+            mock_client, "conv-1", "task-uuid", "my-site", json_mode=False, timeout=10
+        )
         assert result is None
 
     def test_poll_verify_transient_errors_retry(self):
@@ -177,7 +193,13 @@ class TestPollVerify:
         ]
         with patch("time.sleep"):
             result = _poll_verify(
-                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+                mock_client,
+                "conv-1",
+                "task-uuid",
+                "my-site",
+                json_mode=False,
+                timeout=10,
+                poll_interval=0.01,
             )
         assert result["status"] == "done"
         assert result["healthy"] is True
@@ -188,7 +210,13 @@ class TestPollVerify:
         mock_client.get.side_effect = APIError("Server error", status_code=500)
         with patch("time.sleep"):
             result = _poll_verify(
-                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10, poll_interval=0.01
+                mock_client,
+                "conv-1",
+                "task-uuid",
+                "my-site",
+                json_mode=False,
+                timeout=10,
+                poll_interval=0.01,
             )
         assert result["status"] == "error"
         assert result["healthy"] is None
@@ -208,7 +236,9 @@ class TestPollVerifyEdgeCases:
             "version": 4,
             "commit_hash": "def456",
         }
-        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        result = _poll_verify(
+            mock_client, "conv-1", "task-uuid", "my-site", json_mode=False, timeout=10
+        )
         assert result["version"] == 4
 
     def test_poll_verify_fixing_uses_longer_interval(self):
@@ -228,7 +258,13 @@ class TestPollVerifyEdgeCases:
         ]
         with patch("time.sleep") as mock_sleep:
             _poll_verify(
-                mock_client, "conv-1", "task-uuid", json_mode=False, timeout=30, poll_interval=2.0
+                mock_client,
+                "conv-1",
+                "task-uuid",
+                "my-site",
+                json_mode=False,
+                timeout=30,
+                poll_interval=2.0,
             )
         # First sleep should be 5.0 (fixing interval), not 2.0
         mock_sleep.assert_any_call(5.0)
@@ -247,7 +283,9 @@ class TestPollVerifyEdgeCases:
         """KeyboardInterrupt during poll returns cancelled status."""
         mock_client = MagicMock()
         mock_client.get.side_effect = KeyboardInterrupt()
-        result = _poll_verify(mock_client, "conv-1", "task-uuid", json_mode=False, timeout=10)
+        result = _poll_verify(
+            mock_client, "conv-1", "task-uuid", "my-site", json_mode=False, timeout=10
+        )
         assert result["status"] == "cancelled"
         assert result["healthy"] is None
 

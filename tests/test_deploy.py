@@ -124,10 +124,10 @@ class TestDeployVerifyStatus:
             "version": 3,
             "commit_hash": "abc123",
         }
-        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid")
+        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid", "my-site")
         mock_client.get.assert_called_once_with(
-            "/api/conversations/conv-1/verify-status",
-            {"task_id": "task-uuid"},
+            "/api/conversations/verify-status",
+            {"task_id": "task-uuid", "site_name": "my-site", "conversation": "conv-1"},
         )
         assert result["status"] == "done"
         assert result["healthy"] is True
@@ -142,7 +142,7 @@ class TestDeployVerifyStatus:
             "version": 3,
             "commit_hash": "abc123",
         }
-        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid")
+        result = operations.deploy_verify_status(mock_client, "conv-1", "task-uuid", "my-site")
         assert result["status"] == "fixing"
         assert result["healthy"] is None
 

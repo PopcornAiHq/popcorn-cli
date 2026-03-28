@@ -116,7 +116,7 @@ def list_threads(
 ) -> dict[str, Any]:
     """List threads in a conversation, ordered by most recent reply."""
     conv_id = resolve_conversation(client, conversation)
-    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    params: dict[str, Any] = {"conversation": conv_id, "limit": limit}
     if offset:
         params["offset"] = offset
     return client.get("/api/messages/threads", params)
@@ -226,8 +226,8 @@ def get_message(client: APIClient, message_id: str) -> dict[str, Any]:
 def get_conversation_info(client: APIClient, conversation: str) -> dict[str, Any]:
     """Get conversation details and member list."""
     conv_id = resolve_conversation(client, conversation)
-    info = client.get("/api/conversations/info", {"conversation_id": conv_id})
-    members = client.get("/api/conversations/members", {"conversation_id": conv_id})
+    info = client.get("/api/conversations/info", {"conversation": conv_id})
+    members = client.get("/api/conversations/members", {"conversation": conv_id})
     return {
         "conversation": info.get("conversation", {}),
         "members": members.get("members", []),
@@ -514,20 +514,20 @@ def create_webhook(
 ) -> dict[str, Any]:
     """Create a webhook for a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    body: dict[str, Any] = {"conversation_id": conv_id, "name": name}
+    body: dict[str, Any] = {"name": name}
     if description:
         body["description"] = description
     if avatar_url:
         body["avatar_url"] = avatar_url
     if action_mode:
         body["action_mode"] = action_mode
-    return client.post("/api/webhooks/create", data=body)
+    return client.post("/api/webhooks/create", data=body, params={"conversation": conv_id})
 
 
 def list_webhooks(client: APIClient, conversation: str) -> dict[str, Any]:
     """List webhooks for a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/webhooks/list", {"conversation_id": conv_id})
+    return client.get("/api/webhooks/list", {"conversation": conv_id})
 
 
 def list_webhook_deliveries(
@@ -539,7 +539,7 @@ def list_webhook_deliveries(
 ) -> dict[str, Any]:
     """List webhook deliveries for a conversation."""
     conv_id = resolve_conversation(client, conversation)
-    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    params: dict[str, Any] = {"conversation": conv_id, "limit": limit}
     if since:
         params["since"] = since
     if status:
@@ -640,11 +640,13 @@ def deploy_upload(
 # ---------------------------------------------------------------------------
 
 
-def deploy_verify_status(client: APIClient, conversation_id: str, task_id: str) -> dict[str, Any]:
+def deploy_verify_status(
+    client: APIClient, conversation_id: str, task_id: str, site_name: str
+) -> dict[str, Any]:
     """Poll the verify task status after a publish with verify=true."""
     return client.get(
-        f"/api/conversations/{conversation_id}/verify-status",
-        {"task_id": task_id},
+        "/api/conversations/verify-status",
+        {"task_id": task_id, "site_name": site_name, "conversation": conversation_id},
     )
 
 
@@ -654,7 +656,7 @@ def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
         return client.get(f"/api/conversations/{conversation_id}/site/status")
     except APIError as e:
         if e.status_code == 404:
-            info = client.get("/api/conversations/info", {"conversation_id": conversation_id})
+            info = client.get("/api/conversations/info", {"conversation": conversation_id})
             return {"conversation": info.get("conversation", {}), "fallback": True}
         raise
 

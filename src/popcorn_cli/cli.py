@@ -1101,6 +1101,7 @@ def _poll_verify(
     client: APIClient,
     conversation_id: str,
     task_id: str,
+    site_name: str,
     json_mode: bool,
     timeout: float = 300.0,
     poll_interval: float = 2.0,
@@ -1124,7 +1125,9 @@ def _poll_verify(
     try:
         while time.monotonic() < deadline:
             try:
-                result = operations.deploy_verify_status(client, conversation_id, task_id)
+                result = operations.deploy_verify_status(
+                    client, conversation_id, task_id, site_name
+                )
                 consecutive_errors = 0
             except APIError as e:
                 if e.status_code == 404:
@@ -1528,7 +1531,9 @@ def cmd_pop(args: argparse.Namespace) -> None:
     original_version = result.get("version")
 
     if verify_task_id:
-        verify_data = _poll_verify(client, result_conv_id, verify_task_id, json_mode)
+        verify_data = _poll_verify(
+            client, result_conv_id, verify_task_id, result_site_name, json_mode
+        )
 
     # If publish returned a static skip, capture that
     if not verify_data and "verify" in result:

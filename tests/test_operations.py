@@ -47,7 +47,7 @@ class TestMessages:
         mock_client.get.return_value = {"messages": [{"id": "m1"}]}
         result = operations.read_messages(mock_client, "conv-id")
         mock_client.get.assert_called_once_with(
-            "/api/messages/history", {"limit": 25, "conversation_id": "conv-id"}
+            "/api/messages/history", {"limit": 25, "conversation": "conv-id"}
         )
         assert result["messages"][0]["id"] == "m1"
 
@@ -56,7 +56,7 @@ class TestMessages:
         operations.read_messages(mock_client, "conv-id", thread_id="t1", limit=10)
         mock_client.get.assert_called_once_with(
             "/api/messages/thread",
-            {"thread_ts": "t1", "limit": 10, "conversation_id": "conv-id"},
+            {"thread_ts": "t1", "limit": 10, "conversation": "conv-id"},
         )
 
     def test_send_message_text(self, mock_client):
@@ -213,7 +213,7 @@ class TestSiteStatus:
         ]
         result = operations.get_site_status(mock_client, "conv-1")
         assert mock_client.get.call_count == 2
-        mock_client.get.assert_called_with("/api/conversations/info", {"conversation_id": "conv-1"})
+        mock_client.get.assert_called_with("/api/conversations/info", {"conversation": "conv-1"})
         assert result["fallback"] is True
         assert result["conversation"]["id"] == "conv-1"
 

@@ -20,27 +20,47 @@ from popcorn_cli.cli import (
 
 
 class TestDetectInstaller:
-    def test_detect_uv(self):
+    def test_detect_uv_tool(self):
         with patch("sys.executable", "/home/user/.local/share/uv/tools/popcorn-cli/bin/python"):
-            assert _detect_installer() == "uv"
+            assert _detect_installer() == "uv_tool"
 
     def test_detect_pipx(self):
         with patch("sys.executable", "/home/user/.local/share/pipx/venvs/popcorn-cli/bin/python"):
             assert _detect_installer() == "pipx"
 
+    def test_detect_uv_pip_fallback(self):
+        with (
+            patch("sys.executable", "/usr/local/bin/python"),
+            patch("shutil.which", side_effect=lambda x: "/usr/bin/uv" if x == "uv" else None),
+        ):
+            assert _detect_installer() == "uv_pip"
+
+    def test_detect_pip_fallback(self):
+        with (
+            patch("sys.executable", "/usr/local/bin/python"),
+            patch("shutil.which", side_effect=lambda x: "/usr/bin/pip" if x == "pip" else None),
+        ):
+            assert _detect_installer() == "pip"
+
     def test_detect_unknown(self):
-        with patch("sys.executable", "/usr/local/bin/python"):
+        with (
+            patch("sys.executable", "/usr/local/bin/python"),
+            patch("shutil.which", return_value=None),
+        ):
             assert _detect_installer() is None
 
     def test_detect_dev_environment(self):
-        with patch("sys.executable", "/Users/dev/popcorn-cli/.venv/bin/python"):
+        with (
+            patch("sys.executable", "/Users/dev/popcorn-cli/.venv/bin/python"),
+            patch("shutil.which", return_value=None),
+        ):
             assert _detect_installer() is None
 
 
 class TestCmdUpgrade:
     def test_upgrade_success(self, capsys):
         with (
-            patch("popcorn_cli.cli._detect_installer", return_value="uv"),
+            patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
             patch("subprocess.run") as mock_run,
             patch("subprocess.check_output", return_value=b"popcorn 0.5.6\n"),
         ):
@@ -48,13 +68,13 @@ class TestCmdUpgrade:
             with patch("popcorn_cli.cli.__version__", "0.5.5"):
                 cmd_upgrade(MagicMock())
         out = capsys.readouterr()
-        assert "Upgrading via uv" in out.err
+        assert "Upgrading via uv_tool" in out.err
         assert "0.5.5" in out.err
         assert "0.5.6" in out.err
 
     def test_upgrade_already_current(self, capsys):
         with (
-            patch("popcorn_cli.cli._detect_installer", return_value="uv"),
+            patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
             patch("subprocess.run") as mock_run,
             patch("subprocess.check_output", return_value=b"popcorn 0.5.5\n"),
         ):
@@ -188,7 +208,7 @@ class TestCheckAndUpdate:
             patch("popcorn_cli.cli._fetch_latest_version", return_value="0.5.7"),
             patch("popcorn_cli.cli._write_version_cache"),
             patch("popcorn_cli.cli.__version__", "0.5.5"),
-            patch("popcorn_cli.cli._detect_installer", return_value="uv"),
+            patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
             patch("subprocess.run", return_value=MagicMock(returncode=0)),
             patch("shutil.which", return_value="/usr/local/bin/popcorn"),
             patch("os.execvp") as mock_exec,
