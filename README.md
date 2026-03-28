@@ -56,7 +56,7 @@ popcorn channel list
 popcorn workspace inbox --unread
 
 # Watch a channel live
-popcorn channel watch '#general'
+popcorn message list '#general' --watch
 ```
 
 ## Commands
@@ -84,7 +84,6 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms]` | List channels or DMs |
-| `popcorn channel watch <conv> [--interval N] [--count N] [--max-wait N]` | Watch for new messages |
 | `popcorn channel create <name> [--type TYPE] [--members IDS] [--if-not-exists]` | Create a channel |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |

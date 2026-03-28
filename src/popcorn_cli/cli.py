@@ -38,7 +38,6 @@ Usage:
     popcorn channel kick <conversation> <user_id>
     popcorn channel leave <conversation>
     popcorn channel list [query] [--dms]
-    popcorn channel watch <conversation> [--interval N]
     popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
     popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
     popcorn commands --json
@@ -582,6 +581,10 @@ def cmd_search_users(args: argparse.Namespace) -> None:
 
 
 def cmd_list_messages(args: argparse.Namespace) -> None:
+    if getattr(args, "watch", False):
+        cmd_watch(args)
+        return
+
     client = _get_client(args)
     resp = operations.read_messages(
         client,
@@ -1778,7 +1781,7 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "delete download edit get list react search send threads" -- "$cur"))
             ;;
         channel)
-            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list watch" -- "$cur"))
+            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list" -- "$cur"))
             ;;
         webhook)
             COMPREPLY=($(compgen -W "create deliveries list" -- "$cur"))
@@ -1804,7 +1807,7 @@ _popcorn() {
     commands=(
         'api:Raw API call'
         'auth:Authentication commands'
-        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, watch)'
+        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)'
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
@@ -1832,7 +1835,7 @@ _popcorn() {
                 workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
-                channel) _values 'subcommand' archive create delete edit info invite join kick leave list watch ;;
+                channel) _values 'subcommand' archive create delete edit info invite join kick leave list ;;
                 webhook) _values 'subcommand' create deliveries list ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
@@ -1904,7 +1907,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
-    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, watch)",
+    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)",
     "webhook": "Manage webhooks (create, deliveries, list)",
     "vm": "Workspace VM commands (monitor, usage)",
     "auth": "Authentication commands (login, logout, status, token)",
@@ -2181,7 +2184,7 @@ Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
 
 Channels:
-  channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, watch)
+  channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)
 
 Webhooks:
   webhook         Manage webhooks
@@ -2346,6 +2349,19 @@ Other:
     msg_list_p.add_argument("--limit", type=int, help="Max messages (default 25)")
     msg_list_p.add_argument("--before", type=str, help="Message ID — show messages before this")
     msg_list_p.add_argument("--after", type=str, help="Message ID — show messages after this")
+    msg_list_p.add_argument("--watch", action="store_true", help="Tail new messages (polling)")
+    msg_list_p.add_argument(
+        "--interval", type=int, default=3, help="Poll interval in seconds (default 3, with --watch)"
+    )
+    msg_list_p.add_argument(
+        "--count", type=int, default=None, help="Exit after receiving N messages (with --watch)"
+    )
+    msg_list_p.add_argument(
+        "--max-wait",
+        type=float,
+        default=None,
+        help="Exit after N seconds even if no messages received (with --watch)",
+    )
 
     msg_react_p = msg_sub.add_parser("react", help="React to a message")
     msg_react_p.add_argument("conversation", help="Channel name (#general) or UUID")
@@ -2435,21 +2451,6 @@ Other:
     ch_list_p = ch_sub.add_parser("list", help="List channels")
     ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
     ch_list_p.add_argument("--dms", action="store_true", help="List DMs instead of channels")
-
-    ch_watch_p = ch_sub.add_parser("watch", help="Watch a channel for new messages")
-    ch_watch_p.add_argument("conversation", help="Channel name (#general) or UUID")
-    ch_watch_p.add_argument(
-        "--interval", type=int, default=3, help="Poll interval in seconds (default 3)"
-    )
-    ch_watch_p.add_argument(
-        "--count", type=int, default=None, help="Exit after receiving N messages"
-    )
-    ch_watch_p.add_argument(
-        "--max-wait",
-        type=float,
-        default=None,
-        help="Exit after N seconds even if no messages received",
-    )
 
     # --- Webhooks ---
 
@@ -2694,7 +2695,6 @@ def main() -> None:
                 "kick": cmd_kick,
                 "leave": cmd_leave_channel,
                 "list": cmd_channel_list,
-                "watch": cmd_watch,
             }
             handler = ch_sub.get(getattr(args, "channel_command", None) or "")
             if handler:
@@ -2702,7 +2702,7 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn channel"
-                    " [archive|create|delete|edit|info|invite|join|kick|leave|list|watch]"
+                    " [archive|create|delete|edit|info|invite|join|kick|leave|list]"
                 )
         elif args.command == "vm":
             vm_sub = {

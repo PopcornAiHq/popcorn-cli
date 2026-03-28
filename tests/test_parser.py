@@ -156,12 +156,16 @@ class TestReadingCommands:
         args = parser.parse_args(["message", "list", "#general", "--after", "msg456"])
         assert args.after == "msg456"
 
-    def test_watch_count(self, parser):
-        args = parser.parse_args(["channel", "watch", "#general", "--count", "5"])
+    def test_list_watch(self, parser):
+        args = parser.parse_args(["message", "list", "#general", "--watch"])
+        assert args.watch is True
+
+    def test_list_watch_count(self, parser):
+        args = parser.parse_args(["message", "list", "#general", "--watch", "--count", "5"])
         assert args.count == 5
 
-    def test_watch_max_wait(self, parser):
-        args = parser.parse_args(["channel", "watch", "#general", "--max-wait", "30"])
+    def test_list_watch_max_wait(self, parser):
+        args = parser.parse_args(["message", "list", "#general", "--watch", "--max-wait", "30"])
         assert args.max_wait == 30.0
 
     def test_channel_list(self, parser):
