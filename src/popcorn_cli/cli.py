@@ -1167,9 +1167,10 @@ def _poll_verify(
 _GITHUB_URL = "git+https://github.com/PopcornAiHq/popcorn-cli.git"
 
 _UPGRADE_COMMANDS: dict[str, list[str]] = {
-    "uv": ["uv", "tool", "install", "--force", _GITHUB_URL],
+    "uv_tool": ["uv", "tool", "install", "--force", _GITHUB_URL],
+    "uv_pip": ["uv", "pip", "install", "--python", sys.executable, "--upgrade", _GITHUB_URL],
     "pipx": ["pipx", "install", "--force", _GITHUB_URL],
-    "pip": ["pip", "install", "--upgrade", _GITHUB_URL],
+    "pip": [sys.executable, "-m", "pip", "install", "--upgrade", _GITHUB_URL],
 }
 
 
@@ -1183,16 +1184,23 @@ def _detect_installer() -> str | None:
     path = sys.executable
     if "/uv/" in path or "/pipx/" in path:
         if "/uv/" in path:
-            return "uv"
+            return "uv_tool"
         return "pipx"
     # Fallback: check resolved path (less reliable)
     from pathlib import Path as _Path
 
     resolved = str(_Path(path).resolve())
     if "/uv/" in resolved:
-        return "uv"
+        return "uv_tool"
     if "/pipx/" in resolved:
         return "pipx"
+    # Fallback: uv pip install (common in Docker) or plain pip
+    import shutil
+
+    if shutil.which("uv"):
+        return "uv_pip"
+    if shutil.which("pip"):
+        return "pip"
     return None
 
 
@@ -1206,6 +1214,7 @@ def cmd_upgrade(args: argparse.Namespace) -> None:
     if installer is None:
         print(
             "Could not detect how popcorn was installed. Run one of:\n"
+            f"  uv pip install --upgrade {_GITHUB_URL}\n"
             f"  uv tool install --force {_GITHUB_URL}\n"
             f"  pipx install --force {_GITHUB_URL}\n"
             f"  pip install --upgrade {_GITHUB_URL}",
