@@ -132,7 +132,7 @@ def read_messages(
 ) -> dict[str, Any]:
     """Read message history from a channel, DM, or thread."""
     conv_id = resolve_conversation(client, conversation)
-    params: dict[str, Any] = {"limit": limit, "conversation_id": conv_id}
+    params: dict[str, Any] = {"limit": limit, "conversation": conv_id}
     if latest:
         params["latest"] = latest
     if oldest:
