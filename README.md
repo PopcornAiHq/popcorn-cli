@@ -53,7 +53,7 @@ popcorn message search "deployment"
 popcorn channel list
 
 # Notifications
-popcorn inbox --unread
+popcorn workspace inbox --unread
 
 # Watch a channel live
 popcorn channel watch '#general'
@@ -81,7 +81,6 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn message delete <conv> <msg_id>` | Delete a message |
 | `popcorn message react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
 | `popcorn message search <query>` | Full-text message search |
-| `popcorn inbox [--unread\|--read] [--limit N]` | Notifications |
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms]` | List channels or DMs |
@@ -95,8 +94,6 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel edit <conv> [--name N] [--description D]` | Update channel name or description |
 | `popcorn channel archive <conv> [--undo]` | Archive/unarchive a channel |
 | `popcorn channel delete <conv>` | Delete a channel |
-| **Users** | |
-| `popcorn users list [query]` | List workspace users |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |
@@ -110,12 +107,14 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn auth logout` | Clear tokens |
 | `popcorn auth token` | Print token to stdout |
 | `popcorn env [name]` | Show or switch profile |
+| `popcorn workspace check-access <owner/repo>` | Check repo access |
+| `popcorn workspace inbox [--unread\|--read] [--limit N]` | Notifications |
 | `popcorn workspace list` | List workspaces |
 | `popcorn workspace switch [name\|uuid]` | Switch active workspace |
+| `popcorn workspace users [query]` | List workspace users |
 | `popcorn whoami` | Current user + workspace |
 | **Other** | |
 | `popcorn api <path> [-X METHOD] [-d DATA] [--raw]` | Raw API call |
-| `popcorn check-access <owner/repo>` | Check repo access |
 | `popcorn upgrade` | Upgrade to the latest version |
 | `popcorn version [--check]` | Show version / check for updates |
 | `popcorn commands` | Dump CLI schema as JSON |

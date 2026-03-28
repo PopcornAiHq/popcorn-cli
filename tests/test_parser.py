@@ -127,12 +127,12 @@ class TestReadingCommands:
         assert args.thread == "t-123"
 
     def test_inbox_unread(self, parser):
-        args = parser.parse_args(["inbox", "--unread"])
+        args = parser.parse_args(["workspace", "inbox", "--unread"])
         assert args.unread is True
 
     def test_inbox_read_unread_exclusive(self, parser):
         with pytest.raises(SystemExit):
-            parser.parse_args(["inbox", "--unread", "--read"])
+            parser.parse_args(["workspace", "inbox", "--unread", "--read"])
 
     def test_list_threads(self, parser):
         args = parser.parse_args(["message", "threads", "#general"])
@@ -174,9 +174,9 @@ class TestReadingCommands:
         assert args.dms is True
 
     def test_users_list(self, parser):
-        args = parser.parse_args(["users", "list"])
-        assert args.command == "users"
-        assert args.users_command == "list"
+        args = parser.parse_args(["workspace", "users"])
+        assert args.command == "workspace"
+        assert args.ws_command == "users"
 
 
 class TestWritingCommands:
@@ -310,19 +310,12 @@ class TestDidYouMean:
         assert "unknown command" in err
         assert "Did you mean" not in err
 
-    def test_inbox_typo(self, capsys):
-        parser = build_parser()
-        with pytest.raises(SystemExit):
-            parser.parse_args(["imbox"])
-        err = capsys.readouterr().err
-        assert "Did you mean" in err
-        assert "inbox" in err
-
 
 class TestCheckAccess:
     def test_check_access(self, parser):
-        args = parser.parse_args(["check-access", "acme/widgets"])
-        assert args.command == "check-access"
+        args = parser.parse_args(["workspace", "check-access", "acme/widgets"])
+        assert args.command == "workspace"
+        assert args.ws_command == "check-access"
         assert args.repo == "acme/widgets"
 
 

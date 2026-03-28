@@ -7,7 +7,11 @@ Usage:
     popcorn auth status
     popcorn auth token
     popcorn env [name]
-    popcorn workspace list|switch [name]
+    popcorn workspace check-access <owner/repo>
+    popcorn workspace inbox [--unread|--read] [--limit N]
+    popcorn workspace list
+    popcorn workspace switch [name]
+    popcorn workspace users [query]
     popcorn whoami
     popcorn site cancel <channel> [--item ID]
     popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check]
@@ -35,11 +39,8 @@ Usage:
     popcorn channel leave <conversation>
     popcorn channel list [query] [--dms]
     popcorn channel watch <conversation> [--interval N]
-    popcorn users list [query]
-    popcorn inbox [--unread|--read] [--limit N]
     popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
     popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
-    popcorn check-access <owner/repo>
     popcorn commands --json
     popcorn completion bash|zsh
     popcorn upgrade
@@ -1762,13 +1763,13 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "api auth channel check-access commands completion env help inbox message site upgrade users version vm webhook whoami workspace --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
+            COMPREPLY=($(compgen -W "api auth channel commands completion env help message site upgrade version vm webhook whoami workspace --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login logout status token" -- "$cur"))
             ;;
         workspace)
-            COMPREPLY=($(compgen -W "list switch" -- "$cur"))
+            COMPREPLY=($(compgen -W "check-access list switch users" -- "$cur"))
             ;;
         site)
             COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
@@ -1778,9 +1779,6 @@ _popcorn_completions() {
             ;;
         channel)
             COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list watch" -- "$cur"))
-            ;;
-        users)
-            COMPREPLY=($(compgen -W "list" -- "$cur"))
             ;;
         webhook)
             COMPREPLY=($(compgen -W "create deliveries list" -- "$cur"))
@@ -1810,14 +1808,12 @@ _popcorn() {
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
-        'inbox:Show notifications'
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
-        'users:User commands (list)'
         'vm:Workspace VM commands (monitor, usage)'
         'webhook:Manage webhooks'
         'whoami:Show current user and workspace'
-        'workspace:Workspace commands'
+        'workspace:Workspace commands (check-access, inbox, list, switch, users)'
     )
 
     _arguments \
@@ -1833,11 +1829,10 @@ _popcorn() {
         args)
             case "${words[1]}" in
                 auth) _values 'subcommand' login logout status token ;;
-                workspace) _values 'subcommand' list switch ;;
+                workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
                 channel) _values 'subcommand' archive create delete edit info invite join kick leave list watch ;;
-                users) _values 'subcommand' list ;;
                 webhook) _values 'subcommand' create deliveries list ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
@@ -1894,9 +1889,7 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
 _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
     "message": "messages",
-    "inbox": "messages",
     "channel": "channels",
-    "users": "users",
     "webhook": "webhooks",
     "vm": "vm",
     "auth": "auth",
@@ -1904,7 +1897,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "env": "auth",
     "whoami": "auth",
     "api": "other",
-    "check-access": "other",
     "completion": "other",
     "commands": "other",
 }
@@ -1912,17 +1904,14 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
-    "inbox": "Show notifications (mentions, replies, reactions)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, watch)",
-    "users": "User commands (list)",
     "webhook": "Manage webhooks (create, deliveries, list)",
     "vm": "Workspace VM commands (monitor, usage)",
     "auth": "Authentication commands (login, logout, status, token)",
-    "workspace": "List or switch workspaces",
+    "workspace": "Workspace commands (list, switch, users)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
-    "check-access": "Check repository access",
     "completion": "Generate shell completions (bash, zsh)",
     "commands": "Dump CLI schema as JSON for programmatic discovery",
     "upgrade": "Upgrade popcorn to the latest version",
@@ -2190,13 +2179,9 @@ Sites:
 
 Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
-  inbox           Show notifications
 
 Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, watch)
-
-Users:
-  users           User commands (list)
 
 Webhooks:
   webhook         Manage webhooks
@@ -2206,13 +2191,12 @@ VM:
 
 Auth & identity:
   auth            Authentication commands
-  workspace       Workspace commands
+  workspace       Workspace commands (check-access, inbox, list, switch, users)
   env             Show or switch environment
   whoami          Show current user and workspace
 
 Other:
   api             Raw API call (like gh api)
-  check-access    Check repo access
   completion      Generate shell completions
   commands        Dump CLI schema as JSON"""
 
@@ -2259,22 +2243,27 @@ Other:
 
     ws_parser = sub.add_parser("workspace", help=_h)
     ws_sub = ws_parser.add_subparsers(dest="ws_command")
+
+    ws_check_p = ws_sub.add_parser("check-access", help="Check repository access")
+    ws_check_p.add_argument("repo", help="Repository (owner/repo)")
+
+    ws_inbox_p = ws_sub.add_parser("inbox", help="Show notifications")
+    ws_inbox_grp = ws_inbox_p.add_mutually_exclusive_group()
+    ws_inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
+    ws_inbox_grp.add_argument("--read", action="store_true", help="Show only read")
+    ws_inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
+
     ws_sub.add_parser("list", help="List available workspaces")
     switch_p = ws_sub.add_parser("switch", help="Switch active workspace")
     switch_p.add_argument("workspace", nargs="?", default=None, help="Workspace name or UUID")
+
+    ws_users_p = ws_sub.add_parser("users", help="List workspace users")
+    ws_users_p.add_argument("query", nargs="?", default="", help="Filter query")
 
     env_p = sub.add_parser("env", help=_h)
     env_p.add_argument("target_env", nargs="?", default=None, help="Profile name to switch to")
 
     sub.add_parser("whoami", help=_h)
-
-    # --- Inbox (top-level) ---
-
-    inbox_p = sub.add_parser("inbox", help=_h)
-    inbox_grp = inbox_p.add_mutually_exclusive_group()
-    inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
-    inbox_grp.add_argument("--read", action="store_true", help="Show only read")
-    inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
 
     # --- Site group ---
 
@@ -2485,14 +2474,6 @@ Other:
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
 
-    # --- Users ---
-
-    users_parser = sub.add_parser("users", help=_h)
-    users_sub = users_parser.add_subparsers(dest="users_command")
-
-    users_list_p = users_sub.add_parser("list", help="List workspace users")
-    users_list_p.add_argument("query", nargs="?", default="", help="Filter query")
-
     # --- Escape hatch ---
 
     api_p = sub.add_parser("api", help=_h)
@@ -2517,11 +2498,6 @@ Other:
         action="store_true",
         help="Output raw JSON without envelope (even with --json)",
     )
-
-    # --- Integrations ---
-
-    check_ra_p = sub.add_parser("check-access", help=_h)
-    check_ra_p.add_argument("repo", help="Repository (owner/repo)")
 
     # --- VM (workspace VM introspection) ---
 
@@ -2578,11 +2554,9 @@ Other:
 
 _COMMANDS = {
     "whoami": cmd_whoami,
-    "inbox": cmd_inbox,
     "env": cmd_env,
     "completion": cmd_completion,
     "api": cmd_api,
-    "check-access": cmd_check_access,
     "commands": cmd_commands,
     "upgrade": cmd_upgrade,
     "version": cmd_version,
@@ -2590,7 +2564,7 @@ _COMMANDS = {
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
 _ALL_COMMAND_NAMES.extend(
-    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel", "users"]
+    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel"]
 )
 
 
@@ -2658,12 +2632,20 @@ def main() -> None:
             else:
                 raise PopcornError("Usage: popcorn auth [login|logout|status|token]")
         elif args.command == "workspace":
-            sub = {"list": cmd_workspace_list, "switch": cmd_workspace_switch}
+            sub = {
+                "check-access": cmd_check_access,
+                "inbox": cmd_inbox,
+                "list": cmd_workspace_list,
+                "switch": cmd_workspace_switch,
+                "users": cmd_search_users,
+            }
             handler = sub.get(getattr(args, "ws_command", None) or "")
             if handler:
                 handler(args)
             else:
-                raise PopcornError("Usage: popcorn workspace [list|switch]")
+                raise PopcornError(
+                    "Usage: popcorn workspace [check-access|inbox|list|switch|users]"
+                )
         elif args.command == "webhook":
             cmd_webhook(args)
         elif args.command == "site":
@@ -2732,15 +2714,6 @@ def main() -> None:
                 handler(args)
             else:
                 raise PopcornError("Usage: popcorn vm [monitor|usage]")
-        elif args.command == "users":
-            users_sub = {
-                "list": cmd_search_users,
-            }
-            handler = users_sub.get(getattr(args, "users_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError("Usage: popcorn users [list]")
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:
