@@ -1814,7 +1814,7 @@ _popcorn() {
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
-        'webhook:Manage webhooks'
+        'webhook:Webhook commands (create, deliveries, list)'
         'whoami:Show current user and workspace'
         'workspace:Workspace commands (check-access, inbox, list, switch, users)'
     )
@@ -1908,10 +1908,10 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)",
-    "webhook": "Manage webhooks (create, deliveries, list)",
-    "vm": "Workspace VM commands (monitor, usage)",
-    "auth": "Authentication commands (login, logout, status, token)",
-    "workspace": "Workspace commands (list, switch, users)",
+    "webhook": "Webhook commands (create, deliveries, list)",
+    "vm": "VM commands (monitor, usage)",
+    "auth": "Auth commands (login, logout, status, token)",
+    "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -2187,13 +2187,13 @@ Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)
 
 Webhooks:
-  webhook         Manage webhooks
+  webhook         Webhook commands (create, deliveries, list)
 
 VM:
-  vm              Workspace VM commands (monitor, usage)
+  vm              VM commands (monitor, usage)
 
 Auth & identity:
-  auth            Authentication commands
+  auth            Auth commands (login, logout, status, token)
   workspace       Workspace commands (check-access, inbox, list, switch, users)
   env             Show or switch environment
   whoami          Show current user and workspace
