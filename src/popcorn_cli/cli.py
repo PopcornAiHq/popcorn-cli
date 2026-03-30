@@ -1938,8 +1938,12 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def cmd_commands(_args: argparse.Namespace) -> None:
+def cmd_commands(args: argparse.Namespace) -> None:
     """Dump full CLI schema as JSON for agent bootstrapping."""
+    groups_filter: set[str] | None = None
+    if raw := getattr(args, "groups", None):
+        groups_filter = {g.strip().lower() for g in raw.split(",") if g.strip()}
+
     parser = build_parser()
     # Find the subparsers action
     sub_action = None
@@ -1980,6 +1984,9 @@ def cmd_commands(_args: argparse.Namespace) -> None:
                 if cmd_args:
                     cmd["arguments"] = cmd_args
             commands.append(cmd)
+
+    if groups_filter:
+        commands = [c for c in commands if c.get("name", "").lower() in groups_filter]
 
     global_flags = _introspect_parser(parser)
 
@@ -2552,7 +2559,12 @@ Other:
     comp_p = sub.add_parser("completion", help=_h)
     comp_p.add_argument("shell", choices=["bash", "zsh"], help="Shell type")
 
-    sub.add_parser("commands", help=_h)
+    commands_p = sub.add_parser("commands", help=_h)
+    commands_p.add_argument(
+        "--groups",
+        type=str,
+        help="Comma-separated command groups to include",
+    )
     sub.add_parser("help", help=_h)
     version_p = sub.add_parser("version", help=_h)
     version_p.add_argument("--check", action="store_true", help="Check for updates")
