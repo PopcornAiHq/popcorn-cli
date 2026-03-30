@@ -38,8 +38,9 @@ check: lint typecheck test  ## Run all checks (lint + typecheck + test)
 
 # ── Version ──────────────────────────────────────────────────────────
 
-bump:  ## Bump version + tag: make bump v=0.2.0
-	@[ "$(v)" ] || { echo "Usage: make bump v=X.Y.Z"; exit 1; }
+bump:  ## Bump version + tag: make bump [v=X.Y.Z] (patch if omitted)
+	$(eval v := $(or $(v),$(shell python3 -c "import re, pathlib; m=re.search(r'version = \"(.+?)\"', pathlib.Path('pyproject.toml').read_text()); p=m.group(1).split('.'); p[-1]=str(int(p[-1])+1); print('.'.join(p))")))
+	@[ "$(v)" ] || { echo "Could not determine version"; exit 1; }
 	@echo "Bumping to $(v) ..."
 	@sed -i '' 's/^version = ".*"/version = "$(v)"/' pyproject.toml
 	@uv lock -q

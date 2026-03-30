@@ -77,7 +77,8 @@ Builds the wheel and verifies it installs correctly with each package manager in
 - **Major**: never bump unless explicitly told
 
 ```bash
-make bump v=X.Y.Z    # Updates pyproject.toml + uv lock
+make bump             # Auto-patch bump (0.7.4 → 0.7.5)
+make bump v=X.Y.Z    # Explicit version
 ```
 
 Version lives only in `pyproject.toml` — runtime reads it via `importlib.metadata`.
@@ -87,7 +88,7 @@ A pre-commit hook (`scripts/check-version-bump.sh`) warns if `src/` files are st
 ## Publishing
 
 ```bash
-make bump v=X.Y.Z
+make bump             # or: make bump v=X.Y.Z
 uv build
 uv publish
 ```
