@@ -1370,9 +1370,10 @@ def _check_and_update() -> None:
         return
 
     _status("✓ Updated")
-    # Re-exec with new version
+    # Re-exec with new version (skip update check to avoid infinite loop)
     popcorn_path = shutil.which("popcorn")
     if popcorn_path:
+        os.environ["POPCORN_NO_UPDATE_CHECK"] = "1"
         os.execvp(popcorn_path, ["popcorn", *sys.argv[1:]])
 
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from unittest.mock import MagicMock, patch
 
@@ -216,6 +217,9 @@ class TestCheckAndUpdate:
             _check_and_update()
         mock_exec.assert_called_once()
         assert mock_exec.call_args[0][1] == ["popcorn", "whoami"]
+        # Verify env var set to prevent infinite re-exec loop
+        assert os.environ.get("POPCORN_NO_UPDATE_CHECK") == "1"
+        monkeypatch.delenv("POPCORN_NO_UPDATE_CHECK", raising=False)
 
     def test_outdated_unknown_installer(self, monkeypatch):
         monkeypatch.setattr("popcorn_cli.cli._quiet", False)
