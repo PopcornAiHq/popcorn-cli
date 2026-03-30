@@ -947,6 +947,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             args.conversation,
             limit=getattr(args, "limit", 50),
             since=getattr(args, "since", None),
+            after=getattr(args, "after", None),
             status=getattr(args, "status", None),
         )
         deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
@@ -2485,6 +2486,9 @@ Other:
     wh_del.add_argument("conversation", help="Channel name or UUID")
     wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
     wh_del.add_argument("--since", type=str, help="ISO timestamp — deliveries after this")
+    wh_del.add_argument(
+        "--after", type=str, help="Delivery UUID — deliveries after this ID (cursor)"
+    )
     wh_del.add_argument("--status", type=str, help="Filter: completed,ignored,failed,processing")
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")

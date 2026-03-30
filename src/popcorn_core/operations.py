@@ -535,6 +535,7 @@ def list_webhook_deliveries(
     conversation: str,
     limit: int = 50,
     since: str | None = None,
+    after: str | None = None,
     status: str | None = None,
 ) -> dict[str, Any]:
     """List webhook deliveries for a conversation."""
@@ -542,6 +543,8 @@ def list_webhook_deliveries(
     params: dict[str, Any] = {"conversation": conv_id, "limit": limit}
     if since:
         params["since"] = since
+    if after:
+        params["after"] = after
     if status:
         params["status"] = status
     return client.get("/api/webhooks/deliveries", params)
