@@ -1,6 +1,6 @@
 [project]
 name = "popcorn-cli"
-version = "0.7.3"
+version = "0.7.5"
 description = "CLI for the Popcorn API"
 readme = "README.md"
 license = "MIT"
