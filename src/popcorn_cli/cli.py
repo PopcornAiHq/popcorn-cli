@@ -2011,10 +2011,11 @@ def _strip_hash(channel: str) -> str:
 def cmd_vm_trace(args: argparse.Namespace) -> None:
     client = _get_client(args)
     channel = _strip_hash(args.channel)
+    queue_id = f"project-{channel}"
     raw = getattr(args, "raw", False)
 
     if getattr(args, "list", False):
-        resp = operations.vm_trace_list(client, channel, limit=args.limit)
+        resp = operations.vm_trace_list(client, queue_id, limit=args.limit)
         if raw:
             print(_json_ok(resp))
         else:
@@ -2023,14 +2024,14 @@ def cmd_vm_trace(args: argparse.Namespace) -> None:
         return
 
     if getattr(args, "watch", False):
-        _vm_trace_watch(client, channel, args)
+        _vm_trace_watch(client, queue_id, args)
         return
 
     if args.item_id:
-        resp = operations.vm_trace(client, channel, args.item_id)
+        resp = operations.vm_trace(client, queue_id, args.item_id)
     else:
         status_filter = getattr(args, "status", None)
-        resp = operations.vm_trace_latest(client, channel, status=status_filter)
+        resp = operations.vm_trace_latest(client, queue_id, status=status_filter)
         if resp is None:
             msg = f"No items found for {channel}"
             if status_filter:
@@ -2147,13 +2148,14 @@ def cmd_vm_usage(args: argparse.Namespace) -> None:
 def cmd_vm_cancel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     channel = _strip_hash(args.channel)
+    queue_id = f"project-{channel}"
     item_id = getattr(args, "item", None)
 
     if item_id:
-        operations.vm_cancel(client, channel, item_id)
+        operations.vm_cancel(client, queue_id, item_id)
         print(f"Cancelled: {item_id} in {channel}")
     else:
-        resp = operations.vm_cancel_current(client, channel)
+        resp = operations.vm_cancel_current(client, queue_id)
         if resp is None:
             print(f"No active task in {channel}", file=sys.stderr)
             sys.exit(1)

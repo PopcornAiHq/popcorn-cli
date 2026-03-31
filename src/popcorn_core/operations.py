@@ -291,9 +291,14 @@ def vm_trace_list(client: APIClient, queue_id: str, limit: int = 10) -> dict[str
     )
 
 
+def _normalize_item_id(item_id: str) -> str:
+    """Strip queue prefix from item_id (e.g. 'project-foo/slug' → 'slug')."""
+    return item_id.split("/")[-1] if "/" in item_id else item_id
+
+
 def vm_trace(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
     """Fetch full execution trace for a work item."""
-    return client.get(f"/api/appchannels/trace/{queue_id}/{item_id}", {})
+    return client.get(f"/api/appchannels/trace/{queue_id}/{_normalize_item_id(item_id)}", {})
 
 
 def vm_trace_latest(
@@ -313,12 +318,14 @@ def vm_trace_latest(
         return None
     latest = items[0]
     item_id = latest["item_id"]
-    return client.get(f"/api/appchannels/trace/{queue_id}/{item_id}", {})
+    return client.get(f"/api/appchannels/trace/{queue_id}/{_normalize_item_id(item_id)}", {})
 
 
 def vm_cancel(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
     """Cancel a specific work item."""
-    return client.post(f"/api/appchannels/queues/{queue_id}/items/{item_id}/cancel")
+    return client.post(
+        f"/api/appchannels/queues/{queue_id}/items/{_normalize_item_id(item_id)}/cancel"
+    )
 
 
 def vm_cancel_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
@@ -334,7 +341,9 @@ def vm_cancel_current(client: APIClient, queue_id: str) -> dict[str, Any] | None
     if not processing:
         return None
     item_id = processing[0]["item_id"]
-    return client.post(f"/api/appchannels/queues/{queue_id}/items/{item_id}/cancel")
+    return client.post(
+        f"/api/appchannels/queues/{queue_id}/items/{_normalize_item_id(item_id)}/cancel"
+    )
 
 
 def vm_rollback(
