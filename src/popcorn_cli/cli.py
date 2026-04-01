@@ -14,10 +14,10 @@ Usage:
     popcorn workspace users [query]
     popcorn whoami
     popcorn site cancel <channel> [--item ID]
-    popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check]
-    popcorn site log [channel] [--limit N]
+    popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check] [--target T]
+    popcorn site log [channel] [--limit N] [--target T]
     popcorn site rollback <channel> [--version N]
-    popcorn site status [channel]
+    popcorn site status [channel] [--target T]
     popcorn site trace <channel> [item] [--list] [--watch] [--raw]
     popcorn message delete <conversation> <message_id>
     popcorn message download <file_key> [-o PATH]
@@ -94,6 +94,13 @@ from popcorn_core.errors import (
     APIError,
     AuthError,
     PopcornError,
+)
+from popcorn_core.local_state import (
+    load_local_state,
+    make_target,
+    resolve_target,
+    save_local_state,
+    upsert_target,
 )
 from popcorn_core.validation import extract
 
@@ -966,11 +973,24 @@ def cmd_webhook(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _write_local_json(path: Path, conversation_id: str, site_name: str) -> None:
-    """Persist deploy state to .popcorn.local.json."""
-    path.write_text(
-        json.dumps({"conversation_id": conversation_id, "site_name": site_name}, indent=2)
+def _save_deploy_target(
+    conversation_id: str,
+    site_name: str,
+    workspace_id: str,
+    workspace_name: str = "",
+    profile: str = "",
+) -> None:
+    """Persist deploy target to .popcorn.local.json (v2 format)."""
+    state = load_local_state()
+    target = make_target(
+        workspace_id=workspace_id,
+        conversation_id=conversation_id,
+        site_name=site_name,
+        workspace_name=workspace_name,
+        profile=profile,
     )
+    upsert_target(state, target)
+    save_local_state(state)
 
 
 def _validate_channel(client: APIClient, conversation_id: str) -> bool:
@@ -989,21 +1009,28 @@ def _validate_channel(client: APIClient, conversation_id: str) -> bool:
 
 
 def _resolve_conversation_id_from_local(args: argparse.Namespace, client: APIClient) -> str:
-    """Resolve conversation_id from channel arg or .popcorn.local.json."""
+    """Resolve conversation_id from channel arg, --target, or .popcorn.local.json."""
     channel = getattr(args, "channel", None)
     if channel:
         from popcorn_core.resolve import resolve_conversation
 
         return resolve_conversation(client, channel)
 
-    local_json = Path(".popcorn.local.json")
-    if local_json.exists():
-        data = json.loads(local_json.read_text())
-        cid = data.get("conversation_id")
-        if cid:
-            return str(cid)
+    # Try .popcorn.local.json
+    state = load_local_state()
+    target_name = getattr(args, "target", None) or ""
+    target = resolve_target(
+        state,
+        workspace_id=client.profile.workspace_id,
+        target_name=target_name,
+    )
+    if target and target.conversation_id:
+        return target.conversation_id
 
-    raise PopcornError("No channel specified and no .popcorn.local.json found")
+    raise PopcornError(
+        "No channel specified and no deploy target found.\n"
+        "  Run 'popcorn site deploy' first, or specify a channel."
+    )
 
 
 def _create_with_collision_retry(
@@ -1408,17 +1435,33 @@ def cmd_pop(args: argparse.Namespace) -> None:
         if verbose and not json_mode:
             print(msg, file=sys.stderr)
 
-    # Read .popcorn.local.json
-    local_json = Path(".popcorn.local.json")
-    conversation_id = None
-    if local_json.exists():
-        data = json.loads(local_json.read_text())
-        conversation_id = data.get("conversation_id")
+    # Resolve existing deploy target from .popcorn.local.json
+    local_state = load_local_state()
+    target_name = getattr(args, "target", None) or ""
+    existing = resolve_target(
+        local_state,
+        workspace_id=client.profile.workspace_id,
+        target_name=target_name,
+    )
+    conversation_id = existing.conversation_id if existing else None
 
-    # Validate existing channel — detect stale .popcorn.local.json
+    # Workspace mismatch check
+    if (
+        existing
+        and existing.workspace_id
+        and client.profile.workspace_id
+        and existing.workspace_id != client.profile.workspace_id
+    ):
+        ws_label = existing.workspace_name or existing.workspace_id
+        raise PopcornError(
+            f"Target '{existing.site_name}' belongs to workspace '{ws_label}'.\n"
+            f"  You are currently in workspace '{client.profile.workspace_name}'.\n"
+            f"  Switch workspace or use --name to create a new deploy target."
+        )
+
+    # Validate existing channel — detect stale target
     if conversation_id and not _validate_channel(client, conversation_id):
         if force:
-            local_json.unlink(missing_ok=True)
             conversation_id = None
         elif json_mode:
             print(
@@ -1438,12 +1481,10 @@ def cmd_pop(args: argparse.Namespace) -> None:
             answer = input("Channel no longer exists. Create new? [Y/n] ")
             if answer.strip().lower() in ("n", "no"):
                 return
-            local_json.unlink(missing_ok=True)
             conversation_id = None
         else:
             # Non-interactive: auto-recreate like --force so agents don't hang
             _status("Stale channel configuration — auto-recreating.")
-            local_json.unlink(missing_ok=True)
             conversation_id = None
 
     # Create tarball
@@ -1462,8 +1503,14 @@ def cmd_pop(args: argparse.Namespace) -> None:
             if site_name != (args.name or f"pop-{Path.cwd().name}"):
                 suggested_name = site_name
 
-            # Persist conversation_id immediately so retries don't hit 409
-            _write_local_json(local_json, conversation_id, site_name)
+            # Persist target immediately so retries don't hit 409
+            _save_deploy_target(
+                conversation_id,
+                site_name,
+                workspace_id=client.profile.workspace_id,
+                workspace_name=client.profile.workspace_name,
+                profile=cfg.default_profile if (cfg := load_config()) else "",
+            )
 
         if not conversation_id:
             raise PopcornError("No conversation_id available for deploy")
@@ -1518,7 +1565,13 @@ def cmd_pop(args: argparse.Namespace) -> None:
 
     result_conv_id = str(extract(result, "conversation_id", label="deploy_publish"))
     result_site_name = extract(result, "site_name", label="deploy_publish")
-    _write_local_json(local_json, result_conv_id, result_site_name)
+    _save_deploy_target(
+        result_conv_id,
+        result_site_name,
+        workspace_id=client.profile.workspace_id,
+        workspace_name=client.profile.workspace_name,
+        profile=cfg.default_profile if (cfg := load_config()) else "",
+    )
 
     # Add to .gitignore
     gitignore = Path(".gitignore")
@@ -2314,10 +2367,16 @@ Other:
     site_deploy_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
     site_deploy_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
     site_deploy_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
+    site_deploy_p.add_argument(
+        "--target", type=str, help="Named deploy target from .popcorn.local.json"
+    )
 
     site_log_p = site_sub.add_parser("log", help="Show site version history")
     site_log_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
     site_log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
+    site_log_p.add_argument(
+        "--target", type=str, help="Named deploy target from .popcorn.local.json"
+    )
 
     site_rollback_p = site_sub.add_parser("rollback", help="Roll back site to previous version")
     site_rollback_p.add_argument("channel", help="Channel/site name")
@@ -2326,6 +2385,9 @@ Other:
 
     site_status_p = site_sub.add_parser("status", help="Show site deployment status")
     site_status_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    site_status_p.add_argument(
+        "--target", type=str, help="Named deploy target from .popcorn.local.json"
+    )
 
     site_trace_p = site_sub.add_parser("trace", help="Show agent execution trace")
     site_trace_p.add_argument("channel", help="Channel/site name")

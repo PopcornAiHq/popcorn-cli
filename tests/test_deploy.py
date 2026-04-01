@@ -13,10 +13,43 @@ import pytest
 from popcorn_cli.cli import build_parser
 from popcorn_core import operations
 from popcorn_core.archive import create_tarball
+from popcorn_core.config import Config, Profile
 from popcorn_core.errors import APIError, PopcornError
+from popcorn_core.local_state import LocalState, Target, save_local_state
 
 # Shared mock response for site-status (appended to post side_effect lists)
 _SITE_STATUS = {"url": "https://pop-test.popcorn.ai", "site_name": "pop-test", "version": 1}
+
+# Default workspace for tests (matches conftest.py profile)
+_WS_ID = "ws-0000-0000-0000-000000000000"
+_WS_NAME = "Test Workspace"
+
+
+def _write_v2_local(tmp_path: Path, conversation_id: str, site_name: str) -> None:
+    """Write a v2 .popcorn.local.json for tests."""
+    state = LocalState(
+        default_target=site_name,
+        targets={
+            site_name: Target(
+                workspace_id=_WS_ID,
+                workspace_name=_WS_NAME,
+                conversation_id=conversation_id,
+                site_name=site_name,
+                profile="default",
+            )
+        },
+    )
+    save_local_state(state, tmp_path / ".popcorn.local.json")
+
+
+def _mock_load_config():
+    """Return a Config with a default profile matching the test workspace."""
+    cfg = Config(default_profile="default")
+    cfg.profiles["default"] = Profile(
+        workspace_id=_WS_ID,
+        workspace_name=_WS_NAME,
+    )
+    return cfg
 
 
 class TestDeployCreate:
@@ -403,6 +436,7 @@ class TestPop:
         args.env = None
         args.workspace = None
         args.force = False
+        args.target = None
         return args
 
     def test_pop_full_flow(self, mock_client, tmp_path, monkeypatch, pop_args):
@@ -434,14 +468,16 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(pop_args)
 
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
-        assert local["conversation_id"] == "conv-1"
-        assert local["site_name"] == "pop-test"
+        assert local["version"] == 2
+        assert "pop-test" in local["targets"]
+        assert local["targets"]["pop-test"]["conversation_id"] == "conv-1"
 
         gitignore = (tmp_path / ".gitignore").read_text()
         assert ".popcorn.local.json" in gitignore
@@ -480,6 +516,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
@@ -491,9 +528,7 @@ class TestPop:
 
     def test_pop_existing_site(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-existing", "site_name": "pop-test"})
-        )
+        _write_v2_local(tmp_path, "conv-existing", "pop-test")
 
         mock_client.get.side_effect = [
             {
@@ -520,6 +555,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
@@ -582,13 +618,14 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(pop_args)
 
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
-        assert local["conversation_id"] == "conv-1"
+        assert local["targets"]["pop-test-abcd"]["conversation_id"] == "conv-1"
 
     def test_pop_name_flag(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)
@@ -622,6 +659,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
@@ -640,9 +678,7 @@ class TestPop:
         """--force auto-deletes stale config and creates new channel."""
         monkeypatch.chdir(tmp_path)
         pop_args.force = True
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "dead-conv", "site_name": "old-site"})
-        )
+        _write_v2_local(tmp_path, "dead-conv", "old-site")
         (tmp_path / ".gitignore").write_text("")
 
         # _validate_channel returns False (stale), then fresh create flow
@@ -671,22 +707,21 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
             cmd_pop(pop_args)
 
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
-        assert local["conversation_id"] == "conv-new"
+        assert local["targets"]["pop-test"]["conversation_id"] == "conv-new"
 
     def test_pop_stale_config_no_force_auto_recreates(
         self, mock_client, tmp_path, monkeypatch, pop_args
     ):
         """Non-interactive + stale config auto-recreates like --force."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "dead-conv", "site_name": "old-site"})
-        )
+        _write_v2_local(tmp_path, "dead-conv", "old-site")
         (tmp_path / ".gitignore").write_text("")
 
         mock_client.get.side_effect = APIError("Not found", status_code=404)
@@ -714,6 +749,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("sys.stdin") as mock_stdin,
         ):
             mock_stdin.isatty.return_value = False
@@ -722,14 +758,12 @@ class TestPop:
             cmd_pop(pop_args)
 
         local = json.loads((tmp_path / ".popcorn.local.json").read_text())
-        assert local["conversation_id"] == "conv-new"
+        assert local["targets"]["pop-test"]["conversation_id"] == "conv-new"
 
     def test_pop_publish_vm_error_surfaced(self, mock_client, tmp_path, monkeypatch, pop_args):
         """VM error from publish body is surfaced to user."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
         mock_client.get.return_value = {
             "conversation": {"id": "conv-1", "site": {"name": "my-site"}},
@@ -761,9 +795,7 @@ class TestPop:
     def test_pop_502_retry(self, mock_client, tmp_path, monkeypatch, pop_args):
         """502 on publish triggers retry."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
         (tmp_path / ".gitignore").write_text("")
 
         mock_client.get.side_effect = [
@@ -792,6 +824,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("time.sleep"),
         ):
             from popcorn_cli.cli import cmd_pop
@@ -805,9 +838,7 @@ class TestPop:
         """--force passes force=True to deploy_publish."""
         monkeypatch.chdir(tmp_path)
         pop_args.force = True
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
         (tmp_path / ".gitignore").write_text("")
 
         mock_client.get.side_effect = [
@@ -835,6 +866,7 @@ class TestPop:
             patch("popcorn_core.operations.deploy_upload"),
             patch("os.unlink"),
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
         ):
             from popcorn_cli.cli import cmd_pop
 
@@ -848,9 +880,7 @@ class TestPop:
 class TestStatus:
     def test_status_from_local_json(self, mock_client, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
         mock_client.get.return_value = {
             "site_name": "my-site",
@@ -863,6 +893,7 @@ class TestStatus:
 
         args = MagicMock()
         args.channel = None
+        args.target = None
         args.json = False
         args.env = None
         args.workspace = None
@@ -874,9 +905,7 @@ class TestStatus:
 
     def test_status_fallback(self, mock_client, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
         mock_client.get.side_effect = [
             APIError("Not found", status_code=404),
@@ -885,6 +914,7 @@ class TestStatus:
 
         args = MagicMock()
         args.channel = None
+        args.target = None
         args.json = False
         args.env = None
         args.workspace = None
@@ -902,6 +932,7 @@ class TestStatus:
         monkeypatch.chdir(tmp_path)
         args = MagicMock()
         args.channel = None
+        args.target = None
         args.json = False
         args.env = None
         args.workspace = None
@@ -915,9 +946,7 @@ class TestStatus:
 class TestLog:
     def test_log_versions(self, mock_client, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
         mock_client.get.return_value = {
             "versions": [
@@ -940,6 +969,7 @@ class TestLog:
 
         args = MagicMock()
         args.channel = None
+        args.target = None
         args.json = False
         args.env = None
         args.workspace = None
@@ -957,14 +987,13 @@ class TestLog:
 
     def test_log_fallback(self, mock_client, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
         mock_client.get.side_effect = APIError("Not found", status_code=404)
 
         args = MagicMock()
         args.channel = None
+        args.target = None
         args.json = False
         args.env = None
         args.workspace = None

@@ -3,12 +3,49 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from popcorn_cli.cli import _poll_verify, build_parser
+from popcorn_core.config import Config, Profile
 from popcorn_core.errors import EXIT_UNHEALTHY, APIError
+from popcorn_core.local_state import LocalState, Target, save_local_state
+
+# Default workspace for tests (matches conftest.py profile)
+_WS_ID = "ws-0000-0000-0000-000000000000"
+_WS_NAME = "Test Workspace"
+
+
+def _write_v2_local(tmp_path: Path, conversation_id: str, site_name: str) -> None:
+    state = LocalState(
+        default_target=site_name,
+        targets={
+            site_name: Target(
+                workspace_id=_WS_ID,
+                workspace_name=_WS_NAME,
+                conversation_id=conversation_id,
+                site_name=site_name,
+                profile="default",
+            )
+        },
+    )
+    save_local_state(state, tmp_path / ".popcorn.local.json")
+
+
+def _mock_load_config():
+    cfg = Config(default_profile="default")
+    cfg.profiles["default"] = Profile(workspace_id=_WS_ID, workspace_name=_WS_NAME)
+    return cfg
+
+
+def _make_mock_client():
+    """Create a MagicMock client with proper profile for workspace matching."""
+    client = MagicMock()
+    client.profile = Profile(workspace_id=_WS_ID, workspace_name=_WS_NAME)
+    return client
+
 
 # Shared mocks
 _PUBLISH_RESULT = {
@@ -30,11 +67,9 @@ class TestSkipCheck:
     def test_skip_check_omits_verify_from_payload(self, tmp_path, monkeypatch):
         """--skip-check should not send verify in publish payload."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.get.side_effect = [
             {},  # validate_channel
             _SITE_STATUS,  # get_site_status
@@ -48,6 +83,7 @@ class TestSkipCheck:
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
             patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("os.unlink"),
         ):
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
@@ -66,11 +102,9 @@ class TestSkipCheck:
     def test_no_skip_check_sends_verify(self, tmp_path, monkeypatch):
         """Without --skip-check, verify=true should be in publish payload."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.get.side_effect = [
             {},  # validate_channel
             _SITE_STATUS,  # get_site_status
@@ -84,6 +118,7 @@ class TestSkipCheck:
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
             patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("os.unlink"),
         ):
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
@@ -292,11 +327,9 @@ class TestPollVerifyEdgeCases:
     def test_skip_check_json_omits_verify_key(self, tmp_path, monkeypatch, capsys):
         """--skip-check --json output should not include verify key."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.get.side_effect = [
             {},  # validate_channel
             _SITE_STATUS,
@@ -310,6 +343,7 @@ class TestPollVerifyEdgeCases:
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
             patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("os.unlink"),
         ):
             (tmp_path / "t.tar.gz").write_bytes(b"fake")
@@ -332,11 +366,9 @@ class TestCmdPopVerifyIntegration:
     def _run_pop(self, tmp_path, monkeypatch, publish_result, verify_responses, capsys):
         """Helper to run cmd_pop with mocked responses."""
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         get_responses = [{}]  # validate_channel
         if isinstance(verify_responses, list):
             get_responses.extend(verify_responses)
@@ -351,6 +383,7 @@ class TestCmdPopVerifyIntegration:
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
             patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("os.unlink"),
             patch("time.sleep"),
         ):
@@ -445,11 +478,9 @@ class TestCmdPopVerifyIntegration:
 
     def test_json_output_includes_verify(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / ".popcorn.local.json").write_text(
-            json.dumps({"conversation_id": "conv-1", "site_name": "my-site"})
-        )
+        _write_v2_local(tmp_path, "conv-1", "my-site")
 
-        mock_client = MagicMock()
+        mock_client = _make_mock_client()
         mock_client.get.side_effect = [
             {},  # validate_channel
             {
@@ -472,6 +503,7 @@ class TestCmdPopVerifyIntegration:
             patch("popcorn_cli.cli._get_client", return_value=mock_client),
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
             patch("popcorn_cli.cli.operations.deploy_upload"),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
             patch("os.unlink"),
             patch("time.sleep"),
         ):
