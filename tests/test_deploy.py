@@ -506,9 +506,9 @@ class TestPop:
             },
         ]
         mock_client.get.return_value = {
-            "url": "https://pop-test.popcorn.ai",
-            "site_name": "pop-test",
-            "version": 1,
+            "conversation": {
+                "metadata": {"subdomain": "pop-test--my-ws"},
+            },
         }
 
         with (
@@ -524,7 +524,7 @@ class TestPop:
 
         output = json.loads(capsys.readouterr().out)
         assert output["ok"] is True
-        assert output["data"]["site_url"] == "https://pop-test.popcorn.ai"
+        assert output["data"]["site_url"] == "https://pop-test--my-ws.popcorn.ing"
 
     def test_pop_existing_site(self, mock_client, tmp_path, monkeypatch, pop_args):
         monkeypatch.chdir(tmp_path)

@@ -1600,12 +1600,7 @@ def cmd_pop(args: argparse.Namespace) -> None:
         display_version = verify_data["version"]
 
     # Fetch site URL for output (non-fatal)
-    site_url = None
-    try:
-        site_status = operations.get_site_status(client, result_conv_id)
-        site_url = site_status.get("url")
-    except PopcornError:
-        pass
+    site_url = operations.get_site_url(client, result_conv_id)
 
     # Build output
     output_data: dict[str, Any] = {**result}
@@ -1657,7 +1652,16 @@ def cmd_status(args: argparse.Namespace) -> None:
     conversation_id = _resolve_conversation_id_from_local(args, client)
     resp = operations.get_site_status(client, conversation_id)
 
+    # Derive site URL: reuse fallback conversation data to avoid an extra API call.
+    if resp.get("fallback"):
+        metadata = resp.get("conversation", {}).get("metadata", {})
+        site_url = operations.site_url_from_metadata(metadata, client.profile.api_url)
+    else:
+        site_url = operations.get_site_url(client, conversation_id)
+
     if getattr(args, "json", False):
+        if site_url:
+            resp["site_url"] = site_url
         print(_json_ok(resp))
         return
 
@@ -1666,7 +1670,7 @@ def cmd_status(args: argparse.Namespace) -> None:
         name = conv.get("name", "—")
         lines = [
             f"Site:      {name}",
-            "URL:       —",
+            f"URL:       {site_url or '—'}",
             "Version:   —",
             "Commit:    —",
             "Deployed:  —",
@@ -1675,7 +1679,7 @@ def cmd_status(args: argparse.Namespace) -> None:
     else:
         lines = [
             f"Site:      {resp.get('site_name', '—')}",
-            f"URL:       {resp.get('url', '—')}",
+            f"URL:       {site_url or resp.get('url', '—')}",
             f"Version:   {resp.get('version', '—')}",
             f"Commit:    {resp.get('commit_hash', '—')}",
             f"Deployed:  {resp.get('deployed_at', '—')} by {resp.get('deployed_by', '—')}",

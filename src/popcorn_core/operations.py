@@ -662,6 +662,37 @@ def deploy_verify_status(
     )
 
 
+def site_url_from_subdomain(subdomain: str, api_url: str) -> str:
+    """Construct a public site URL from a subdomain and the current API URL.
+
+    Dev environments (api hostname contains '.dev.') use .dev.popcorn.ing,
+    production uses .popcorn.ing.
+    """
+    host = urlparse(api_url).hostname or ""
+    if host.startswith("dev.") or ".dev." in host:
+        return f"https://{subdomain}.dev.popcorn.ing"
+    return f"https://{subdomain}.popcorn.ing"
+
+
+def site_url_from_metadata(metadata: dict[str, Any], api_url: str) -> str | None:
+    """Extract subdomain from conversation metadata and build the site URL."""
+    subdomain = metadata.get("subdomain")
+    if subdomain:
+        return site_url_from_subdomain(subdomain, api_url)
+    return None
+
+
+def get_site_url(client: APIClient, conversation_id: str) -> str | None:
+    """Derive the public site URL from conversation metadata, if available."""
+    try:
+        info = client.get("/api/conversations/info", {"conversation": conversation_id})
+        metadata = info.get("conversation", {}).get("metadata", {})
+        return site_url_from_metadata(metadata, client.profile.api_url)
+    except (APIError, PopcornError):
+        pass
+    return None
+
+
 def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
     """Get site deployment status, falling back to conversation info."""
     try:

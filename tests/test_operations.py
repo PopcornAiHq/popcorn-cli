@@ -217,6 +217,27 @@ class TestSiteStatus:
         assert result["fallback"] is True
         assert result["conversation"]["id"] == "conv-1"
 
+    def test_site_url_from_subdomain_prod(self):
+        assert (
+            operations.site_url_from_subdomain("my-site--acme", "https://api.popcorn.ai")
+            == "https://my-site--acme.popcorn.ing"
+        )
+
+    def test_site_url_from_subdomain_dev(self):
+        assert (
+            operations.site_url_from_subdomain("my-site--acme", "https://api.dev.popcorn.ai")
+            == "https://my-site--acme.dev.popcorn.ing"
+        )
+
+    def test_site_url_from_metadata_with_subdomain(self):
+        url = operations.site_url_from_metadata(
+            {"subdomain": "my-site--acme"}, "https://api.popcorn.ai"
+        )
+        assert url == "https://my-site--acme.popcorn.ing"
+
+    def test_site_url_from_metadata_without_subdomain(self):
+        assert operations.site_url_from_metadata({}, "https://api.popcorn.ai") is None
+
     def test_get_site_log(self, mock_client):
         mock_client.get.return_value = {
             "versions": [{"version": 1, "commit_hash": "abc123"}],
