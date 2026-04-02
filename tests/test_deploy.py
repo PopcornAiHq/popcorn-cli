@@ -483,7 +483,7 @@ class TestPop:
         assert ".popcorn.local.json" in gitignore
 
     def test_pop_json_includes_site_url(self, mock_client, tmp_path, monkeypatch, pop_args, capsys):
-        """JSON output includes site_url from site-status."""
+        """JSON output includes site_url derived from publish response subdomain."""
         monkeypatch.chdir(tmp_path)
         pop_args.json = True
         (tmp_path / ".gitignore").write_text("")
@@ -503,13 +503,9 @@ class TestPop:
                 "site_name": "pop-test",
                 "version": 1,
                 "commit_hash": "abc123",
+                "subdomain": "pop-test--my-ws",
             },
         ]
-        mock_client.get.return_value = {
-            "conversation": {
-                "metadata": {"subdomain": "pop-test--my-ws"},
-            },
-        }
 
         with (
             patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),

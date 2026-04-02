@@ -1599,8 +1599,11 @@ def cmd_pop(args: argparse.Namespace) -> None:
     if verify_data and verify_data.get("version") is not None:
         display_version = verify_data["version"]
 
-    # Fetch site URL for output (non-fatal)
-    site_url = operations.get_site_url(client, result_conv_id)
+    # Build site URL from subdomain in publish response (no extra API call)
+    subdomain = result.get("subdomain")
+    site_url = (
+        operations.site_url_from_subdomain(subdomain, client.profile.api_url) if subdomain else None
+    )
 
     # Build output
     output_data: dict[str, Any] = {**result}
