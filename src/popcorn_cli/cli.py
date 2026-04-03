@@ -1425,7 +1425,8 @@ def cmd_version(args: argparse.Namespace) -> None:
 
 def cmd_pop(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    site_name = args.name or f"pop-{Path.cwd().name}"
+    dirname = Path.cwd().name
+    site_name = args.name or (dirname if dirname.startswith("pop-") else f"pop-{dirname}")
     json_mode = getattr(args, "json", False)
     force = getattr(args, "force", False)
     verbose = getattr(args, "verbose", False)
@@ -1500,7 +1501,9 @@ def cmd_pop(args: argparse.Namespace) -> None:
             conversation_id = str(
                 extract(create_result, "conversation", "id", label="deploy_create")
             )
-            if site_name != (args.name or f"pop-{Path.cwd().name}"):
+            if site_name != (
+                args.name or (dirname if dirname.startswith("pop-") else f"pop-{dirname}")
+            ):
                 suggested_name = site_name
 
             # Persist target immediately so retries don't hit 409
