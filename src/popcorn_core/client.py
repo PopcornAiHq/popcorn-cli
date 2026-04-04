@@ -91,6 +91,10 @@ class APIClient:
                 headers["X-Actor-User-ID"] = user_id
             if self.profile.workspace_id:
                 headers["X-Workspace-ID"] = self.profile.workspace_id
+        # Task token — scopes API calls to the originating conversation
+        task_token = os.environ.get("POPCORN_TASK_TOKEN", "")
+        if task_token:
+            headers["X-Task-Token"] = task_token
         return headers
 
     def _inject_workspace(self, params: dict[str, Any]) -> dict[str, Any]:

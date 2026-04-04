@@ -83,6 +83,30 @@ def test_get_client_proxy_mode_skips_auth(proxy_env, monkeypatch):
     assert client.profile.id_token == ""  # No token needed
 
 
+def test_task_token_header_from_env(monkeypatch):
+    """When POPCORN_TASK_TOKEN is set, it's sent as X-Task-Token."""
+    monkeypatch.setenv("POPCORN_PROXY_MODE", "1")
+    monkeypatch.setenv("POPCORN_TASK_TOKEN", "test-token-abc")
+    monkeypatch.setenv("POPCORN_WORKSPACE_ID", "ws-1")
+
+    profile = Profile(workspace_id="ws-1")
+    c = APIClient(profile)
+    headers = c._headers()
+    assert headers["X-Task-Token"] == "test-token-abc"
+
+
+def test_no_task_token_when_unset(monkeypatch):
+    """When POPCORN_TASK_TOKEN is not set, no header is sent."""
+    monkeypatch.setenv("POPCORN_PROXY_MODE", "1")
+    monkeypatch.setenv("POPCORN_WORKSPACE_ID", "ws-1")
+    monkeypatch.delenv("POPCORN_TASK_TOKEN", raising=False)
+
+    profile = Profile(workspace_id="ws-1")
+    c = APIClient(profile)
+    headers = c._headers()
+    assert "X-Task-Token" not in headers
+
+
 def test_get_client_normal_mode_requires_auth():
     """Without proxy mode, _get_client() raises on missing auth."""
     empty_profile = Profile(api_url="https://api.popcorn.ai")
