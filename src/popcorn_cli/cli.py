@@ -2121,13 +2121,14 @@ def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -
     try:
         # If the initial item is already done, wait for a new one
         if resp.get("status") in ("complete", "failed", "cancelled"):
-            name = resp.get("name") or resp.get("item_id", "?")
+            known_id = resp.get("item_id")
+            name = resp.get("name") or known_id or "?"
             _status(f"Latest: {name}  ({resp.get('status', '?')})")
             _status("Waiting for new activity...\n")
             while True:
                 time.sleep(3)
-                new_resp = operations.vm_trace_latest(client, channel, status="processing")
-                if new_resp is not None:
+                new_resp = operations.vm_trace_latest(client, channel)
+                if new_resp is not None and new_resp.get("item_id") != known_id:
                     resp = new_resp
                     break
 
