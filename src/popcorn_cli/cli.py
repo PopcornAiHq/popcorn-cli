@@ -2118,23 +2118,35 @@ def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -
         print(f"No items found for {channel}", file=sys.stderr)
         sys.exit(1)
 
-    item_id = resp["item_id"]
-    seen_events = len(resp.get("events", []))
-
-    name = resp.get("name") or item_id
-    _status(f"Watching: {name}  ({resp.get('status', '?')})")
-    _status("")
-
-    events = resp.get("events", [])
-    prev_ts = None
-    for event in events:
-        line = fmt_vm_trace_event(event, prev_ts)
-        if line:
-            print(line, flush=True)
-        if event.get("timestamp"):
-            prev_ts = event["timestamp"]
-
     try:
+        # If the initial item is already done, wait for a new one
+        if resp.get("status") in ("complete", "failed", "cancelled"):
+            name = resp.get("name") or resp.get("item_id", "?")
+            _status(f"Latest: {name}  ({resp.get('status', '?')})")
+            _status("Waiting for new activity...\n")
+            while True:
+                time.sleep(3)
+                new_resp = operations.vm_trace_latest(client, channel, status="processing")
+                if new_resp is not None:
+                    resp = new_resp
+                    break
+
+        item_id = resp["item_id"]
+        seen_events = len(resp.get("events", []))
+
+        name = resp.get("name") or item_id
+        _status(f"Watching: {name}  ({resp.get('status', '?')})")
+        _status("")
+
+        events = resp.get("events", [])
+        prev_ts = None
+        for event in events:
+            line = fmt_vm_trace_event(event, prev_ts)
+            if line:
+                print(line, flush=True)
+            if event.get("timestamp"):
+                prev_ts = event["timestamp"]
+
         while True:
             time.sleep(3)
             resp = operations.vm_trace(client, channel, item_id)
