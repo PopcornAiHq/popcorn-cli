@@ -2110,8 +2110,11 @@ def cmd_vm_trace(args: argparse.Namespace) -> None:
 
 def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -> None:
     """Tail a live trace, printing new events as they arrive."""
-    status_filter = getattr(args, "status", None) or "processing"
-    resp = operations.vm_trace_latest(client, channel, status=status_filter)
+    # Try the /current endpoint first (shows processing items immediately)
+    resp = operations.vm_trace_current(client, channel)
+    if resp is None:
+        status_filter = getattr(args, "status", None) or "processing"
+        resp = operations.vm_trace_latest(client, channel, status=status_filter)
     if resp is None:
         resp = operations.vm_trace_latest(client, channel)
     if resp is None:
@@ -2127,8 +2130,15 @@ def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -
             _status("Waiting for new activity...\n")
             while True:
                 time.sleep(3)
-                new_resp = operations.vm_trace_latest(client, channel)
-                if new_resp is not None and new_resp.get("item_id") != known_id:
+                # Try /current first, fall back to checking for new items in usage
+                new_resp = operations.vm_trace_current(client, channel)
+                if new_resp is not None and new_resp.get("item_id") == known_id:
+                    new_resp = None
+                if new_resp is None:
+                    new_resp = operations.vm_trace_latest(client, channel)
+                    if new_resp is not None and new_resp.get("item_id") == known_id:
+                        continue
+                if new_resp is not None:
                     resp = new_resp
                     break
 

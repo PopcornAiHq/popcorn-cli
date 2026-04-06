@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from popcorn_core import operations
 
 
@@ -115,6 +117,35 @@ class TestVmTrace:
         mock_client.get.return_value = {"recent_items": []}
         result = operations.vm_trace_latest(mock_client, "ch")
         assert result is None
+
+
+class TestVmTraceCurrent:
+    def test_vm_trace_current_found(self, mock_client):
+        mock_client.get.return_value = {
+            "item_id": "active-1",
+            "queue_id": "ch",
+            "status": "processing",
+            "prompt": "do thing",
+            "events": [{"type": "turn_start"}],
+        }
+        result = operations.vm_trace_current(mock_client, "ch")
+        mock_client.get.assert_called_once_with("/api/appchannels/trace/ch/current", {})
+        assert result is not None
+        assert result["status"] == "processing"
+
+    def test_vm_trace_current_not_found(self, mock_client):
+        from popcorn_core.errors import APIError
+
+        mock_client.get.side_effect = APIError("No active item", status_code=404)
+        result = operations.vm_trace_current(mock_client, "ch")
+        assert result is None
+
+    def test_vm_trace_current_reraises_non_404(self, mock_client):
+        from popcorn_core.errors import APIError
+
+        mock_client.get.side_effect = APIError("Server error", status_code=500)
+        with pytest.raises(APIError):
+            operations.vm_trace_current(mock_client, "ch")
 
 
 class TestVmCancel:

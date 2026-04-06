@@ -301,6 +301,18 @@ def vm_trace(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
     return client.get(f"/api/appchannels/trace/{queue_id}/{_normalize_item_id(item_id)}", {})
 
 
+def vm_trace_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
+    """Fetch the trace for the currently active item in a queue, or None."""
+    from popcorn_core.errors import APIError
+
+    try:
+        return client.get(f"/api/appchannels/trace/{queue_id}/current", {})
+    except APIError as e:
+        if e.status_code == 404:
+            return None
+        raise
+
+
 def vm_trace_latest(
     client: APIClient,
     queue_id: str,
