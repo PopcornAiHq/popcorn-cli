@@ -705,6 +705,24 @@ def get_site_url(client: APIClient, conversation_id: str) -> str | None:
     return None
 
 
+def export_site(
+    client: APIClient,
+    conversation_id: str,
+    version: str | None = None,
+) -> dict[str, Any]:
+    """Export site code from VM as a downloadable tarball.
+
+    Returns dict with download_url, s3_key, version, commit_hash.
+    """
+    data: dict[str, Any] = {}
+    if version is not None:
+        data["version"] = version
+    return client.post(
+        f"/api/conversations/{conversation_id}/site/export",
+        data=data,
+    )
+
+
 def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
     """Get site deployment status, falling back to conversation info."""
     try:
