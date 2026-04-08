@@ -67,6 +67,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 |---------|---------|
 | **Sites** | |
 | `popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check]` | Deploy site to a channel |
+| `popcorn site export [channel] [--version V] [-o PATH] [--force] [--revert]` | Export site code from VM to local |
 | `popcorn site status [channel]` | Show site deployment status |
 | `popcorn site log [channel] [--limit N]` | Show site version history |
 | `popcorn site trace <ch> [item] [--list] [--watch] [--raw]` | Show agent execution trace |
