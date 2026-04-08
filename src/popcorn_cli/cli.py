@@ -1653,6 +1653,152 @@ def cmd_pop(args: argparse.Namespace) -> None:
         sys.exit(EXIT_UNHEALTHY)
 
 
+def cmd_export(args: argparse.Namespace) -> None:
+    """Export site code from the VM back to local filesystem."""
+    import shutil
+    import tarfile
+    import tempfile
+
+    import httpx as _httpx
+
+    # Handle --revert
+    if getattr(args, "revert", False):
+        backup_dir = Path(".popcorn-backup")
+        if not backup_dir.exists():
+            raise PopcornError("No backup found. Nothing to revert.")
+        for item in backup_dir.iterdir():
+            dest = Path.cwd() / item.name
+            if dest.exists():
+                if dest.is_dir():
+                    shutil.rmtree(dest)
+                else:
+                    dest.unlink()
+            shutil.move(str(item), str(dest))
+        backup_dir.rmdir()
+        print("Reverted to pre-export backup.")
+        return
+
+    client = _get_client(args)
+    conversation_id = _resolve_conversation_id_from_local(args, client)
+
+    # Call the export endpoint (VM packages + uploads + returns presigned URL)
+    version = getattr(args, "version", None)
+    resp = operations.export_site(client, conversation_id, version=version)
+
+    download_url = resp.get("download_url")
+    if not download_url:
+        raise PopcornError("No site version available for export.")
+
+    export_version = resp.get("version", "?")
+    commit_hash = resp.get("commit_hash", "")[:8]
+
+    # Download tarball from S3
+    dl = _httpx.get(download_url, follow_redirects=True, timeout=120.0)
+    dl.raise_for_status()
+
+    output = getattr(args, "output", None)
+
+    # If output ends with .tar.gz, just save the tarball
+    if output and output.endswith(".tar.gz"):
+        Path(output).write_bytes(dl.content)
+        result = {"version": export_version, "commit_hash": commit_hash, "output": output}
+        _output(args, result, f"Saved v{export_version} ({commit_hash}) to {output}")
+        return
+
+    # Extract mode — extract into output dir or cwd
+    target_dir = Path(output) if output else Path.cwd()
+
+    # Check for uncommitted git changes
+    if not getattr(args, "force", False):
+        try:
+            import subprocess
+
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=target_dir,
+                capture_output=True,
+                text=True,
+            )
+            if status.returncode == 0 and status.stdout.strip():
+                answer = input(
+                    f"Warning: {target_dir} has uncommitted changes that will be overwritten.\n"
+                    "Continue? [y/N] "
+                )
+                if answer.lower() not in ("y", "yes"):
+                    print("Export cancelled.")
+                    return
+        except FileNotFoundError:
+            pass  # git not available or not a repo — proceed
+
+    # Backup current files
+    backup_dir = target_dir / ".popcorn-backup"
+    if backup_dir.exists():
+        shutil.rmtree(backup_dir)
+    backup_dir.mkdir()
+
+    for item in target_dir.iterdir():
+        if item.name in (".git", ".popcorn-backup", "node_modules", ".venv", "__pycache__"):
+            continue
+        dest = backup_dir / item.name
+        if item.is_dir():
+            shutil.copytree(item, dest)
+        else:
+            shutil.copy2(item, dest)
+
+    # Extract tarball into a temp dir, then move to target
+    tmp_dir = Path(tempfile.mkdtemp())
+    try:
+        tarball_path = tmp_dir / "export.tar.gz"
+        tarball_path.write_bytes(dl.content)
+
+        with tarfile.open(tarball_path, "r:gz") as tar:
+            tar.extractall(path=tmp_dir / "staging", filter="data")
+
+        staging = tmp_dir / "staging"
+
+        # Clear target (except protected dirs)
+        protected = {
+            ".git",
+            ".popcorn-backup",
+            "node_modules",
+            ".venv",
+            "__pycache__",
+            ".popcorn.local.json",
+        }
+        for item in target_dir.iterdir():
+            if item.name in protected:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+        # Move staged files into target
+        for item in staging.iterdir():
+            dest = target_dir / item.name
+            shutil.move(str(item), str(dest))
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    # Add .popcorn-backup to .gitignore if needed
+    gitignore = target_dir / ".gitignore"
+    if gitignore.exists():
+        content = gitignore.read_text()
+        if ".popcorn-backup" not in content:
+            with open(gitignore, "a") as f:
+                f.write("\n.popcorn-backup/\n")
+    else:
+        gitignore.write_text(".popcorn-backup/\n")
+
+    result = {"version": export_version, "commit_hash": commit_hash, "backup": str(backup_dir)}
+    human = (
+        f"Exported v{export_version} ({commit_hash}). "
+        f"Backup saved to .popcorn-backup/\n"
+        f"To revert: popcorn site export --revert"
+    )
+    _output(args, result, human)
+
+
 def cmd_status(args: argparse.Namespace) -> None:
     client = _get_client(args)
     conversation_id = _resolve_conversation_id_from_local(args, client)
@@ -2404,6 +2550,26 @@ Other:
         "--target", type=str, help="Named deploy target from .popcorn.local.json"
     )
 
+    site_export_p = site_sub.add_parser("export", help="Export site code from VM")
+    site_export_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    site_export_p.add_argument(
+        "--version", type=str, default=None, help="Version number or commit hash"
+    )
+    site_export_p.add_argument(
+        "--force", "-f", action="store_true", help="Overwrite without prompting"
+    )
+    site_export_p.add_argument(
+        "-o",
+        "--output",
+        type=str,
+        default=None,
+        help="Output path (directory to extract into, or .tar.gz to save tarball)",
+    )
+    site_export_p.add_argument(
+        "--target", type=str, help="Named deploy target from .popcorn.local.json"
+    )
+    site_export_p.add_argument("--revert", action="store_true", help="Revert to pre-export backup")
+
     site_log_p = site_sub.add_parser("log", help="Show site version history")
     site_log_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
     site_log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
@@ -2781,6 +2947,7 @@ def main() -> None:
             site_sub = {
                 "cancel": cmd_vm_cancel,
                 "deploy": cmd_pop,
+                "export": cmd_export,
                 "log": cmd_log,
                 "rollback": cmd_vm_rollback,
                 "status": cmd_status,
@@ -2790,7 +2957,9 @@ def main() -> None:
             if handler:
                 handler(args)
             else:
-                raise PopcornError("Usage: popcorn site [cancel|deploy|log|rollback|status|trace]")
+                raise PopcornError(
+                    "Usage: popcorn site [cancel|deploy|export|log|rollback|status|trace]"
+                )
         elif args.command == "message":
             msg_sub = {
                 "delete": cmd_delete_message,
