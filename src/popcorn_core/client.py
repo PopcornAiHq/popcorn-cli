@@ -237,13 +237,25 @@ class APIClient:
                 with contextlib.suppress(ValueError):
                     retry_after = float(raw_retry)
             request_id = resp.headers.get("x-request-id")
-            raise APIError(
+            err = APIError(
                 msg or f"HTTP {resp.status_code}",
                 status_code=resp.status_code,
                 body=resp.text,
                 retry_after=retry_after,
                 request_id=request_id,
             )
+            # Enrich "not found in workspace" with which workspace was tried
+            if resp.status_code == 404 and "not found in this workspace" in msg.lower():
+                ws_id = self.profile.workspace_id
+                err = APIError(
+                    f"{msg} (workspace: {ws_id})" if ws_id else msg,
+                    status_code=resp.status_code,
+                    body=resp.text,
+                    retry_after=retry_after,
+                    request_id=request_id,
+                )
+                err.hint = "popcorn workspace list  # then: popcorn workspace switch <id>"
+            raise err
 
         try:
             return resp.json()  # type: ignore[no-any-return]
