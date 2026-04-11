@@ -872,6 +872,165 @@ class TestPop:
         publish_call = mock_client.post.call_args_list[-1]
         assert publish_call[1]["data"]["force"] is True
 
+    def test_pop_presign_no_site_auto_provisions(
+        self, mock_client, tmp_path, monkeypatch, pop_args
+    ):
+        """Deploy with --target to a siteless channel auto-provisions via update_conversation."""
+        monkeypatch.chdir(tmp_path)
+        pop_args.name = "pop-test"
+        conv_uuid = "00000000-0000-0000-0000-000000000001"
+        _write_v2_local(tmp_path, conv_uuid, "pop-test")
+        (tmp_path / ".gitignore").write_text("")
+
+        no_site_body = json.dumps({"detail": {"error": "no_site"}})
+
+        mock_client.get.side_effect = [
+            # _validate_channel
+            {"conversation": {"id": conv_uuid}},
+            # site-status after publish
+            _SITE_STATUS,
+        ]
+        mock_client.post.side_effect = [
+            # First presign → no_site
+            APIError(
+                "Conversation does not have a provisioned site", status_code=400, body=no_site_body
+            ),
+            # update_conversation (provision site) — conv_uuid passes through resolve_conversation
+            {"ok": True},
+            # Second presign (after provision) → success
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "ws/sites/pop-test/versions/456.tar.gz",
+            },
+            # publish
+            {
+                "conversation_id": conv_uuid,
+                "site_name": "pop-test",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        # update_conversation should have been called to provision the site
+        update_call = mock_client.post.call_args_list[1]
+        assert update_call[0][0] == "/api/conversations/update"
+        assert update_call[1]["data"]["conversation_type"] == "workspace_channel"
+        assert update_call[1]["data"]["site_name"] == "pop-test"
+
+    def test_pop_create_already_exists_auto_provisions(
+        self, mock_client, tmp_path, monkeypatch, pop_args
+    ):
+        """First deploy to a channel that already exists (no site) auto-provisions."""
+        monkeypatch.chdir(tmp_path)
+        pop_args.name = "pop-test"
+        (tmp_path / ".gitignore").write_text("")
+
+        conv_uuid = "00000000-0000-0000-0000-000000000002"
+        already_exists_body = json.dumps({"detail": {"error": "already_exists"}})
+
+        mock_client.get.side_effect = [
+            # resolve_conversation for get_conversation_info: conversations/list
+            {"conversations": [{"id": conv_uuid, "name": "pop-test"}]},
+            # get_conversation_info: conversations/info
+            {"conversation": {"id": conv_uuid, "name": "pop-test", "metadata": {}}},
+            # get_conversation_info: conversations/members
+            {"members": []},
+            # site-status after publish
+            _SITE_STATUS,
+        ]
+        mock_client.post.side_effect = [
+            # deploy_create → already_exists
+            APIError("Channel already exists", status_code=400, body=already_exists_body),
+            # update_conversation (provision site) — conv_uuid passes through resolve_conversation
+            {"ok": True},
+            # presign
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "ws/sites/pop-test/versions/123.tar.gz",
+            },
+            # publish
+            {
+                "conversation_id": conv_uuid,
+                "site_name": "pop-test",
+                "version": 1,
+                "commit_hash": "abc123",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        # update_conversation should have been called to provision the site
+        update_calls = [
+            c for c in mock_client.post.call_args_list if c[0][0] == "/api/conversations/update"
+        ]
+        assert len(update_calls) == 1
+        assert update_calls[0][1]["data"]["conversation_type"] == "workspace_channel"
+        assert update_calls[0][1]["data"]["site_name"] == "pop-test"
+
+    def test_pop_existing_site_still_works(self, mock_client, tmp_path, monkeypatch, pop_args):
+        """Deploy to channel that already has a site works without provisioning."""
+        monkeypatch.chdir(tmp_path)
+        _write_v2_local(tmp_path, "conv-existing", "pop-test")
+        (tmp_path / ".gitignore").write_text("")
+
+        mock_client.get.side_effect = [
+            {"conversation": {"id": "conv-existing", "site": {"name": "pop-test"}}},
+            _SITE_STATUS,
+        ]
+        mock_client.post.side_effect = [
+            {
+                "upload_url": "https://s3.example.com/upload",
+                "upload_fields": {"key": "abc"},
+                "s3_key": "ws/sites/pop-test/versions/456.tar.gz",
+            },
+            {
+                "conversation_id": "conv-existing",
+                "site_name": "pop-test",
+                "version": 2,
+                "commit_hash": "def456",
+            },
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            cmd_pop(pop_args)
+
+        # No update_conversation calls — site already provisioned
+        update_calls = [
+            c for c in mock_client.post.call_args_list if c[0][0] == "/api/conversations/update"
+        ]
+        assert len(update_calls) == 0
+        assert mock_client.post.call_count == 2  # presign + publish
+
 
 class TestStatus:
     def test_status_from_local_json(self, mock_client, tmp_path, monkeypatch):

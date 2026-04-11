@@ -1047,6 +1047,20 @@ def _create_with_collision_retry(
         result = operations.deploy_create(client, site_name)
         return result, site_name
     except APIError as e:
+        if e.status_code == 400 and _extract_error_code(e) == "already_exists":
+            # Channel exists but wasn't created via deploy flow — provision site
+            info = operations.get_conversation_info(client, site_name)
+            conv = info["conversation"]
+            conv_id = conv["id"]
+            metadata = conv.get("metadata") or {}
+            if not metadata.get("site_name"):
+                operations.update_conversation(
+                    client,
+                    conv_id,
+                    conv_type="workspace_channel",
+                    site_name=site_name,
+                )
+            return info, site_name
         if e.status_code != 409:
             raise
 
@@ -1122,6 +1136,28 @@ def _parse_vm_error(e: APIError) -> str | None:
         val = body.get(key)
         if isinstance(val, str):
             return val
+    return None
+
+
+def _extract_error_code(e: APIError) -> str | None:
+    """Extract the error code from an API error body.
+
+    Looks for {"detail": {"error": "<code>"}} or {"error": "<code>"}.
+    """
+    if not e.body:
+        return None
+    try:
+        body = json.loads(e.body)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    detail = body.get("detail")
+    if isinstance(detail, dict):
+        code = detail.get("error")
+        if isinstance(code, str):
+            return code
+    code = body.get("error")
+    if isinstance(code, str):
+        return code
     return None
 
 
@@ -1520,7 +1556,20 @@ def cmd_pop(args: argparse.Namespace) -> None:
 
         # Presign
         _progress("Requesting upload URL...")
-        presign = operations.deploy_presign(client, conversation_id)
+        try:
+            presign = operations.deploy_presign(client, conversation_id)
+        except APIError as e:
+            if e.status_code == 400 and _extract_error_code(e) == "no_site":
+                _progress("Provisioning site on existing channel...")
+                operations.update_conversation(
+                    client,
+                    conversation_id,
+                    conv_type="workspace_channel",
+                    site_name=site_name,
+                )
+                presign = operations.deploy_presign(client, conversation_id)
+            else:
+                raise
         upload_url = extract(presign, "upload_url", label="deploy_presign")
         upload_fields = extract(presign, "upload_fields", label="deploy_presign")
         s3_key = extract(presign, "s3_key", label="deploy_presign")
