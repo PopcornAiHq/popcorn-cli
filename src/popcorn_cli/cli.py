@@ -2289,13 +2289,14 @@ def cmd_vm_trace(args: argparse.Namespace) -> None:
         resp = operations.vm_trace(client, queue_id, args.item_id)
     else:
         status_filter = getattr(args, "status", None)
-        resp = operations.vm_trace_latest(client, queue_id, status=status_filter)
-        if resp is None:
+        latest = operations.vm_trace_latest(client, queue_id, status=status_filter)
+        if latest is None:
             msg = f"No items found for {channel}"
             if status_filter:
                 msg += f" with status={status_filter}"
             print(msg, file=sys.stderr)
             sys.exit(1)
+        resp = latest
 
     if raw:
         print(_json_ok(resp))
