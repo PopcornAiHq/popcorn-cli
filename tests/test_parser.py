@@ -138,6 +138,33 @@ class TestAgentMode:
         assert _agent_mode_enabled() is False
 
 
+class TestFormatPayloadPreview:
+    """_format_payload_preview renders webhook payload_raw values compactly."""
+
+    def test_dict_compact_json(self):
+        from popcorn_cli.cli import _format_payload_preview
+
+        assert _format_payload_preview({"a": 1, "b": 2}) == '{"a":1,"b":2}'
+
+    def test_list_compact_json(self):
+        from popcorn_cli.cli import _format_payload_preview
+
+        assert _format_payload_preview([1, 2, 3]) == "[1,2,3]"
+
+    def test_string_passthrough(self):
+        from popcorn_cli.cli import _format_payload_preview
+
+        assert _format_payload_preview("raw bytes here") == "raw bytes here"
+
+    def test_truncation(self):
+        from popcorn_cli.cli import _format_payload_preview
+
+        long = "x" * 500
+        out = _format_payload_preview(long, max_len=50)
+        assert len(out) == 50
+        assert out.endswith("…")
+
+
 class TestJsonEnvelopeStripping:
     """_json_ok should strip top-level `ok` keys leaked from API responses."""
 
@@ -366,6 +393,14 @@ class TestWebhook:
         assert args.webhook_command == "deliveries"
         assert args.conversation == "#general"
         assert args.limit == 10
+
+    def test_webhook_deliveries_include(self, parser):
+        args = parser.parse_args(["webhook", "deliveries", "#general", "--include", "payload_raw"])
+        assert args.include == "payload_raw"
+
+    def test_webhook_deliveries_include_default_none(self, parser):
+        args = parser.parse_args(["webhook", "deliveries", "#general"])
+        assert args.include is None
 
 
 class TestDidYouMean:

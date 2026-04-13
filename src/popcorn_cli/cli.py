@@ -234,6 +234,24 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
         print(formatted)
 
 
+def _format_payload_preview(payload: Any, max_len: int = 200) -> str:
+    """Render a webhook payload_raw value compactly for human-readable output.
+
+    JSON payloads are compact-serialized; strings pass through. Anything
+    exceeding ``max_len`` is truncated with an ellipsis so the table stays
+    scannable. Full payloads are always available via ``--json``.
+    """
+    if isinstance(payload, dict | list):
+        rendered = json.dumps(payload, separators=(",", ":"), default=str)
+    elif isinstance(payload, str):
+        rendered = payload
+    else:
+        rendered = str(payload)
+    if len(rendered) > max_len:
+        return rendered[: max_len - 1] + "…"
+    return rendered
+
+
 def _select_workspace(client: APIClient, profile: Profile, target: str | None = None) -> None:
     """Interactive workspace selection (auto-selects first when non-interactive)."""
     workspaces = operations.list_workspaces(client)
@@ -981,6 +999,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             since=getattr(args, "since", None),
             after=getattr(args, "after", None),
             status=getattr(args, "status", None),
+            include=getattr(args, "include", None),
         )
         deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
         lines = [f"Deliveries for {args.conversation} ({len(deliveries)}):"]
@@ -988,6 +1007,9 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             wh_name = d.get("webhook_name", d.get("webhook_id", "?"))
             ts = d.get("created_at", "?")
             lines.append(f"  {d.get('id', '?')}  {wh_name}  {ts}")
+            if "payload_raw" in d:
+                preview = _format_payload_preview(d["payload_raw"])
+                lines.append(f"    payload: {preview}")
         _output(args, resp, "\n".join(lines))
     else:
         raise PopcornError("Usage: popcorn webhook [create|deliveries|list]")
@@ -2869,6 +2891,11 @@ Other:
         "--after", type=str, help="Delivery UUID — deliveries after this ID (cursor)"
     )
     wh_del.add_argument("--status", type=str, help="Filter: completed,ignored,failed,processing")
+    wh_del.add_argument(
+        "--include",
+        type=str,
+        help="Comma-separated optional fields to hydrate (e.g. payload_raw)",
+    )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
 

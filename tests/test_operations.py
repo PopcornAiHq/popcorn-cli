@@ -270,6 +270,52 @@ class TestSiteStatus:
         )
 
 
+class TestWebhookDeliveries:
+    def test_basic(self, mock_client):
+        mock_client.get.return_value = {"deliveries": []}
+        operations.list_webhook_deliveries(mock_client, "conv-1", limit=10)
+        mock_client.get.assert_called_once_with(
+            "/api/webhooks/deliveries", {"conversation": "conv-1", "limit": 10}
+        )
+
+    def test_include_passthrough(self, mock_client):
+        mock_client.get.return_value = {"deliveries": []}
+        operations.list_webhook_deliveries(mock_client, "conv-1", limit=10, include="payload_raw")
+        mock_client.get.assert_called_once_with(
+            "/api/webhooks/deliveries",
+            {"conversation": "conv-1", "limit": 10, "include": "payload_raw"},
+        )
+
+    def test_include_omitted_when_none(self, mock_client):
+        mock_client.get.return_value = {"deliveries": []}
+        operations.list_webhook_deliveries(mock_client, "conv-1", include=None)
+        params = mock_client.get.call_args[0][1]
+        assert "include" not in params
+
+    def test_all_params(self, mock_client):
+        mock_client.get.return_value = {"deliveries": []}
+        operations.list_webhook_deliveries(
+            mock_client,
+            "conv-1",
+            limit=25,
+            since="2026-01-01T00:00:00Z",
+            after="d-abc",
+            status="failed",
+            include="payload_raw",
+        )
+        mock_client.get.assert_called_once_with(
+            "/api/webhooks/deliveries",
+            {
+                "conversation": "conv-1",
+                "limit": 25,
+                "since": "2026-01-01T00:00:00Z",
+                "after": "d-abc",
+                "status": "failed",
+                "include": "payload_raw",
+            },
+        )
+
+
 class TestCheckAccess:
     def test_check_access_accessible(self, mock_client):
         mock_client.post.return_value = {"accessible": True}

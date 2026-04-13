@@ -561,8 +561,13 @@ def list_webhook_deliveries(
     since: str | None = None,
     after: str | None = None,
     status: str | None = None,
+    include: str | None = None,
 ) -> dict[str, Any]:
-    """List webhook deliveries for a conversation."""
+    """List webhook deliveries for a conversation.
+
+    ``include`` is a comma-separated list of optional fields to hydrate on
+    each delivery. Currently supported: ``payload_raw``.
+    """
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"conversation": conv_id, "limit": limit}
     if since:
@@ -571,6 +576,8 @@ def list_webhook_deliveries(
         params["after"] = after
     if status:
         params["status"] = status
+    if include:
+        params["include"] = include
     return client.get("/api/webhooks/deliveries", params)
 
 
