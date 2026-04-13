@@ -15,3 +15,8 @@ htmlcov/
 .worktrees/
 bin/
 .popcorn.local.json
+
+# Internal planning docs — keep local, not public.
+# The superpowers skill auto-places design docs and plans under docs/superpowers/.
+docs/superpowers/
+docs/release-1.0.md
