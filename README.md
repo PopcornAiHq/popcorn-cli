@@ -206,6 +206,16 @@ popcorn api /v1/... -X POST -d @body.json
 uncommitted changes), pass `--yes` / `-y` or set `POPCORN_ASSUME_YES=1`.
 Without it, the CLI fails loudly in non-TTY mode instead of hanging.
 
+**Streaming commands** — `--watch` emits NDJSON when combined with `--json`:
+one complete envelope per line, newline-terminated, stdout-flushed. Pipe
+directly into a line-oriented consumer.
+
+```bash
+popcorn message list '#general' --watch --json | while read line; do
+  echo "$line" | jq -r '.data.content.parts[0].content // empty'
+done
+```
+
 ## Conversation References
 
 Channels can be referenced by name (`#general`) or UUID. Names are cached for 5 minutes.

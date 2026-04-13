@@ -307,6 +307,35 @@ class TestJsonEnvelopeStripping:
         assert out == {"ok": True, "data": {"user": "shaun"}}
 
 
+class TestJsonLine:
+    """_json_line emits NDJSON — single line, no indentation, still strips ok."""
+
+    def test_single_line(self):
+        from popcorn_cli.cli import _json_line
+
+        out = _json_line({"id": "m1"})
+        assert "\n" not in out
+        assert out.startswith('{"ok":') or out.startswith('{"ok"')
+
+    def test_strips_leaked_ok(self):
+        import json
+
+        from popcorn_cli.cli import _json_line
+
+        parsed = json.loads(_json_line({"ok": True, "id": "m1"}))
+        assert parsed["ok"] is True
+        assert "ok" not in parsed["data"]
+        assert parsed["data"]["id"] == "m1"
+
+    def test_preserves_non_dict(self):
+        import json
+
+        from popcorn_cli.cli import _json_line
+
+        parsed = json.loads(_json_line([1, 2, 3]))
+        assert parsed == {"ok": True, "data": [1, 2, 3]}
+
+
 class TestAuthCommands:
     def test_auth_login(self, parser):
         args = parser.parse_args(["auth", "login"])

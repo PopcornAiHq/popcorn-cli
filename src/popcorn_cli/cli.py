@@ -214,15 +214,28 @@ def _get_client(args: argparse.Namespace) -> APIClient:
     return APIClient(profile, **kwargs)
 
 
-def _json_ok(data: Any) -> str:
-    """Wrap data in the standard success envelope.
+def _strip_leaked_ok(data: Any) -> Any:
+    """Drop a top-level ``ok`` key leaked from upstream API responses.
 
-    Strips any top-level ``ok`` key leaked from upstream API responses so the
-    CLI envelope's ``ok`` is never shadowed by a nested one.
+    The CLI envelope's ``ok`` must never be shadowed by a nested one.
     """
     if isinstance(data, dict) and "ok" in data:
-        data = {k: v for k, v in data.items() if k != "ok"}
-    return json.dumps({"ok": True, "data": data}, indent=2, default=str)
+        return {k: v for k, v in data.items() if k != "ok"}
+    return data
+
+
+def _json_ok(data: Any) -> str:
+    """Wrap data in the standard success envelope (pretty-printed)."""
+    return json.dumps({"ok": True, "data": _strip_leaked_ok(data)}, indent=2, default=str)
+
+
+def _json_line(data: Any) -> str:
+    """Wrap data in the standard success envelope as a single NDJSON line.
+
+    Used by streaming commands (``--watch`` / ``--ndjson``): one self-contained
+    envelope per line, newline-terminated by print, stdout-flushed by the caller.
+    """
+    return json.dumps({"ok": True, "data": _strip_leaked_ok(data)}, default=str)
 
 
 def _json_err(error_dict: dict[str, Any]) -> str:
@@ -2127,7 +2140,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                 # Print oldest-first
                 for msg in reversed(new_msgs):
                     if json_mode:
-                        print(json.dumps({"ok": True, "data": msg}, default=str), flush=True)
+                        print(_json_line(msg), flush=True)
                     else:
                         print(fmt_message(msg), flush=True)
                     seen += 1
@@ -2376,6 +2389,15 @@ def cmd_commands(args: argparse.Namespace) -> None:
                 "Success payloads never contain a top-level `ok` key.",
                 "On failure, exit code is non-zero; see exit_codes.",
             ],
+            "streaming": {
+                "format": "ndjson",
+                "description": (
+                    "Streaming commands (--watch) emit one envelope per line, "
+                    "newline-terminated, stdout-flushed. Each line is a complete "
+                    "{'ok': true, 'data': ...} envelope; no trailing summary."
+                ),
+                "commands": ["message list --watch"],
+            },
         },
         "exit_codes": {
             "ok": EXIT_OK,
