@@ -47,6 +47,20 @@ Usage:
     echo "msg" | popcorn message send <conversation>
     cat batch.ndjson | popcorn message send --batch --json
 
+For agents and scripts:
+    Set POPCORN_AGENT=1 to default --json, --quiet, and --no-color on every
+    invocation (and suppress auto-upgrade prompts). Or pass them per-call.
+
+    Every --json command returns a stable envelope:
+        {"ok": true, "data": ...}                               on success
+        {"ok": false, "error": "...", "error_code": "...",      on failure
+         "retryable": <bool>}                                   (+ non-zero exit)
+
+    Discover the full surface — exit codes, stable error_code enum, envelope
+    shape, every command's args and types:
+        popcorn commands --json
+        popcorn whoami --json              current user + workspace bootstrap
+
 Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
        -e/--env, --no-color, --workspace UUID
 Conversations can be specified as #channel-name or UUID.
@@ -88,7 +102,12 @@ from popcorn_core.auth import (
 )
 from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
 from popcorn_core.errors import (
+    ERROR_CODES,
+    EXIT_AUTH,
+    EXIT_CLIENT,
     EXIT_INTERRUPT,
+    EXIT_OK,
+    EXIT_SERVER,
     EXIT_UNHEALTHY,
     EXIT_VALIDATION,
     APIError,
@@ -192,7 +211,13 @@ def _get_client(args: argparse.Namespace) -> APIClient:
 
 
 def _json_ok(data: Any) -> str:
-    """Wrap data in the standard success envelope."""
+    """Wrap data in the standard success envelope.
+
+    Strips any top-level ``ok`` key leaked from upstream API responses so the
+    CLI envelope's ``ok`` is never shadowed by a nested one.
+    """
+    if isinstance(data, dict) and "ok" in data:
+        data = {k: v for k, v in data.items() if k != "ok"}
     return json.dumps({"ok": True, "data": data}, indent=2, default=str)
 
 
@@ -224,7 +249,7 @@ def _select_workspace(client: APIClient, profile: Profile, target: str | None = 
                 profile.workspace_name = ws.get("name", "")
                 _status(f"Selected workspace: {profile.workspace_name}")
                 return
-        raise PopcornError(f"Workspace not found: {target}")
+        raise PopcornError(f"Workspace not found: {target}", error_code="not_found")
 
     if len(workspaces) == 1:
         ws = workspaces[0]
@@ -490,7 +515,7 @@ def cmd_workspace_switch(args: argparse.Namespace) -> None:
                 save_config(cfg)
                 print(f"Switched to: {profile.workspace_name} ({profile.workspace_id})")
                 return
-        raise PopcornError(f"Workspace not found: {target}")
+        raise PopcornError(f"Workspace not found: {target}", error_code="not_found")
 
     _select_workspace(client, profile)
     save_config(cfg)
@@ -2250,6 +2275,39 @@ def cmd_commands(args: argparse.Namespace) -> None:
 
     schema = {
         "version": __version__,
+        "schema_version": 1,
+        "envelope": {
+            "success": {"ok": True, "data": "<command-specific payload>"},
+            "error": {
+                "ok": False,
+                "error": "<human-readable message>",
+                "error_code": "<stable machine code — see error_codes>",
+                "code": "<Python exception class name (legacy, avoid branching on)>",
+                "retryable": "<bool — true for 5xx and 429>",
+            },
+            "notes": [
+                "Every command with --json emits this envelope.",
+                "Success payloads never contain a top-level `ok` key.",
+                "On failure, exit code is non-zero; see exit_codes.",
+            ],
+        },
+        "exit_codes": {
+            "ok": EXIT_OK,
+            "validation": EXIT_VALIDATION,
+            "auth": EXIT_AUTH,
+            "client": EXIT_CLIENT,
+            "server": EXIT_SERVER,
+            "unhealthy": EXIT_UNHEALTHY,
+            "interrupt": EXIT_INTERRUPT,
+        },
+        "error_codes": ERROR_CODES,
+        "agent_mode": {
+            "env_var": "POPCORN_AGENT",
+            "description": (
+                "Set POPCORN_AGENT=1 to default --json, --quiet, and --no-color on "
+                "every invocation, and to suppress auto-upgrade prompts."
+            ),
+        },
         "global_flags": global_flags,
         "commands": commands,
     }
@@ -2913,17 +2971,39 @@ _ALL_COMMAND_NAMES.extend(
 )
 
 
+def _agent_mode_enabled() -> bool:
+    """Return True if POPCORN_AGENT is set to an affirmative value.
+
+    Accepts ``1``, ``true``, ``yes`` (case-insensitive). Anything else is off.
+    """
+    val = (os.environ.get("POPCORN_AGENT") or "").strip().lower()
+    return val in ("1", "true", "yes")
+
+
 def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
     """Move global flags to before the subcommand so they're parsed correctly.
 
     Allows both ``popcorn --json read ...`` and ``popcorn read --json ...``,
     and similarly for ``--quiet``/``-q`` and ``--timeout N``.
+
+    When ``POPCORN_AGENT=1`` is set, injects ``--json``, ``-q``, and
+    ``--no-color`` as defaults (unless already present) so agents don't have
+    to pass them on every invocation.
     """
     args = list(argv if argv is not None else sys.argv[1:])
     hoisted: list[str] = []
 
+    # Agent mode: inject flags if not already specified
+    if _agent_mode_enabled():
+        if "--json" not in args:
+            hoisted.append("--json")
+        if "--quiet" not in args and "-q" not in args:
+            hoisted.append("--quiet")
+        if "--no-color" not in args:
+            hoisted.append("--no-color")
+
     # Boolean flags
-    for flag in ("--json", "--quiet", "-q", "--debug"):
+    for flag in ("--json", "--quiet", "-q", "--debug", "--no-color"):
         if flag in args:
             hoisted.append(flag)
             args = [a for a in args if a != flag]
@@ -2944,6 +3024,10 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
 
 def main() -> None:
     global _quiet
+
+    # Agent mode implies no-update-check (avoid upgrade prompts in scripts).
+    if _agent_mode_enabled():
+        os.environ.setdefault("POPCORN_NO_UPDATE_CHECK", "1")
 
     parser = build_parser()
     args = parser.parse_args(_hoist_global_flags())

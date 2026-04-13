@@ -89,6 +89,83 @@ class TestFlagHoisting:
         assert result == ["--json", "-q", "--timeout", "10", "message", "list", "#general"]
 
 
+class TestAgentMode:
+    """POPCORN_AGENT=1 should inject --json, -q, --no-color as defaults."""
+
+    def test_agent_mode_injects_defaults(self, monkeypatch):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        result = _hoist_global_flags(["whoami"])
+        assert "--json" in result
+        assert "--quiet" in result
+        assert "--no-color" in result
+
+    def test_agent_mode_does_not_duplicate_json(self, monkeypatch):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        result = _hoist_global_flags(["whoami", "--json"])
+        assert result.count("--json") == 1
+
+    def test_agent_mode_does_not_duplicate_quiet(self, monkeypatch):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        result = _hoist_global_flags(["whoami", "-q"])
+        # Either -q or --quiet, but not both
+        count = result.count("-q") + result.count("--quiet")
+        assert count == 1
+
+    def test_agent_mode_off_by_default(self, monkeypatch):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        result = _hoist_global_flags(["whoami"])
+        assert "--json" not in result
+        assert "--quiet" not in result
+
+    def test_agent_mode_accepts_true(self, monkeypatch):
+        from popcorn_cli.cli import _agent_mode_enabled
+
+        monkeypatch.setenv("POPCORN_AGENT", "true")
+        assert _agent_mode_enabled() is True
+
+    def test_agent_mode_rejects_zero(self, monkeypatch):
+        from popcorn_cli.cli import _agent_mode_enabled
+
+        monkeypatch.setenv("POPCORN_AGENT", "0")
+        assert _agent_mode_enabled() is False
+
+
+class TestJsonEnvelopeStripping:
+    """_json_ok should strip top-level `ok` keys leaked from API responses."""
+
+    def test_strips_ok_from_dict(self):
+        import json
+
+        from popcorn_cli.cli import _json_ok
+
+        out = json.loads(_json_ok({"ok": True, "user": {"id": "u1"}}))
+        assert out == {"ok": True, "data": {"user": {"id": "u1"}}}
+
+    def test_preserves_non_dict_data(self):
+        import json
+
+        from popcorn_cli.cli import _json_ok
+
+        out = json.loads(_json_ok([1, 2, 3]))
+        assert out == {"ok": True, "data": [1, 2, 3]}
+
+    def test_preserves_dict_without_ok(self):
+        import json
+
+        from popcorn_cli.cli import _json_ok
+
+        out = json.loads(_json_ok({"user": "shaun"}))
+        assert out == {"ok": True, "data": {"user": "shaun"}}
+
+
 class TestAuthCommands:
     def test_auth_login(self, parser):
         args = parser.parse_args(["auth", "login"])

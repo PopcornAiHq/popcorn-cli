@@ -103,6 +103,20 @@ popcorn api /openapi.json --raw > /tmp/popcorn-openapi.json
 
 The spec is auto-generated from FastAPI's Pydantic models and route definitions. It gives you exact field names, types, HTTP methods, and required/optional status for every endpoint. Do not guess or assume — fetch the spec.
 
+## Agent-Facing Contract
+
+This CLI is designed to be consumed by LLM agents as well as humans. Treat the following as a **stable public contract** — breaking any of it is a minor version bump at minimum.
+
+- **Agent mode:** `POPCORN_AGENT=1` implies `--json`, `--quiet`, `--no-color`, and `POPCORN_NO_UPDATE_CHECK=1`. Injected in `_hoist_global_flags` (`cli.py`).
+- **Success envelope:** `{"ok": true, "data": ...}`. `_json_ok` (`cli.py`) strips any leaked top-level `ok` key from `data` so the CLI envelope is never shadowed by an upstream API response envelope.
+- **Error envelope:** `{"ok": false, "error": "...", "error_code": "...", "code": "...", "retryable": bool, ...}`.
+  - `error_code` is the **stable** machine-readable enum agents should branch on.
+  - `code` is the Python exception class name (legacy, avoid branching on).
+  - Enum values and their descriptions live in `popcorn_core.errors.ERROR_CODES`. `APIError.error_code` derives from HTTP status via `_api_status_to_error_code`.
+  - When raising `PopcornError` for a specific failure (e.g. not found, conflict), pass `error_code="not_found"` so agents can branch cleanly.
+- **Exit codes:** defined in `popcorn_core.errors` (`EXIT_OK`, `EXIT_VALIDATION`, `EXIT_AUTH`, `EXIT_CLIENT`, `EXIT_SERVER`, `EXIT_UNHEALTHY`, `EXIT_INTERRUPT`). Semantic — agents switch on these to decide retry vs bail.
+- **Schema discovery:** `popcorn commands --json` emits the full schema including `exit_codes`, `error_codes`, `envelope`, `agent_mode`, `global_flags`, and every command's arg types. Update this when adding agent-facing surface (`cmd_commands` in `cli.py`).
+
 ## Conventions
 
 - Color output respects `NO_COLOR` env var and `--no-color` flag

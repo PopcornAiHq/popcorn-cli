@@ -80,12 +80,18 @@ class TestRetryable:
 class TestToDict:
     def test_popcorn_error_to_dict(self):
         d = PopcornError("bad input").to_dict()
-        assert d == {"error": "bad input", "code": "PopcornError", "retryable": False}
+        assert d == {
+            "error": "bad input",
+            "error_code": "validation",
+            "code": "PopcornError",
+            "retryable": False,
+        }
 
     def test_auth_error_to_dict(self):
         d = AuthError("not logged in").to_dict()
         assert d["error"] == "not logged in"
         assert d["code"] == "AuthError"
+        assert d["error_code"] == "unauthorized"
         assert d["retryable"] is False
         assert d["hint"] == "popcorn auth login"
 
@@ -94,6 +100,7 @@ class TestToDict:
         d = err.to_dict()
         assert d["error"] == "not found"
         assert d["code"] == "APIError"
+        assert d["error_code"] == "not_found"
         assert d["status"] == 404
         assert d["retryable"] is False
         assert d["body"] == {"detail": "nope"}
@@ -145,3 +152,49 @@ class TestToDict:
     def test_api_error_request_id_absent(self):
         d = APIError("server error", status_code=500).to_dict()
         assert "request_id" not in d
+
+
+class TestErrorCode:
+    """Stable machine-readable error_code for agent branching."""
+
+    def test_popcorn_error_default(self):
+        assert PopcornError("x").error_code == "validation"
+
+    def test_popcorn_error_override_via_init(self):
+        assert PopcornError("x", error_code="not_found").error_code == "not_found"
+
+    def test_popcorn_error_hint_via_init(self):
+        e = PopcornError("x", hint="try this")
+        assert e.hint == "try this"
+        assert e.to_dict()["hint"] == "try this"
+
+    def test_auth_error_default(self):
+        assert AuthError("x").error_code == "unauthorized"
+
+    def test_api_error_401(self):
+        assert APIError("x", status_code=401).error_code == "unauthorized"
+
+    def test_api_error_403(self):
+        assert APIError("x", status_code=403).error_code == "forbidden"
+
+    def test_api_error_404(self):
+        assert APIError("x", status_code=404).error_code == "not_found"
+
+    def test_api_error_409(self):
+        assert APIError("x", status_code=409).error_code == "conflict"
+
+    def test_api_error_422(self):
+        assert APIError("x", status_code=422).error_code == "validation"
+
+    def test_api_error_429(self):
+        assert APIError("x", status_code=429).error_code == "rate_limited"
+
+    def test_api_error_other_4xx(self):
+        assert APIError("x", status_code=418).error_code == "client_error"
+
+    def test_api_error_5xx(self):
+        assert APIError("x", status_code=500).error_code == "server_error"
+        assert APIError("x", status_code=503).error_code == "server_error"
+
+    def test_api_error_network(self):
+        assert APIError("x").error_code == "network_error"

@@ -41,4 +41,4 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
             _channel_cache[name] = (conv_id, now)
             return conv_id
 
-    raise PopcornError(f"Channel not found: #{name}")
+    raise PopcornError(f"Channel not found: #{name}", error_code="not_found")
