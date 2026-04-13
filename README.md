@@ -206,6 +206,14 @@ popcorn api /v1/... -X POST -d @body.json
 uncommitted changes), pass `--yes` / `-y` or set `POPCORN_ASSUME_YES=1`.
 Without it, the CLI fails loudly in non-TTY mode instead of hanging.
 
+**Pagination** — paginated commands include `data.pagination.next`:
+
+```bash
+$ popcorn message list '#general' --limit 25 --json | jq '.data.pagination'
+{"next": {"before": "msg-abc-123"}}    # feed back: --before msg-abc-123
+# or null when no more pages
+```
+
 **Streaming commands** — `--watch` emits NDJSON when combined with `--json`:
 one complete envelope per line, newline-terminated, stdout-flushed. Pipe
 directly into a line-oriented consumer.

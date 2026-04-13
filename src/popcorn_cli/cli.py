@@ -238,6 +238,18 @@ def _json_line(data: Any) -> str:
     return json.dumps({"ok": True, "data": _strip_leaked_ok(data)}, default=str)
 
 
+def _attach_pagination(data: dict[str, Any], next_flags: dict[str, str] | None) -> dict[str, Any]:
+    """Attach a ``pagination.next`` block to a paginated response.
+
+    ``next_flags`` is a dict of CLI flag → value pairs the agent can feed back
+    to the same command to fetch the next page (e.g. ``{"before": "msg-id"}``).
+    When ``None``, emits ``{"next": null}`` so the field is always present and
+    agents don't need to distinguish "no more pages" from "not paginated".
+    """
+    data["pagination"] = {"next": next_flags}
+    return data
+
+
 def _json_err(error_dict: dict[str, Any]) -> str:
     """Wrap error in the standard error envelope."""
     return json.dumps({"ok": False, **error_dict}, indent=2, default=str)
@@ -719,6 +731,15 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
         oldest=getattr(args, "after", "") or "",
     )
     messages = resp.get("messages", [])
+
+    # Messages come newest-first; "next page older" cursor is the oldest id.
+    next_flags: dict[str, str] | None = None
+    if resp.get("has_more") and messages:
+        oldest_id = messages[-1].get("id")
+        if oldest_id:
+            next_flags = {"before": oldest_id}
+    _attach_pagination(resp, next_flags)
+
     lines = [fmt_message(m) for m in messages]
     if resp.get("has_more"):
         lines.append("\n  ... more messages (use --limit to see more)")
@@ -2397,6 +2418,16 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "{'ok': true, 'data': ...} envelope; no trailing summary."
                 ),
                 "commands": ["message list --watch"],
+            },
+            "pagination": {
+                "description": (
+                    "Paginated commands include data.pagination.next. When there "
+                    "are more results, `next` is a dict of CLI flag→value pairs "
+                    "the agent can feed back to the same command to fetch the "
+                    "next page. When there are no more results, `next` is null."
+                ),
+                "example": {"pagination": {"next": {"before": "msg-abc-123"}}},
+                "commands": ["message list"],
             },
         },
         "exit_codes": {

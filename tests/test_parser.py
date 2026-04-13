@@ -307,6 +307,31 @@ class TestJsonEnvelopeStripping:
         assert out == {"ok": True, "data": {"user": "shaun"}}
 
 
+class TestAttachPagination:
+    """_attach_pagination adds data.pagination.next in a uniform shape."""
+
+    def test_sets_next_when_more(self):
+        from popcorn_cli.cli import _attach_pagination
+
+        data = {"messages": []}
+        out = _attach_pagination(data, {"before": "m1"})
+        assert out["pagination"] == {"next": {"before": "m1"}}
+
+    def test_sets_next_null_when_no_more(self):
+        from popcorn_cli.cli import _attach_pagination
+
+        data = {"messages": []}
+        out = _attach_pagination(data, None)
+        assert out["pagination"] == {"next": None}
+
+    def test_mutates_in_place(self):
+        from popcorn_cli.cli import _attach_pagination
+
+        data = {"messages": []}
+        _attach_pagination(data, None)
+        assert "pagination" in data
+
+
 class TestJsonLine:
     """_json_line emits NDJSON — single line, no indentation, still strips ok."""
 
