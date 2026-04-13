@@ -44,6 +44,7 @@ Usage:
     popcorn completion bash|zsh
     popcorn upgrade
     popcorn version [--check]
+    popcorn doctor
     echo "msg" | popcorn message send <conversation>
     cat batch.ndjson | popcorn message send --batch --json
 
@@ -540,6 +541,132 @@ def cmd_auth_status(args: argparse.Namespace) -> None:
     if profile.expires_at > 0:
         exp_dt = datetime.fromtimestamp(profile.expires_at, tz=timezone.utc)
         print(f"Expires:   {exp_dt.strftime('%Y-%m-%d %H:%M UTC')}")
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    """Diagnose the local install: version, auth, API reachability, env vars."""
+    import platform as _platform
+
+    from popcorn_core.config import CONFIG_FILE
+
+    cfg = load_config()
+    profile = cfg.active_profile()
+    now = int(time.time())
+
+    # --- Auth ---
+    if not profile.email:
+        token_status = "missing"
+    elif profile.expires_at > 0 and profile.expires_at < now:
+        token_status = "expired"
+    else:
+        token_status = "valid"
+
+    auth_block: dict[str, Any] = {
+        "logged_in": bool(profile.email),
+        "email": profile.email or None,
+        "token_status": token_status,
+    }
+    if profile.expires_at > 0:
+        auth_block["expires_at"] = datetime.fromtimestamp(
+            profile.expires_at, tz=timezone.utc
+        ).isoformat()
+
+    # --- Config file ---
+    config_block: dict[str, Any] = {"path": str(CONFIG_FILE), "exists": CONFIG_FILE.exists()}
+    if CONFIG_FILE.exists():
+        try:
+            mode = CONFIG_FILE.stat().st_mode & 0o777
+            config_block["permissions"] = f"0{mode:o}"
+        except OSError:
+            pass
+
+    # --- API reachability ---
+    api_block: dict[str, Any] = {"url": profile.api_url, "reachable": False}
+    try:
+        import httpx
+
+        t0 = time.monotonic()
+        with httpx.Client(timeout=5.0) as hc:
+            r = hc.get(f"{profile.api_url.rstrip('/')}/openapi.json")
+        api_block["reachable"] = r.status_code < 500
+        api_block["latency_ms"] = int((time.monotonic() - t0) * 1000)
+        api_block["status_code"] = r.status_code
+    except Exception as e:
+        api_block["error"] = f"{type(e).__name__}: {e}"
+
+    # --- Env vars (keys only; values may be sensitive so show truthy/null) ---
+    relevant_env = [
+        "POPCORN_AGENT",
+        "POPCORN_API_URL",
+        "POPCORN_CLERK_ISSUER",
+        "POPCORN_CLERK_CLIENT_ID",
+        "POPCORN_PROXY_MODE",
+        "POPCORN_WORKSPACE_ID",
+        "POPCORN_USER_ID",
+        "POPCORN_NO_UPDATE_CHECK",
+        "POPCORN_ASSUME_YES",
+        "NO_COLOR",
+    ]
+    env_block = {k: os.environ.get(k) for k in relevant_env if os.environ.get(k)}
+
+    # --- Aggregate issues ---
+    issues: list[str] = []
+    if not auth_block["logged_in"]:
+        issues.append("Not logged in. Run: popcorn auth login")
+    elif token_status == "expired":
+        issues.append("Auth token expired. Run: popcorn auth login")
+    if not api_block.get("reachable"):
+        issues.append(f"Cannot reach API at {profile.api_url}")
+    if not profile.workspace_id and auth_block["logged_in"]:
+        issues.append("No active workspace. Run: popcorn workspace switch")
+    if config_block.get("permissions") and config_block["permissions"] != "0600":
+        issues.append(f"Config file permissions are {config_block['permissions']}, expected 0600")
+
+    report: dict[str, Any] = {
+        "status": "ok" if not issues else "issues",
+        "version": __version__,
+        "python": _platform.python_version(),
+        "platform": sys.platform,
+        "config": config_block,
+        "profile": cfg.default_profile,
+        "auth": auth_block,
+        "workspace": {"id": profile.workspace_id or None, "name": profile.workspace_name or None},
+        "api": api_block,
+        "env_vars": env_block,
+        "issues": issues,
+    }
+
+    if getattr(args, "json", False):
+        print(_json_ok(report))
+        return
+
+    # Human-readable: compact key/value layout with status markers
+    def mark(ok: bool) -> str:
+        return "✓" if ok else "✗"
+
+    lines = [
+        f"popcorn {__version__}  (python {report['python']} on {report['platform']})",
+        "",
+        f"{mark(config_block['exists'])}  config       {config_block['path']}",
+        f"   profile      {cfg.default_profile}",
+        f"{mark(auth_block['logged_in'] and token_status == 'valid')}  auth         "
+        f"{auth_block['email'] or '(not logged in)'}  [{token_status}]",
+        f"{mark(bool(profile.workspace_id))}  workspace    "
+        f"{profile.workspace_name or '(none)'}  {profile.workspace_id or ''}",
+        f"{mark(api_block.get('reachable', False))}  api          {profile.api_url}  "
+        f"({api_block.get('latency_ms', '?')}ms)",
+    ]
+    if env_block:
+        lines.append("   env vars     " + ", ".join(env_block))
+    if issues:
+        lines.append("")
+        lines.append(f"Issues ({len(issues)}):")
+        for issue in issues:
+            lines.append(f"  - {issue}")
+    else:
+        lines.append("")
+        lines.append("No issues detected.")
+    print("\n".join(lines))
 
 
 def cmd_auth_token(args: argparse.Namespace) -> None:
@@ -2321,6 +2448,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "api": "other",
     "completion": "other",
     "commands": "other",
+    "doctor": "other",
 }
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
@@ -2338,6 +2466,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "commands": "Dump CLI schema as JSON for programmatic discovery",
     "upgrade": "Upgrade popcorn to the latest version",
     "version": "Show version (--check to check for updates)",
+    "doctor": "Diagnose local setup: auth, API reachability, env, config",
 }
 
 
@@ -2705,7 +2834,8 @@ Auth & identity:
 Other:
   api             Raw API call (like gh api)
   completion      Generate shell completions
-  commands        Dump CLI schema as JSON"""
+  commands        Dump CLI schema as JSON
+  doctor          Diagnose local setup"""
 
     parser = PopcornParser(
         prog="popcorn",
@@ -3095,6 +3225,7 @@ Other:
     version_p = sub.add_parser("version", help=_h)
     version_p.add_argument("--check", action="store_true", help="Check for updates")
     sub.add_parser("upgrade", help=_h)
+    sub.add_parser("doctor", help=_h)
 
     # Hide the auto-generated subparser list — the epilog handles display
     sub._choices_actions = []
@@ -3118,6 +3249,7 @@ _COMMANDS = {
     "commands": cmd_commands,
     "upgrade": cmd_upgrade,
     "version": cmd_version,
+    "doctor": cmd_doctor,
 }
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents

@@ -120,6 +120,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn upgrade` | Upgrade to the latest version |
 | `popcorn version [--check]` | Show version / check for updates |
 | `popcorn commands` | Dump CLI schema as JSON |
+| `popcorn doctor` | Diagnose local setup (auth, API, config, env) |
 | `popcorn completion bash\|zsh` | Generate shell completions |
 
 ## Flags

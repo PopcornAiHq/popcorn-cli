@@ -120,6 +120,7 @@ This CLI is designed to be consumed by LLM agents as well as humans. Treat the f
 - **`api --data` body sources:** `_resolve_data_arg` accepts literal JSON, `@-` (stdin), or `@path` (file), matching `curl` and `gh api`. Agents piping large payloads should use `@-`.
 - **Streaming (`--watch`):** goes through `_json_line` (not `_json_ok`) — one NDJSON envelope per line, no pretty-printing, flushed every write. Same `_strip_leaked_ok` applies. `_json_ok` / `_json_line` are the two allowed JSON-output paths; don't hand-roll envelopes.
 - **Pagination:** paginated commands include `data.pagination.next` — a dict of CLI flag→value pairs the agent feeds back to the same command for the next page, or `null` when no more. Use `_attach_pagination(data, next_flags)` to emit the field. Currently applied to `message list`; extend to `webhook deliveries`, `message threads`, `message search`, `workspace inbox` as API `has_more` signals become reliable.
+- **`popcorn doctor`:** returns a structured diagnostic report (auth state, API reachability + latency, config file permissions, relevant env vars, list of detected `issues`). `--json` emits the full dict — the canonical agent/support-debug entry point when a user reports "popcorn isn't working". When adding a new failure mode the CLI should diagnose, append to the `issues` list in `cmd_doctor`.
 
 ## Conventions
 

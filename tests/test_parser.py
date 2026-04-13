@@ -307,6 +307,24 @@ class TestJsonEnvelopeStripping:
         assert out == {"ok": True, "data": {"user": "shaun"}}
 
 
+class TestDoctorCommand:
+    """`popcorn doctor` parses and maps to the handler."""
+
+    def test_doctor_parses(self, parser):
+        args = parser.parse_args(["doctor"])
+        assert args.command == "doctor"
+
+    def test_doctor_json_flag(self, parser):
+        args = parser.parse_args(["--json", "doctor"])
+        assert args.command == "doctor"
+        assert args.json is True
+
+    def test_doctor_registered_in_commands_map(self):
+        from popcorn_cli.cli import _COMMANDS
+
+        assert "doctor" in _COMMANDS
+
+
 class TestAttachPagination:
     """_attach_pagination adds data.pagination.next in a uniform shape."""
 
