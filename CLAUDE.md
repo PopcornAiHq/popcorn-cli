@@ -116,6 +116,8 @@ This CLI is designed to be consumed by LLM agents as well as humans. Treat the f
   - When raising `PopcornError` for a specific failure (e.g. not found, conflict), pass `error_code="not_found"` so agents can branch cleanly.
 - **Exit codes:** defined in `popcorn_core.errors` (`EXIT_OK`, `EXIT_VALIDATION`, `EXIT_AUTH`, `EXIT_CLIENT`, `EXIT_SERVER`, `EXIT_UNHEALTHY`, `EXIT_INTERRUPT`). Semantic — agents switch on these to decide retry vs bail.
 - **Schema discovery:** `popcorn commands --json` emits the full schema including `exit_codes`, `error_codes`, `envelope`, `agent_mode`, `global_flags`, and every command's arg types. Update this when adding agent-facing surface (`cmd_commands` in `cli.py`).
+- **Confirmation prompts:** interactive confirmations go through `_confirm(args, prompt)` in `cli.py`. It honors `--yes`/`-y` and `POPCORN_ASSUME_YES=1`, and **fails loudly** (raises `PopcornError`) in non-TTY mode otherwise — never silently no-op or hang. When adding a destructive op that needs confirmation, use `_confirm`, not `input()`.
+- **`api --data` body sources:** `_resolve_data_arg` accepts literal JSON, `@-` (stdin), or `@path` (file), matching `curl` and `gh api`. Agents piping large payloads should use `@-`.
 
 ## Conventions
 

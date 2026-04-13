@@ -133,6 +133,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `--workspace <uuid>` | Override workspace |
 | `--no-color` | Disable color output |
 | `--debug` | Log HTTP requests/responses to stderr |
+| `-y` / `--yes` | Auto-confirm prompts (also `POPCORN_ASSUME_YES=1`) |
 
 ## Agent / script usage
 
@@ -195,7 +196,15 @@ cat batch.ndjson | popcorn message send --batch --json
 ```bash
 popcorn api /openapi.json --raw > schema.json
 popcorn api /v1/... -X POST -d '{"...": "..."}' --json
+
+# curl/gh-style body sources
+echo '{"foo": 1}' | popcorn api /v1/... -X POST -d @-
+popcorn api /v1/... -X POST -d @body.json
 ```
+
+**Non-interactive confirmation** — for destructive prompts (e.g. export over
+uncommitted changes), pass `--yes` / `-y` or set `POPCORN_ASSUME_YES=1`.
+Without it, the CLI fails loudly in non-TTY mode instead of hanging.
 
 ## Conversation References
 

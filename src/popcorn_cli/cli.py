@@ -62,8 +62,12 @@ For agents and scripts:
         popcorn whoami --json              current user + workspace bootstrap
 
 Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
-       -e/--env, --no-color, --workspace UUID
+       -e/--env, --no-color, --workspace UUID, -y/--yes (skip prompts)
 Conversations can be specified as #channel-name or UUID.
+
+`popcorn api` --data supports @-/@file (curl/gh-style):
+    echo '{...}' | popcorn api /path -X POST -d @-
+    popcorn api /path -X POST -d @body.json
 
 Custom environments can be configured via environment variables:
     POPCORN_API_URL          API base URL (default: https://api.popcorn.ai)
@@ -232,6 +236,63 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
         print(_json_ok(data))
     else:
         print(formatted)
+
+
+def _assume_yes(args: argparse.Namespace) -> bool:
+    """Return True if the user has opted into auto-confirmation.
+
+    Triggers: ``--yes`` / ``-y`` flag, or ``POPCORN_ASSUME_YES=1`` env var.
+    """
+    if getattr(args, "yes", False):
+        return True
+    val = (os.environ.get("POPCORN_ASSUME_YES") or "").strip().lower()
+    return val in ("1", "true", "yes")
+
+
+def _confirm(args: argparse.Namespace, prompt: str, *, default: bool = False) -> bool:
+    """Prompt for y/N confirmation, with safe non-TTY behavior.
+
+    Rules (in order):
+      1. If ``--yes``/``-y`` or ``POPCORN_ASSUME_YES=1`` → return True.
+      2. If stdin is not a TTY → raise PopcornError so scripts fail loudly
+         instead of hanging. Agents must opt in explicitly.
+      3. Otherwise prompt; blank input uses ``default``.
+    """
+    if _assume_yes(args):
+        return True
+    if not sys.stdin.isatty():
+        raise PopcornError(
+            "Refusing to prompt in non-interactive mode. "
+            "Pass --yes (or set POPCORN_ASSUME_YES=1) to auto-confirm.",
+            error_code="validation",
+            hint="--yes",
+        )
+    suffix = " [Y/n] " if default else " [y/N] "
+    answer = input(prompt + suffix).strip().lower()
+    if not answer:
+        return default
+    return answer in ("y", "yes")
+
+
+def _resolve_data_arg(value: str) -> str:
+    """Resolve the ``-d``/``--data`` argument, supporting curl/gh-style ``@`` prefix.
+
+    - ``@-`` reads the body from stdin (use in pipelines)
+    - ``@path/to/file.json`` reads the body from a file
+    - ``\\@literal`` escapes a leading ``@`` so the literal string is kept
+    - anything else is returned as-is
+    """
+    if value.startswith("\\@"):
+        return value[1:]
+    if value == "@-":
+        return sys.stdin.read()
+    if value.startswith("@"):
+        path = Path(value[1:])
+        try:
+            return path.read_text()
+        except OSError as e:
+            raise PopcornError(f"Cannot read --data file {path}: {e}") from e
+    return value
 
 
 def _format_payload_preview(payload: Any, max_len: int = 200) -> str:
@@ -1816,11 +1877,13 @@ def cmd_export(args: argparse.Namespace) -> None:
                 text=True,
             )
             if status.returncode == 0 and status.stdout.strip():
-                answer = input(
+                proceed = _confirm(
+                    args,
                     f"Warning: {target_dir} has uncommitted changes that will be overwritten.\n"
-                    "Continue? [y/N] "
+                    "Continue?",
+                    default=False,
                 )
-                if answer.lower() not in ("y", "yes"):
+                if not proceed:
                     print("Export cancelled.")
                     return
         except FileNotFoundError:
@@ -1989,8 +2052,9 @@ def cmd_api(args: argparse.Namespace) -> None:
     client = _get_client(args)
     data = None
     if getattr(args, "data", None):
+        raw = _resolve_data_arg(args.data)
         try:
-            data = json.loads(args.data)
+            data = json.loads(raw)
         except json.JSONDecodeError as e:
             raise PopcornError(f"Invalid JSON in --data: {e}") from e
 
@@ -2612,6 +2676,12 @@ Other:
         action="store_true",
         help="Log HTTP requests and responses to stderr (may include sensitive data)",
     )
+    parser.add_argument(
+        "-y",
+        "--yes",
+        action="store_true",
+        help="Assume yes on all interactive prompts (also POPCORN_ASSUME_YES=1)",
+    )
 
     sub = parser.add_subparsers(dest="command", metavar="<command>")
 
@@ -2910,7 +2980,12 @@ Other:
         default=None,
         help="HTTP method (default: GET, or POST if --data)",
     )
-    api_p.add_argument("--data", "-d", type=str, help="JSON request body")
+    api_p.add_argument(
+        "--data",
+        "-d",
+        type=str,
+        help="JSON request body (use '@-' to read stdin, '@path' to read a file)",
+    )
     api_p.add_argument(
         "-p",
         "--param",
@@ -3030,7 +3105,7 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
             hoisted.append("--no-color")
 
     # Boolean flags
-    for flag in ("--json", "--quiet", "-q", "--debug", "--no-color"):
+    for flag in ("--json", "--quiet", "-q", "--debug", "--no-color", "--yes", "-y"):
         if flag in args:
             hoisted.append(flag)
             args = [a for a in args if a != flag]

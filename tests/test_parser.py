@@ -138,6 +138,120 @@ class TestAgentMode:
         assert _agent_mode_enabled() is False
 
 
+class TestAssumeYes:
+    """--yes / POPCORN_ASSUME_YES opts into non-interactive confirmation."""
+
+    def test_yes_flag_via_parser(self, parser):
+        args = parser.parse_args(["--yes", "whoami"])
+        assert args.yes is True
+
+    def test_short_y_flag(self, parser):
+        args = parser.parse_args(["-y", "whoami"])
+        assert args.yes is True
+
+    def test_assume_yes_flag(self, monkeypatch):
+        import argparse
+
+        from popcorn_cli.cli import _assume_yes
+
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        assert _assume_yes(argparse.Namespace(yes=True)) is True
+        assert _assume_yes(argparse.Namespace(yes=False)) is False
+
+    def test_assume_yes_env(self, monkeypatch):
+        import argparse
+
+        from popcorn_cli.cli import _assume_yes
+
+        monkeypatch.setenv("POPCORN_ASSUME_YES", "1")
+        assert _assume_yes(argparse.Namespace(yes=False)) is True
+
+    def test_yes_flag_hoisted(self):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        result = _hoist_global_flags(["channel", "delete", "#old", "--yes"])
+        assert result[0] == "--yes"
+
+
+class TestConfirm:
+    """_confirm fails loudly on non-TTY unless --yes is set."""
+
+    def test_returns_true_when_assume_yes(self, monkeypatch):
+        import argparse
+
+        from popcorn_cli.cli import _confirm
+
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        args = argparse.Namespace(yes=True)
+        assert _confirm(args, "Delete everything?") is True
+
+    def test_raises_on_non_tty_without_yes(self, monkeypatch):
+        import argparse
+
+        import pytest
+
+        from popcorn_cli.cli import _confirm
+        from popcorn_core.errors import PopcornError
+
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        # Force stdin to look non-interactive
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        args = argparse.Namespace(yes=False)
+        with pytest.raises(PopcornError, match="Refusing to prompt"):
+            _confirm(args, "Delete everything?")
+
+    def test_env_var_bypasses_tty_check(self, monkeypatch):
+        import argparse
+
+        from popcorn_cli.cli import _confirm
+
+        monkeypatch.setenv("POPCORN_ASSUME_YES", "1")
+        monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+        args = argparse.Namespace(yes=False)
+        assert _confirm(args, "Delete?") is True
+
+
+class TestResolveDataArg:
+    """_resolve_data_arg supports curl/gh-style @file and @- (stdin)."""
+
+    def test_literal_string(self):
+        from popcorn_cli.cli import _resolve_data_arg
+
+        assert _resolve_data_arg('{"a": 1}') == '{"a": 1}'
+
+    def test_stdin(self, monkeypatch):
+        import io
+
+        from popcorn_cli.cli import _resolve_data_arg
+
+        monkeypatch.setattr("sys.stdin", io.StringIO('{"from": "stdin"}'))
+        assert _resolve_data_arg("@-") == '{"from": "stdin"}'
+
+    def test_file(self, tmp_path):
+        from popcorn_cli.cli import _resolve_data_arg
+
+        f = tmp_path / "body.json"
+        f.write_text('{"from": "file"}')
+        assert _resolve_data_arg(f"@{f}") == '{"from": "file"}'
+
+    def test_file_not_found(self, tmp_path):
+        import pytest
+
+        from popcorn_cli.cli import _resolve_data_arg
+        from popcorn_core.errors import PopcornError
+
+        missing = tmp_path / "nope.json"
+        with pytest.raises(PopcornError, match="Cannot read --data file"):
+            _resolve_data_arg(f"@{missing}")
+
+    def test_escaped_at_sign(self):
+        from popcorn_cli.cli import _resolve_data_arg
+
+        # '\@literal' → literal '@literal' — escape hatch for payloads that
+        # genuinely start with '@'.
+        assert _resolve_data_arg("\\@literal") == "@literal"
+
+
 class TestFormatPayloadPreview:
     """_format_payload_preview renders webhook payload_raw values compactly."""
 
