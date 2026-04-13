@@ -827,8 +827,15 @@ def cmd_channel_list(args: argparse.Namespace) -> None:
 def cmd_search_messages(args: argparse.Namespace) -> None:
     client = _get_client(args)
     query = args.query or ""
-    resp = operations.search_messages(client, query)
+    limit = getattr(args, "limit", None) or 50
+    offset = getattr(args, "offset", None) or 0
+    resp = operations.search_messages(client, query, limit=limit, offset=offset)
     messages = resp.get("messages", [])
+
+    # Backend sets has_more when there are more results at the next offset.
+    next_flags = {"offset": str(offset + limit)} if resp.get("has_more") else None
+    _attach_pagination(resp, next_flags)
+
     lines = [fmt_message(item.get("message") or item) for item in messages]
     fmt = "Messages:\n" + "\n".join(lines) if lines else "No messages found."
     _output(args, resp, fmt)
@@ -875,13 +882,16 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
 
 def cmd_list_threads(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.list_threads(
-        client,
-        args.conversation,
-        limit=args.limit or 50,
-        offset=getattr(args, "offset", 0) or 0,
-    )
+    limit = args.limit or 50
+    offset = getattr(args, "offset", 0) or 0
+    resp = operations.list_threads(client, args.conversation, limit=limit, offset=offset)
     threads = resp.get("threads", [])
+
+    # Backend doesn't return has_more for threads — use a safe heuristic:
+    # a full page probably means more exist. At worst the agent fetches an
+    # empty next page.
+    next_flags = {"offset": str(offset + limit)} if len(threads) >= limit else None
+    _attach_pagination(resp, next_flags)
 
     if getattr(args, "json", False):
         print(_json_ok(resp))
@@ -2239,11 +2249,17 @@ def cmd_api(args: argparse.Namespace) -> None:
 def cmd_inbox(args: argparse.Namespace) -> None:
     client = _get_client(args)
     filter_type = "unread" if args.unread else ("read" if args.read else "all")
-    resp = operations.get_inbox(client, filter_type, args.limit or 20)
+    limit = args.limit or 20
+    offset = getattr(args, "offset", None) or 0
+    resp = operations.get_inbox(client, filter_type, limit=limit, offset=offset)
 
     activity_data = extract(resp, "activity", label="inbox")
     activities = activity_data.get("activities", [])
     unread_count = activity_data.get("unread_count", 0)
+
+    # Backend doesn't surface has_more here — heuristic: a full page implies more.
+    next_flags = {"offset": str(offset + limit)} if len(activities) >= limit else None
+    _attach_pagination(resp, next_flags)
 
     lines = [f"Unread: {unread_count}"]
     lines.extend(fmt_activity(act) for act in activities)
@@ -2556,7 +2572,12 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "next page. When there are no more results, `next` is null."
                 ),
                 "example": {"pagination": {"next": {"before": "msg-abc-123"}}},
-                "commands": ["message list"],
+                "commands": [
+                    "message list",
+                    "message threads",
+                    "message search",
+                    "workspace inbox",
+                ],
             },
         },
         "exit_codes": {
@@ -2895,6 +2916,7 @@ Other:
     ws_inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
     ws_inbox_grp.add_argument("--read", action="store_true", help="Show only read")
     ws_inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
+    ws_inbox_p.add_argument("--offset", type=int, help="Pagination offset")
 
     ws_sub.add_parser("list", help="List available workspaces")
     switch_p = ws_sub.add_parser("switch", help="Switch active workspace")
@@ -3042,6 +3064,8 @@ Other:
 
     msg_search_p = msg_sub.add_parser("search", help="Full-text message search")
     msg_search_p.add_argument("query", nargs="?", default="", help="Search query")
+    msg_search_p.add_argument("--limit", type=int, help="Max results (default 50)")
+    msg_search_p.add_argument("--offset", type=int, help="Pagination offset")
 
     msg_send_p = msg_sub.add_parser("send", help="Send a message")
     msg_send_p.add_argument(
