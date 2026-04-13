@@ -2,7 +2,7 @@
 
 CLI for the [Popcorn](https://popcorn.ai) API. Deploy sites, send messages, search conversations, and manage your workspace from the terminal.
 
-> **Using this from an agent or script?** Set `POPCORN_AGENT=1` to enable agent-friendly defaults (`--json`, `--quiet`, `--no-color`, no upgrade prompts). Every command supports `--json`, which returns a stable envelope (`{"ok": true, "data": ...}`) with machine-readable `error_code` and semantic exit codes. Run `popcorn commands --json` to discover the full schema. See [Agent / script usage](#agent--script-usage) below.
+> **Using this from an agent or script?** Set `POPCORN_AGENT=1` to enable agent-friendly defaults (`--json`, `--quiet`, `--no-color`, no upgrade prompts). Every command supports `--json`, which returns a stable envelope (`{"ok": true, "data": ...}`) with machine-readable `error_code` and semantic exit codes. Run `popcorn commands --json` to discover the full schema. For the formal contract, see [SPEC.md](./SPEC.md). Quick overview below.
 
 ## Install
 
