@@ -122,6 +122,7 @@ from popcorn_core.errors import (
 )
 from popcorn_core.local_state import (
     AmbiguousTargetError,
+    Target,
     load_local_state,
     make_target,
     resolve_target,
@@ -1845,41 +1846,59 @@ def cmd_pop(args: argparse.Namespace) -> None:
             print(msg, file=sys.stderr)
 
     # Resolve existing deploy target from .popcorn.local.json
+    #
+    # Priority:
+    #   1. --target <name>   → explicit key lookup in targets dict
+    #   2. positional name   → match against targets by site_name
+    #   3. (neither)         → auto-resolve via workspace, default, single-target
     local_state = load_local_state()
     target_name = getattr(args, "target", None) or ""
     auto_mode = target_name == "auto"
     if auto_mode:
         target_name = ""  # Let resolve_target auto-select
-    try:
-        existing = resolve_target(
-            local_state,
-            workspace_id=client.profile.workspace_id,
-            target_name=target_name,
-        )
-    except AmbiguousTargetError as e:
-        raise PopcornError(
-            f"Multiple deploy targets found, none matching current workspace.\n"
-            f"  Available targets: {', '.join(e.available)}\n"
-            f"  Use --target <name> to specify.",
-            error_code="validation",
-        ) from e
-    if not existing and target_name:
-        available = ", ".join(local_state.targets.keys()) if local_state.targets else "(none)"
-        raise PopcornError(
-            f"Target '{target_name}' not found in .popcorn.local.json.\n"
-            f"  Available targets: {available}\n"
-            f"  Run 'popcorn site deploy' without --target to create new.",
-            error_code="not_found",
-        )
-    if auto_mode and not existing:
-        raise PopcornError(
-            "No deploy target found to auto-select.\n"
-            "  Run 'popcorn site deploy' without --target to create a new channel.",
-            error_code="not_found",
-        )
+
+    existing: Target | None = None
+
+    # Explicit positional name (no --target): match by site_name, skip auto-resolve
+    if args.name and not target_name and not auto_mode:
+        # Match with or without pop- prefix (user may type either form)
+        match_name = args.name if args.name.startswith("pop-") else f"pop-{args.name}"
+        for t in local_state.targets.values():
+            if t.site_name in (args.name, match_name):
+                existing = t
+                break
+        # No match → existing stays None, skip auto-resolve → creates new channel
+    elif not existing:
+        try:
+            existing = resolve_target(
+                local_state,
+                workspace_id=client.profile.workspace_id,
+                target_name=target_name,
+            )
+        except AmbiguousTargetError as e:
+            raise PopcornError(
+                f"Multiple deploy targets found, none matching current workspace.\n"
+                f"  Available targets: {', '.join(e.available)}\n"
+                f"  Use --target <name> to specify.",
+                error_code="validation",
+            ) from e
+        if not existing and target_name:
+            available = ", ".join(local_state.targets.keys()) if local_state.targets else "(none)"
+            raise PopcornError(
+                f"Target '{target_name}' not found in .popcorn.local.json.\n"
+                f"  Available targets: {available}\n"
+                f"  Run 'popcorn site deploy' without --target to create new.",
+                error_code="not_found",
+            )
+        if auto_mode and not existing:
+            raise PopcornError(
+                "No deploy target found to auto-select.\n"
+                "  Run 'popcorn site deploy' without --target to create a new channel.",
+                error_code="not_found",
+            )
+
     selected_target = None
     if existing:
-        # Find the key for this target in the targets dict
         for key, t in local_state.targets.items():
             if t is existing:
                 selected_target = key
