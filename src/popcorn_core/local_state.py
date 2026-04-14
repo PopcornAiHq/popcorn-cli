@@ -95,6 +95,14 @@ def save_local_state(state: LocalState, path: Path | None = None) -> None:
     p.write_text(json.dumps(state.to_dict(), indent=2) + "\n")
 
 
+class AmbiguousTargetError(Exception):
+    """Raised when multiple targets exist but none can be auto-selected."""
+
+    def __init__(self, available: list[str]) -> None:
+        self.available = available
+        super().__init__(f"Multiple targets, none matching: {', '.join(available)}")
+
+
 def resolve_target(
     state: LocalState,
     *,
@@ -107,6 +115,11 @@ def resolve_target(
     1. Explicit target_name (--target flag)
     2. default_target
     3. First target matching workspace_id
+    4. Single target (unambiguous)
+
+    Raises AmbiguousTargetError when multiple targets exist but none
+    match via default or workspace — prevents silent new-channel creation.
+    Returns None only when no targets exist at all.
     """
     if target_name:
         return state.targets.get(target_name)
@@ -124,6 +137,10 @@ def resolve_target(
     # Single target — just use it
     if len(state.targets) == 1:
         return next(iter(state.targets.values()))
+
+    # Multiple targets, no match — ambiguous
+    if len(state.targets) > 1:
+        raise AmbiguousTargetError(list(state.targets.keys()))
 
     return None
 

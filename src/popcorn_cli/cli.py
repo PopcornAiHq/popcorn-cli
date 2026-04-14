@@ -121,6 +121,7 @@ from popcorn_core.errors import (
     PopcornError,
 )
 from popcorn_core.local_state import (
+    AmbiguousTargetError,
     load_local_state,
     make_target,
     resolve_target,
@@ -1310,11 +1311,19 @@ def _resolve_conversation_id_from_local(args: argparse.Namespace, client: APICli
     # Try .popcorn.local.json
     state = load_local_state()
     target_name = getattr(args, "target", None) or ""
-    target = resolve_target(
-        state,
-        workspace_id=client.profile.workspace_id,
-        target_name=target_name,
-    )
+    try:
+        target = resolve_target(
+            state,
+            workspace_id=client.profile.workspace_id,
+            target_name=target_name,
+        )
+    except AmbiguousTargetError as e:
+        raise PopcornError(
+            f"Multiple deploy targets found, none matching current workspace.\n"
+            f"  Available targets: {', '.join(e.available)}\n"
+            f"  Use --target <name> to specify.",
+            error_code="validation",
+        ) from e
     if not target and target_name:
         available = ", ".join(state.targets.keys()) if state.targets else "(none)"
         raise PopcornError(
@@ -1838,11 +1847,22 @@ def cmd_pop(args: argparse.Namespace) -> None:
     # Resolve existing deploy target from .popcorn.local.json
     local_state = load_local_state()
     target_name = getattr(args, "target", None) or ""
-    existing = resolve_target(
-        local_state,
-        workspace_id=client.profile.workspace_id,
-        target_name=target_name,
-    )
+    auto_mode = target_name == "auto"
+    if auto_mode:
+        target_name = ""  # Let resolve_target auto-select
+    try:
+        existing = resolve_target(
+            local_state,
+            workspace_id=client.profile.workspace_id,
+            target_name=target_name,
+        )
+    except AmbiguousTargetError as e:
+        raise PopcornError(
+            f"Multiple deploy targets found, none matching current workspace.\n"
+            f"  Available targets: {', '.join(e.available)}\n"
+            f"  Use --target <name> to specify.",
+            error_code="validation",
+        ) from e
     if not existing and target_name:
         available = ", ".join(local_state.targets.keys()) if local_state.targets else "(none)"
         raise PopcornError(
@@ -1851,6 +1871,19 @@ def cmd_pop(args: argparse.Namespace) -> None:
             f"  Run 'popcorn site deploy' without --target to create new.",
             error_code="not_found",
         )
+    if auto_mode and not existing:
+        raise PopcornError(
+            "No deploy target found to auto-select.\n"
+            "  Run 'popcorn site deploy' without --target to create a new channel.",
+            error_code="not_found",
+        )
+    selected_target = None
+    if existing:
+        # Find the key for this target in the targets dict
+        for key, t in local_state.targets.items():
+            if t is existing:
+                selected_target = key
+                break
     conversation_id = existing.conversation_id if existing else None
 
     # Workspace mismatch check
@@ -2035,6 +2068,8 @@ def cmd_pop(args: argparse.Namespace) -> None:
 
     # Build output
     output_data: dict[str, Any] = {**result}
+    if selected_target:
+        output_data["selected_target"] = selected_target
     if site_url:
         output_data["site_url"] = site_url
     if suggested_name:
@@ -3097,7 +3132,9 @@ Other:
     site_deploy_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
     site_deploy_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
     site_deploy_p.add_argument(
-        "--target", type=str, help="Named deploy target from .popcorn.local.json"
+        "--target",
+        type=str,
+        help="Named deploy target from .popcorn.local.json, or 'auto' to auto-select (never creates new)",
     )
 
     site_export_p = site_sub.add_parser("export", help="Export site code from VM")

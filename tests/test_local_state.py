@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from popcorn_core.local_state import (
+    AmbiguousTargetError,
     LocalState,
     Target,
     load_local_state,
@@ -257,8 +258,10 @@ class TestResolveTarget:
 
     def test_multiple_no_match(self, two_target_state: LocalState) -> None:
         two_target_state.default_target = ""
-        t = resolve_target(two_target_state, workspace_id="ws_other")
-        assert t is None
+        with pytest.raises(AmbiguousTargetError) as exc_info:
+            resolve_target(two_target_state, workspace_id="ws_other")
+        assert "staging" in exc_info.value.available
+        assert "production" in exc_info.value.available
 
 
 # ---------------------------------------------------------------------------
