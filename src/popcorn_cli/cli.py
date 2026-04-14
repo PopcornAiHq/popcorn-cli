@@ -89,6 +89,7 @@ import shutil
 import sys
 import time
 import webbrowser
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1437,6 +1438,70 @@ def _parse_vm_error(e: APIError) -> str | None:
     return None
 
 
+def _build_git_context(
+    client: APIClient,
+    conversation_id: str | None,
+    progress: Callable[[str], None],
+) -> str:
+    """Auto-generate deploy context from git commits since last deploy."""
+    import subprocess
+
+    # Check we're in a git repo
+    try:
+        subprocess.run(
+            ["git", "rev-parse", "--git-dir"],
+            capture_output=True,
+            check=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "Deploy (no git repo)"
+
+    # Get last deployed commit hash
+    deployed_hash = None
+    if conversation_id:
+        progress("Fetching last deployed version...")
+        try:
+            status = operations.get_site_status(client, conversation_id)
+            deployed_hash = status.get("commit_hash")
+        except Exception:
+            pass  # First deploy or status unavailable — fall through
+
+    # Build git log
+    if deployed_hash:
+        # Verify the hash exists locally
+        check = subprocess.run(
+            ["git", "cat-file", "-t", deployed_hash],
+            capture_output=True,
+        )
+        if check.returncode == 0:
+            result = subprocess.run(
+                ["git", "log", "--oneline", f"{deployed_hash}..HEAD"],
+                capture_output=True,
+                text=True,
+            )
+            lines = result.stdout.strip().splitlines()
+            if not lines:
+                return "Redeploy (no new commits)"
+            n = len(lines)
+            header = f"{n} commit{'s' if n != 1 else ''} since last deploy:"
+            # Cap at 20 lines to keep context reasonable
+            if n > 20:
+                shown = "\n".join(f"  {ln}" for ln in lines[:20])
+                return f"{header}\n{shown}\n  ... and {n - 20} more"
+            return header + "\n" + "\n".join(f"  {ln}" for ln in lines)
+
+    # No deployed hash — first deploy or hash not in local history
+    result = subprocess.run(
+        ["git", "log", "--oneline", "-5"],
+        capture_output=True,
+        text=True,
+    )
+    lines = result.stdout.strip().splitlines()
+    if lines:
+        return "Initial deploy. Recent commits:\n" + "\n".join(f"  {ln}" for ln in lines)
+    return "Initial deploy"
+
+
 def _extract_error_code(e: APIError) -> str | None:
     """Extract the error code from an API error body.
 
@@ -1831,6 +1896,10 @@ def cmd_pop(args: argparse.Namespace) -> None:
             _status("Stale channel configuration — auto-recreating.")
             conversation_id = None
 
+    # Resolve deploy context (--context and --context-from-git are mutually exclusive via argparse)
+    if getattr(args, "context_from_git", False):
+        args.context = _build_git_context(client, conversation_id, _progress)
+
     # Create tarball
     _progress("Packaging files...")
     tarball = create_tarball()
@@ -2197,6 +2266,48 @@ def cmd_status(args: argparse.Namespace) -> None:
     print("\n".join(lines))
 
 
+def cmd_targets(args: argparse.Namespace) -> None:
+    """List deploy targets from .popcorn.local.json."""
+    state = load_local_state()
+
+    targets_list = []
+    for name, t in state.targets.items():
+        entry: dict[str, Any] = {
+            "name": name,
+            "site_name": t.site_name,
+            "workspace_id": t.workspace_id,
+            "workspace_name": t.workspace_name,
+            "conversation_id": t.conversation_id,
+        }
+        if t.deployed_at:
+            entry["deployed_at"] = t.deployed_at
+        if t.profile:
+            entry["profile"] = t.profile
+        targets_list.append(entry)
+
+    data: dict[str, Any] = {
+        "targets": targets_list,
+        "default": state.default_target or None,
+    }
+
+    if getattr(args, "json", False):
+        print(_json_ok(data))
+        return
+
+    if not targets_list:
+        print("No deploy targets found in .popcorn.local.json")
+        print("  Run 'popcorn site deploy' to create one.")
+        return
+
+    for entry in targets_list:
+        marker = " (default)" if entry["name"] == state.default_target else ""
+        print(f"{entry['name']}{marker}")
+        print(f"  site:      {entry['site_name']}")
+        print(f"  workspace: {entry.get('workspace_name') or entry['workspace_id']}")
+        if entry.get("deployed_at"):
+            print(f"  deployed:  {entry['deployed_at']}")
+
+
 def cmd_log(args: argparse.Namespace) -> None:
     client = _get_client(args)
     conversation_id = _resolve_conversation_id_from_local(args, client)
@@ -2496,7 +2607,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 }
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
-    "site": "Site commands (cancel, deploy, log, rollback, status, trace)",
+    "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)",
     "webhook": "Webhook commands (create, deliveries, list)",
@@ -2975,7 +3086,13 @@ Other:
     site_deploy_p.add_argument(
         "name", nargs="?", default=None, help="Site name (default: pop-<dirname>)"
     )
-    site_deploy_p.add_argument("--context", type=str, default="", help="Deploy context message")
+    _ctx_group = site_deploy_p.add_mutually_exclusive_group()
+    _ctx_group.add_argument("--context", type=str, default="", help="Deploy context message")
+    _ctx_group.add_argument(
+        "--context-from-git",
+        action="store_true",
+        help="Auto-generate context from git commits since last deploy",
+    )
     site_deploy_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
     site_deploy_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
     site_deploy_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
@@ -3020,6 +3137,8 @@ Other:
     site_status_p.add_argument(
         "--target", type=str, help="Named deploy target from .popcorn.local.json"
     )
+
+    site_sub.add_parser("targets", help="List deploy targets from .popcorn.local.json")
 
     site_trace_p = site_sub.add_parser("trace", help="Show agent execution trace")
     site_trace_p.add_argument("channel", help="Channel/site name")
@@ -3424,6 +3543,7 @@ def main() -> None:
                 "log": cmd_log,
                 "rollback": cmd_vm_rollback,
                 "status": cmd_status,
+                "targets": cmd_targets,
                 "trace": cmd_vm_trace,
             }
             handler = site_sub.get(getattr(args, "site_command", None) or "")
@@ -3431,7 +3551,7 @@ def main() -> None:
                 handler(args)
             else:
                 raise PopcornError(
-                    "Usage: popcorn site [cancel|deploy|export|log|rollback|status|trace]"
+                    "Usage: popcorn site [cancel|deploy|export|log|rollback|status|targets|trace]"
                 )
         elif args.command == "message":
             msg_sub = {
