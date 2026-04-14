@@ -199,12 +199,6 @@ def _get_client(args: argparse.Namespace) -> APIClient:
         e.hint = "popcorn auth login --workspace <name>"
         raise e
 
-    if getattr(args, "workspace", None):
-        profile.workspace_id = args.workspace
-
-    if sys.stderr.isatty():
-        _status(f"[{env}] {profile.email} / {profile.workspace_name}")
-
     timeout = getattr(args, "timeout", None)
     debug = getattr(args, "debug", False)
     kwargs = {}
@@ -212,6 +206,23 @@ def _get_client(args: argparse.Namespace) -> APIClient:
         kwargs["timeout"] = timeout
     if debug:
         kwargs["debug"] = True
+
+    ws_override = getattr(args, "workspace", None)
+    if ws_override:
+        # Resolve by name or ID, reusing _select_workspace's matching logic
+        client = APIClient(profile, **kwargs)
+        workspaces = operations.list_workspaces(client)
+        for ws in workspaces:
+            if ws["id"] == ws_override or (ws.get("name") or "").lower() == ws_override.lower():
+                profile.workspace_id = ws["id"]
+                profile.workspace_name = ws.get("name", "")
+                break
+        else:
+            raise PopcornError(f"Workspace not found: {ws_override}", error_code="not_found")
+
+    if sys.stderr.isatty():
+        _status(f"[{env}] {profile.email} / {profile.workspace_name}")
+
     return APIClient(profile, **kwargs)
 
 
@@ -1303,6 +1314,14 @@ def _resolve_conversation_id_from_local(args: argparse.Namespace, client: APICli
         workspace_id=client.profile.workspace_id,
         target_name=target_name,
     )
+    if not target and target_name:
+        available = ", ".join(state.targets.keys()) if state.targets else "(none)"
+        raise PopcornError(
+            f"Target '{target_name}' not found in .popcorn.local.json.\n"
+            f"  Available targets: {available}\n"
+            f"  Run 'popcorn site deploy' without --target to create new.",
+            error_code="not_found",
+        )
     if target and target.conversation_id:
         return target.conversation_id
 
@@ -1759,6 +1778,14 @@ def cmd_pop(args: argparse.Namespace) -> None:
         workspace_id=client.profile.workspace_id,
         target_name=target_name,
     )
+    if not existing and target_name:
+        available = ", ".join(local_state.targets.keys()) if local_state.targets else "(none)"
+        raise PopcornError(
+            f"Target '{target_name}' not found in .popcorn.local.json.\n"
+            f"  Available targets: {available}\n"
+            f"  Run 'popcorn site deploy' without --target to create new.",
+            error_code="not_found",
+        )
     conversation_id = existing.conversation_id if existing else None
 
     # Workspace mismatch check
@@ -1772,7 +1799,8 @@ def cmd_pop(args: argparse.Namespace) -> None:
         raise PopcornError(
             f"Target '{existing.site_name}' belongs to workspace '{ws_label}'.\n"
             f"  You are currently in workspace '{client.profile.workspace_name}'.\n"
-            f"  Switch workspace or use --name to create a new deploy target."
+            f"  Switch workspace, use --name to create a new deploy target,\n"
+            f"  or pass --workspace {existing.workspace_id} to deploy there without switching."
         )
 
     # Validate existing channel — detect stale target
@@ -3320,7 +3348,7 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
             args = [a for a in args if a != flag]
 
     # Value flags (--flag VALUE)
-    for flag in ("--timeout",):
+    for flag in ("--timeout", "--workspace", "--env", "-e"):
         if flag in args:
             idx = args.index(flag)
             hoisted.append(args[idx])
