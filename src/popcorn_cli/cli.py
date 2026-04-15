@@ -1357,8 +1357,22 @@ def _create_with_collision_retry(
         return result, site_name
     except APIError as e:
         if e.status_code == 400 and _extract_error_code(e) == "already_exists":
-            # Channel exists but wasn't created via deploy flow — provision site
-            info = operations.get_conversation_info(client, site_name)
+            # Channel exists but wasn't created via deploy flow — provision site.
+            # If the server says it exists but the user can't see it (ghost
+            # channel — not in their channel list), resolve_conversation raises
+            # not_found. Re-raise as a clearer conflict error so agents/users
+            # don't see the confusing "channel not found" when the server just
+            # said it exists.
+            try:
+                info = operations.get_conversation_info(client, site_name)
+            except PopcornError as resolve_err:
+                if resolve_err.error_code == "not_found":
+                    raise PopcornError(
+                        f"Channel '{site_name}' exists but isn't accessible in "
+                        f"your workspace. Try a different name.",
+                        error_code="conflict",
+                    ) from resolve_err
+                raise
             conv = info["conversation"]
             conv_id = conv["id"]
             metadata = conv.get("metadata") or {}
@@ -1644,8 +1658,9 @@ def _detect_installer() -> str | None:
     return None
 
 
-def cmd_upgrade(args: argparse.Namespace) -> None:
+def cmd_upgrade(_args: argparse.Namespace) -> None:
     """Upgrade popcorn to the latest version."""
+    del _args  # dispatcher passes args but this command takes no options
     import subprocess
 
     old_version = __version__

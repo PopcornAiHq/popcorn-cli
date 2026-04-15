@@ -989,6 +989,56 @@ class TestPop:
         assert update_calls[0][1]["data"]["conversation_type"] == "workspace_channel"
         assert update_calls[0][1]["data"]["site_name"] == "pop-test"
 
+    def test_pop_create_already_exists_ghost_channel_raises_conflict(
+        self, mock_client, tmp_path, monkeypatch, pop_args
+    ):
+        """Server says channel exists but it's not in the user's channel list.
+
+        The previous behavior leaked 'Channel not found: #<name>' from
+        resolve_conversation — confusing because the server just said it exists.
+        Expect a clear 'conflict' error instead.
+        """
+        monkeypatch.chdir(tmp_path)
+        pop_args.name = "pop-test"
+        (tmp_path / ".gitignore").write_text("")
+
+        # Clear resolve cache — prior tests may have cached 'pop-test'
+        from popcorn_core.resolve import _channel_cache
+
+        _channel_cache.clear()
+
+        already_exists_body = json.dumps({"detail": {"error": "already_exists"}})
+
+        mock_client.get.side_effect = [
+            # resolve_conversation for get_conversation_info:
+            # pop-test is NOT in the list → ghost channel
+            {"conversations": [{"id": "other-id", "name": "other-channel"}]},
+        ]
+        mock_client.post.side_effect = [
+            # deploy_create → already_exists
+            APIError("Channel already exists", status_code=400, body=already_exists_body),
+        ]
+
+        with (
+            patch("popcorn_cli.cli.create_tarball", return_value=str(tmp_path / "t.tar.gz")),
+            patch("popcorn_core.operations.deploy_upload"),
+            patch("os.unlink"),
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            patch("popcorn_cli.cli.load_config", return_value=_mock_load_config()),
+        ):
+            from popcorn_cli.cli import cmd_pop
+
+            with pytest.raises(PopcornError) as exc_info:
+                cmd_pop(pop_args)
+
+        assert exc_info.value.error_code == "conflict"
+        msg = str(exc_info.value)
+        assert "pop-test" in msg
+        # Message should clearly convey the access conflict, not leak
+        # "Channel not found" from resolve_conversation.
+        assert "not found" not in msg.lower()
+        assert "accessible" in msg.lower()
+
     def test_pop_existing_site_still_works(self, mock_client, tmp_path, monkeypatch, pop_args):
         """Deploy to channel that already has a site works without provisioning."""
         monkeypatch.chdir(tmp_path)
