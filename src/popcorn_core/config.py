@@ -98,6 +98,28 @@ def resolve_env() -> dict[str, str]:
     }
 
 
+def resolve_auth_env(profile: Profile) -> dict[str, str]:
+    """Resolve OAuth config for a login with priority: env var > profile > default.
+
+    All three fields (api_url, clerk_issuer, clerk_client_id) must resolve
+    together so a stored dev profile doesn't get paired with the default prod
+    issuer when env vars aren't set.
+    """
+    return {
+        "api_url": os.environ.get("POPCORN_API_URL") or profile.api_url or DEFAULT_ENV["api_url"],
+        "clerk_issuer": (
+            os.environ.get("POPCORN_CLERK_ISSUER")
+            or profile.clerk_issuer
+            or DEFAULT_ENV["clerk_issuer"]
+        ),
+        "clerk_client_id": (
+            os.environ.get("POPCORN_CLERK_CLIENT_ID")
+            or profile.clerk_client_id
+            or DEFAULT_ENV["clerk_client_id"]
+        ),
+    }
+
+
 CONFIG_DIR = Path.home() / ".config" / "popcorn"
 CONFIG_FILE = CONFIG_DIR / "auth.json"
 

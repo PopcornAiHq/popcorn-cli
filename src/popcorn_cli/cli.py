@@ -106,7 +106,7 @@ from popcorn_core.auth import (
     pkce_pair,
     run_callback_server,
 )
-from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_env
+from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_auth_env, resolve_env
 from popcorn_core.errors import (
     ERROR_CODES,
     EXIT_AUTH,
@@ -413,7 +413,6 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
     env_name = getattr(args, "env", None) or cfg.default_profile
     cfg.default_profile = env_name
 
-    preset = resolve_env()
     profile = cfg.active_profile()
 
     # Skip if already logged in (unless --force or --with-token)
@@ -430,8 +429,9 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
             print("Run with --force to re-authenticate.")
             return
 
-    profile.api_url = preset["api_url"]
-    profile.clerk_issuer = preset["clerk_issuer"]
+    resolved = resolve_auth_env(profile)
+    profile.api_url = resolved["api_url"]
+    profile.clerk_issuer = resolved["clerk_issuer"]
 
     # --with-token: headless/CI mode
     if args.with_token:
@@ -455,11 +455,7 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
         return
 
     # Browser OAuth flow
-    client_id = (
-        os.environ.get("POPCORN_CLERK_CLIENT_ID")
-        or profile.clerk_client_id
-        or preset["clerk_client_id"]
-    )
+    client_id = resolved["clerk_client_id"]
     if not client_id:
         raise PopcornError(
             "No Clerk OAuth client ID configured.\n"
@@ -1692,8 +1688,7 @@ def cmd_upgrade(_args: argparse.Namespace) -> None:
     # Read new version via subprocess (importlib.metadata caches in-process)
     try:
         raw = subprocess.check_output(["popcorn", "--version"], text=True)
-        out = raw.decode() if isinstance(raw, bytes) else raw
-        new_version = out.strip().replace("popcorn ", "")
+        new_version = raw.strip().replace("popcorn ", "")
     except (subprocess.CalledProcessError, FileNotFoundError):
         new_version = old_version
 

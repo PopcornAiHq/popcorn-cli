@@ -6,7 +6,14 @@ import json
 
 import pytest
 
-from popcorn_core.config import Config, Profile, load_config, save_config
+from popcorn_core.config import (
+    DEFAULT_ENV,
+    Config,
+    Profile,
+    load_config,
+    resolve_auth_env,
+    save_config,
+)
 
 
 class TestProfile:
@@ -140,3 +147,54 @@ class TestKeyringIntegration:
         # Token stored in plaintext
         raw = json.loads(config_file.read_text())
         assert raw["profiles"]["default"]["id_token"] == "plain-tok"
+
+
+class TestResolveAuthEnv:
+    """Regression: all three OAuth fields must resolve together so a stored dev
+    profile doesn't get paired with the default prod issuer when env vars
+    aren't set (observed as Clerk `invalid_client` against prod with a dev
+    client_id)."""
+
+    def test_stored_profile_values_take_precedence_over_defaults(self, monkeypatch):
+        for var in ("POPCORN_API_URL", "POPCORN_CLERK_ISSUER", "POPCORN_CLERK_CLIENT_ID"):
+            monkeypatch.delenv(var, raising=False)
+        p = Profile(
+            api_url="https://api.dev.popcorn.ai",
+            clerk_issuer="https://clerk.dev.popcorn.ai",
+            clerk_client_id="dev-client",
+        )
+        r = resolve_auth_env(p)
+        assert r["api_url"] == "https://api.dev.popcorn.ai"
+        assert r["clerk_issuer"] == "https://clerk.dev.popcorn.ai"
+        assert r["clerk_client_id"] == "dev-client"
+
+    def test_env_vars_override_stored_profile(self, monkeypatch):
+        monkeypatch.setenv("POPCORN_API_URL", "https://api.override")
+        monkeypatch.setenv("POPCORN_CLERK_ISSUER", "https://clerk.override")
+        monkeypatch.setenv("POPCORN_CLERK_CLIENT_ID", "override-client")
+        p = Profile(
+            api_url="https://api.dev.popcorn.ai",
+            clerk_issuer="https://clerk.dev.popcorn.ai",
+            clerk_client_id="dev-client",
+        )
+        r = resolve_auth_env(p)
+        assert r["api_url"] == "https://api.override"
+        assert r["clerk_issuer"] == "https://clerk.override"
+        assert r["clerk_client_id"] == "override-client"
+
+    def test_empty_profile_falls_through_to_defaults(self, monkeypatch):
+        for var in ("POPCORN_API_URL", "POPCORN_CLERK_ISSUER", "POPCORN_CLERK_CLIENT_ID"):
+            monkeypatch.delenv(var, raising=False)
+        r = resolve_auth_env(Profile())
+        assert r == DEFAULT_ENV
+
+    def test_partial_profile_resolves_each_field_independently(self, monkeypatch):
+        # Profile has only issuer set; api_url and client_id come from env/default.
+        for var in ("POPCORN_API_URL", "POPCORN_CLERK_ISSUER", "POPCORN_CLERK_CLIENT_ID"):
+            monkeypatch.delenv(var, raising=False)
+        monkeypatch.setenv("POPCORN_CLERK_CLIENT_ID", "from-env")
+        p = Profile(clerk_issuer="https://clerk.dev.popcorn.ai")
+        r = resolve_auth_env(p)
+        assert r["api_url"] == DEFAULT_ENV["api_url"]
+        assert r["clerk_issuer"] == "https://clerk.dev.popcorn.ai"
+        assert r["clerk_client_id"] == "from-env"

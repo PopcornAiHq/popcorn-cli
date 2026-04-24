@@ -63,7 +63,7 @@ class TestCmdUpgrade:
         with (
             patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
             patch("subprocess.run") as mock_run,
-            patch("subprocess.check_output", return_value=b"popcorn 0.5.6\n"),
+            patch("subprocess.check_output", return_value="popcorn 0.5.6\n"),
         ):
             mock_run.return_value = MagicMock(returncode=0)
             with patch("popcorn_cli.cli.__version__", "0.5.5"):
@@ -77,7 +77,7 @@ class TestCmdUpgrade:
         with (
             patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
             patch("subprocess.run") as mock_run,
-            patch("subprocess.check_output", return_value=b"popcorn 0.5.5\n"),
+            patch("subprocess.check_output", return_value="popcorn 0.5.5\n"),
         ):
             mock_run.return_value = MagicMock(returncode=0)
             with patch("popcorn_cli.cli.__version__", "0.5.5"):
