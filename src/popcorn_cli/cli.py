@@ -3098,7 +3098,11 @@ Other:
     auth_parser = sub.add_parser("auth", help=_h)
     auth_sub = auth_parser.add_subparsers(dest="auth_command")
     login_p = auth_sub.add_parser("login", help="Log in via browser OAuth")
-    login_p.add_argument("-e", "--env", type=str, help="Profile name for this login")
+    # Note: --env is intentionally NOT redefined here. The global -e/--env (on the
+    # root parser) is hoisted ahead of the subcommand by _hoist_global_flags; a
+    # duplicate subparser --env with the same dest would re-apply its None default
+    # and clobber the hoisted value (e.g. `auth login --env prod` would silently
+    # reuse the current default profile).
     login_p.add_argument("--with-token", action="store_true", help="Read token from stdin")
     login_p.add_argument("--force", action="store_true", help="Re-authenticate")
     login_p.add_argument(

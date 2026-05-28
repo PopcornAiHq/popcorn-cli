@@ -89,6 +89,38 @@ class TestFlagHoisting:
         assert result == ["--json", "-q", "--timeout", "10", "message", "list", "#general"]
 
 
+class TestAuthLoginEnv:
+    """`auth login --env <name>` must reach cmd_auth_login intact.
+
+    Regression: the login subparser used to redefine -e/--env with the same
+    dest as the global flag. _hoist_global_flags moves --env ahead of the
+    subcommand, then the subparser re-applied its None default and clobbered
+    the hoisted value, so `auth login --env prod` silently reused the current
+    default profile.
+    """
+
+    def test_env_survives_hoist_and_parse(self, parser):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        args = parser.parse_args(_hoist_global_flags(["auth", "login", "--env", "prod"]))
+        assert args.command == "auth"
+        assert args.auth_command == "login"
+        assert args.env == "prod"
+
+    def test_env_short_flag_survives(self, parser):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        args = parser.parse_args(_hoist_global_flags(["auth", "login", "-e", "prod"]))
+        assert args.env == "prod"
+
+    def test_env_survives_with_other_login_flags(self, parser):
+        from popcorn_cli.cli import _hoist_global_flags
+
+        args = parser.parse_args(_hoist_global_flags(["auth", "login", "--env", "prod", "--force"]))
+        assert args.env == "prod"
+        assert args.force is True
+
+
 class TestAgentMode:
     """POPCORN_AGENT=1 should inject --json, -q, --no-color as defaults."""
 
