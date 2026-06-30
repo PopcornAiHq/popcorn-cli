@@ -1224,8 +1224,18 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             description=getattr(args, "description", None),
             avatar_url=getattr(args, "avatar_url", None),
             action_mode=getattr(args, "action_mode", None),
+            trigger_flow_id=getattr(args, "trigger_flow_id", None),
         )
         _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
+    elif sub == "event-types":
+        resp = operations.webhook_event_types(client)
+        sources = resp.get("sources", [])
+        modes = resp.get("action_modes", [])
+        source_names = [s.get("name", str(s)) if isinstance(s, dict) else str(s) for s in sources]
+        lines = ["Webhook event types:"]
+        lines.append("  sources: " + (", ".join(source_names) or "—"))
+        lines.append("  action_modes: " + (", ".join(map(str, modes)) or "—"))
+        _output(args, resp, "\n".join(lines))
     elif sub == "list":
         resp = operations.list_webhooks(client, args.conversation)
         hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
@@ -1254,7 +1264,130 @@ def cmd_webhook(args: argparse.Namespace) -> None:
                 lines.append(f"    payload: {preview}")
         _output(args, resp, "\n".join(lines))
     else:
-        raise PopcornError("Usage: popcorn webhook [create|deliveries|list]")
+        raise PopcornError("Usage: popcorn webhook [create|deliveries|event-types|list]")
+
+
+# ---------------------------------------------------------------------------
+# Channel templates
+# ---------------------------------------------------------------------------
+
+
+def cmd_channel_templates(args: argparse.Namespace) -> None:
+    client = _get_client(args)
+    resp = operations.list_channel_templates(client)
+    templates = resp if isinstance(resp, list) else resp.get("templates", [])
+    lines = [f"Channel templates ({len(templates)}):"]
+    for t in templates:
+        name = t.get("display_name") or t.get("name", "?")
+        flows = t.get("flow_count")
+        suffix = f"  ({flows} flows)" if flows is not None else ""
+        lines.append(f"  {t.get('name', '?')}  {name}{suffix}")
+        desc = t.get("description")
+        if desc:
+            lines.append(f"    {desc}")
+    _output(args, resp, "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
+# Flows (Temporal workflow automations per channel)
+# ---------------------------------------------------------------------------
+
+
+def _cmd_flow_runs(args: argparse.Namespace, client: APIClient) -> None:
+    sub = getattr(args, "flow_runs_command", None)
+    if sub == "list":
+        limit = getattr(args, "limit", None) or 50
+        resp = operations.list_flow_runs(
+            client,
+            args.channel,
+            status=getattr(args, "status", None),
+            limit=limit,
+            page_token=getattr(args, "page_token", None),
+        )
+        execs = resp.get("executions", [])
+        token = resp.get("next_page_token")
+        _attach_pagination(resp, {"page-token": token} if token else None)
+        count = resp.get("count", len(execs))
+        lines = [f"Flow runs in {args.channel} ({count}):"]
+        for e in execs:
+            lines.append(
+                f"  {(e.get('status') or '?'):<10} {e.get('workflow_id', '?')}  "
+                f"{e.get('workflow_type', '')}  {e.get('start_time', '')}"
+            )
+        _output(args, resp, "\n".join(lines))
+    elif sub == "get":
+        resp = operations.get_flow_run(
+            client,
+            args.channel,
+            args.workflow_id,
+            run_id=getattr(args, "run_id", None),
+            include_errors=getattr(args, "include_errors", False),
+        )
+        run = resp.get("run") or resp
+        lines = [
+            f"{run.get('status', '?')}  {run.get('workflow_id', '?')}",
+            f"  type:    {run.get('workflow_type', '-')}",
+            f"  run_id:  {run.get('run_id', '-')}",
+            f"  started: {run.get('start_time', '-')}",
+            f"  closed:  {run.get('close_time', '-')}",
+        ]
+        _output(args, resp, "\n".join(lines))
+    else:
+        raise PopcornError("Usage: popcorn flow runs [list|get]")
+
+
+def cmd_flow(args: argparse.Namespace) -> None:
+    sub = getattr(args, "flow_command", None)
+    client = _get_client(args)
+
+    if sub == "list":
+        limit = getattr(args, "limit", None) or 50
+        offset = getattr(args, "offset", None) or 0
+        resp = operations.list_flows(client, args.channel, limit=limit, offset=offset)
+        flows = resp.get("flows", [])
+        next_flags = {"offset": str(offset + limit)} if resp.get("has_more") else None
+        _attach_pagination(resp, next_flags)
+        lines = [f"Flows in {args.channel} ({len(flows)}):"]
+        for fl in flows:
+            lines.append(
+                f"  {fl.get('id', '?')}  {fl.get('name', '?')} (v{fl.get('version', '?')})"
+            )
+        _output(args, resp, "\n".join(lines))
+    elif sub == "get":
+        resp = operations.get_flow(client, args.channel, args.flow_id)
+        flow = resp.get("flow") or resp
+        lines = [
+            f"{flow.get('name', '?')} (v{flow.get('version', '?')})",
+            f"  id: {flow.get('id', '?')}",
+        ]
+        if flow.get("description"):
+            lines.append(f"  {flow['description']}")
+        _output(args, resp, "\n".join(lines))
+    elif sub == "run":
+        inputs: dict[str, Any] | None = None
+        raw_inputs = getattr(args, "inputs", None)
+        if raw_inputs:
+            try:
+                parsed = json.loads(_resolve_data_arg(raw_inputs))
+            except json.JSONDecodeError as e:
+                raise PopcornError(
+                    f"--inputs must be valid JSON: {e}", error_code="validation"
+                ) from e
+            if not isinstance(parsed, dict):
+                raise PopcornError("--inputs must be a JSON object", error_code="validation")
+            inputs = parsed
+        resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
+        name = resp.get("flow_name", args.flow_id)
+        lines = [
+            f"Started flow '{name}' (v{resp.get('flow_version', '?')})",
+            f"  workflow_id: {resp.get('workflow_id', '?')}",
+            f"  run_id:      {resp.get('run_id', '-')}",
+        ]
+        _output(args, resp, "\n".join(lines))
+    elif sub == "runs":
+        _cmd_flow_runs(args, client)
+    else:
+        raise PopcornError("Usage: popcorn flow [list|get|run|runs]")
 
 
 # ---------------------------------------------------------------------------
@@ -2531,7 +2664,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "api auth channel commands completion env help message site upgrade version vm webhook whoami workspace --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
+            COMPREPLY=($(compgen -W "api auth channel commands completion env flow help message site upgrade version vm webhook whoami workspace --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login logout status token" -- "$cur"))
@@ -2546,10 +2679,16 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "delete download edit get list react search send threads" -- "$cur"))
             ;;
         channel)
-            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list" -- "$cur"))
+            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
+            ;;
+        flow)
+            COMPREPLY=($(compgen -W "list get run runs" -- "$cur"))
+            ;;
+        runs)
+            COMPREPLY=($(compgen -W "list get" -- "$cur"))
             ;;
         webhook)
-            COMPREPLY=($(compgen -W "create deliveries list" -- "$cur"))
+            COMPREPLY=($(compgen -W "create deliveries event-types list" -- "$cur"))
             ;;
         vm)
             COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
@@ -2572,14 +2711,15 @@ _popcorn() {
     commands=(
         'api:Raw API call'
         'auth:Authentication commands'
-        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)'
+        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)'
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
+        'flow:Flow commands (list, get, run, runs)'
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
-        'webhook:Webhook commands (create, deliveries, list)'
+        'webhook:Webhook commands (create, deliveries, event-types, list)'
         'whoami:Show current user and workspace'
         'workspace:Workspace commands (check-access, inbox, list, switch, users)'
     )
@@ -2600,8 +2740,9 @@ _popcorn() {
                 workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
-                channel) _values 'subcommand' archive create delete edit info invite join kick leave list ;;
-                webhook) _values 'subcommand' create deliveries list ;;
+                channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
+                flow) _values 'subcommand' list get run runs ;;
+                webhook) _values 'subcommand' create deliveries event-types list ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
             esac
@@ -2621,6 +2762,36 @@ def cmd_completion(args: argparse.Namespace) -> None:
         print(_ZSH_COMPLETION)
     else:
         raise PopcornError(f"Unknown shell: {shell}. Supported: bash, zsh")
+
+
+def _describe_subcommands(parser: argparse.ArgumentParser) -> list[dict[str, Any]] | None:
+    """Recursively describe a parser's nested subcommands, if any.
+
+    Returns a list of ``{name, arguments?, description?, subcommands?}`` entries,
+    or ``None`` when the parser has no subparsers. Recursion supports multi-level
+    groups like ``flow runs list``.
+    """
+    nested_sub = None
+    for act in parser._actions:
+        if isinstance(act, argparse._SubParsersAction):
+            nested_sub = act
+            break
+    if not nested_sub:
+        return None
+    sub_help = {ca.dest: ca.help for ca in nested_sub._choices_actions if ca.help}
+    subcmds: list[dict[str, Any]] = []
+    for sub_name, sub_parser in nested_sub.choices.items():
+        entry: dict[str, Any] = {"name": sub_name}
+        sub_args = _introspect_parser(sub_parser)
+        if sub_args:
+            entry["arguments"] = sub_args
+        if sub_name in sub_help:
+            entry["description"] = sub_help[sub_name]
+        deeper = _describe_subcommands(sub_parser)
+        if deeper:
+            entry["subcommands"] = deeper
+        subcmds.append(entry)
+    return subcmds
 
 
 def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
@@ -2658,6 +2829,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
     "message": "messages",
     "channel": "channels",
+    "flow": "flows",
     "webhook": "webhooks",
     "vm": "vm",
     "auth": "auth",
@@ -2673,8 +2845,9 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
-    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)",
-    "webhook": "Webhook commands (create, deliveries, list)",
+    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
+    "flow": "Flow commands (list, get, run, runs list, runs get)",
+    "webhook": "Webhook commands (create, deliveries, event-types, list)",
     "vm": "VM commands (monitor, usage)",
     "auth": "Auth commands (login, logout, status, token)",
     "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
@@ -2711,24 +2884,10 @@ def cmd_commands(args: argparse.Namespace) -> None:
                 cmd["category"] = _COMMAND_CATEGORIES[name]
             if name in _COMMAND_DESCRIPTIONS:
                 cmd["description"] = _COMMAND_DESCRIPTIONS[name]
-            # Check for nested subcommands (auth, workspace, webhook)
-            nested_sub = None
-            for act in sub_parser._actions:
-                if isinstance(act, argparse._SubParsersAction):
-                    nested_sub = act
-                    break
-            if nested_sub:
-                # Build help text lookup from _choices_actions
-                sub_help = {ca.dest: ca.help for ca in nested_sub._choices_actions if ca.help}
-                subcmds = []
-                for sub_name, sub_sub_parser in nested_sub.choices.items():
-                    sub_entry: dict[str, Any] = {"name": sub_name}
-                    sub_args = _introspect_parser(sub_sub_parser)
-                    if sub_args:
-                        sub_entry["arguments"] = sub_args
-                    if sub_name in sub_help:
-                        sub_entry["description"] = sub_help[sub_name]
-                    subcmds.append(sub_entry)
+            # Check for nested subcommands (auth, workspace, webhook, flow, …);
+            # recurses for multi-level groups like `flow runs list`.
+            subcmds = _describe_subcommands(sub_parser)
+            if subcmds is not None:
                 cmd["subcommands"] = subcmds
             else:
                 cmd_args = _introspect_parser(sub_parser)
@@ -2780,6 +2939,8 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "message threads",
                     "message search",
                     "workspace inbox",
+                    "flow list",
+                    "flow runs list",
                 ],
             },
         },
@@ -3041,10 +3202,13 @@ Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
 
 Channels:
-  channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list)
+  channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
+
+Flows:
+  flow            Flow commands (list, get, run, runs list, runs get)
 
 Webhooks:
-  webhook         Webhook commands (create, deliveries, list)
+  webhook         Webhook commands (create, deliveries, event-types, list)
 
 VM:
   vm              VM commands (monitor, usage)
@@ -3362,6 +3526,8 @@ Other:
     ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
     ch_list_p.add_argument("--dms", action="store_true", help="List DMs instead of channels")
 
+    ch_sub.add_parser("templates", help="List available channel templates")
+
     # --- Webhooks ---
 
     wh_parser = sub.add_parser("webhook", help=_h)
@@ -3374,9 +3540,15 @@ Other:
     wh_create.add_argument(
         "--action-mode",
         type=str,
-        choices=["silent", "as_is", "ai_enhanced"],
+        choices=["silent", "as_is", "ai_enhanced", "trigger_workflow"],
         help="How deliveries are processed",
     )
+    wh_create.add_argument(
+        "--trigger-flow-id",
+        type=str,
+        help="Flow ID to start (required when --action-mode=trigger_workflow)",
+    )
+    wh_sub.add_parser("event-types", help="List valid webhook sources and action modes")
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
     wh_del.add_argument("conversation", help="Channel name or UUID")
     wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
@@ -3392,6 +3564,55 @@ Other:
     )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
+
+    # --- Flows (Temporal workflow automations per channel) ---
+
+    flow_parser = sub.add_parser("flow", help=_h)
+    flow_sub = flow_parser.add_subparsers(dest="flow_command")
+
+    flow_list_p = flow_sub.add_parser("list", help="List flows in a channel")
+    flow_list_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
+    flow_list_p.add_argument("--limit", type=int, help="Max results (default 50)")
+    flow_list_p.add_argument("--offset", type=int, help="Pagination offset")
+
+    flow_get_p = flow_sub.add_parser("get", help="Get a flow definition")
+    flow_get_p.add_argument("flow_id", help="Flow UUID")
+    flow_get_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
+
+    flow_run_p = flow_sub.add_parser("run", help="Start a flow run")
+    flow_run_p.add_argument("flow_id", help="Flow UUID")
+    flow_run_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
+    flow_run_p.add_argument(
+        "--inputs",
+        type=str,
+        help="JSON object of flow inputs (use '@-' for stdin, '@path' for a file)",
+    )
+
+    flow_runs_p = flow_sub.add_parser("runs", help="Inspect flow runs (list, get)")
+    flow_runs_sub = flow_runs_p.add_subparsers(dest="flow_runs_command")
+
+    flow_runs_list_p = flow_runs_sub.add_parser("list", help="List flow runs in a channel")
+    flow_runs_list_p.add_argument(
+        "--channel", required=True, help="Channel name (#general) or UUID"
+    )
+    flow_runs_list_p.add_argument(
+        "--status",
+        type=str,
+        choices=["all", "running", "failed", "closed"],
+        help="Filter by run status (default all)",
+    )
+    flow_runs_list_p.add_argument("--limit", type=int, help="Max results, 1-200 (default 50)")
+    flow_runs_list_p.add_argument(
+        "--page-token", type=str, help="Cursor from a previous response's pagination.next"
+    )
+
+    flow_runs_get_p = flow_runs_sub.add_parser("get", help="Get a flow run's detail")
+    flow_runs_get_p.add_argument("workflow_id", help="Temporal workflow ID")
+    flow_runs_get_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
+    flow_runs_get_p.add_argument("--run-id", type=str, help="Specific run ID (optional)")
+    flow_runs_get_p.add_argument(
+        "--include-errors", action="store_true", help="Include error details in the run"
+    )
 
     # --- Escape hatch ---
 
@@ -3495,7 +3716,7 @@ _COMMANDS = {
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
 _ALL_COMMAND_NAMES.extend(
-    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel"]
+    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel", "flow"]
 )
 
 
@@ -3605,6 +3826,8 @@ def main() -> None:
                 )
         elif args.command == "webhook":
             cmd_webhook(args)
+        elif args.command == "flow":
+            cmd_flow(args)
         elif args.command == "site":
             site_sub = {
                 "cancel": cmd_vm_cancel,
@@ -3655,6 +3878,7 @@ def main() -> None:
                 "kick": cmd_kick,
                 "leave": cmd_leave_channel,
                 "list": cmd_channel_list,
+                "templates": cmd_channel_templates,
             }
             handler = ch_sub.get(getattr(args, "channel_command", None) or "")
             if handler:
@@ -3662,7 +3886,7 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn channel"
-                    " [archive|create|delete|edit|info|invite|join|kick|leave|list]"
+                    " [archive|create|delete|edit|info|invite|join|kick|leave|list|templates]"
                 )
         elif args.command == "vm":
             vm_sub = {

@@ -535,8 +535,13 @@ def create_webhook(
     description: str | None = None,
     avatar_url: str | None = None,
     action_mode: str | None = None,
+    trigger_flow_id: str | None = None,
 ) -> dict[str, Any]:
-    """Create a webhook for a conversation."""
+    """Create a webhook for a conversation.
+
+    ``trigger_flow_id`` is required by the API when ``action_mode`` is
+    ``trigger_workflow`` — it names the Temporal flow the webhook starts.
+    """
     conv_id = resolve_conversation(client, conversation)
     body: dict[str, Any] = {"name": name}
     if description:
@@ -545,7 +550,14 @@ def create_webhook(
         body["avatar_url"] = avatar_url
     if action_mode:
         body["action_mode"] = action_mode
+    if trigger_flow_id:
+        body["trigger_flow_id"] = trigger_flow_id
     return client.post("/api/webhooks/create", data=body, params={"conversation": conv_id})
+
+
+def webhook_event_types(client: APIClient) -> dict[str, Any]:
+    """List valid webhook event sources and action modes."""
+    return client.get("/api/webhooks/event-types")
 
 
 def list_webhooks(client: APIClient, conversation: str) -> dict[str, Any]:
@@ -579,6 +591,95 @@ def list_webhook_deliveries(
     if include:
         params["include"] = include
     return client.get("/api/webhooks/deliveries", params)
+
+
+# ---------------------------------------------------------------------------
+# Customer flows (Temporal workflow automations per channel)
+# ---------------------------------------------------------------------------
+
+
+def list_flows(
+    client: APIClient,
+    conversation: str,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    """List the flows defined in a channel."""
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    if offset:
+        params["offset"] = offset
+    return client.get("/api/customer-flows/list", params)
+
+
+def get_flow(client: APIClient, conversation: str, flow_id: str) -> dict[str, Any]:
+    """Get a single flow definition by ID."""
+    conv_id = resolve_conversation(client, conversation)
+    return client.get(
+        "/api/customer-flows/get",
+        {"conversation_id": conv_id, "flow_id": flow_id},
+    )
+
+
+def run_flow(
+    client: APIClient,
+    conversation: str,
+    flow_id: str,
+    inputs: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Start a flow run, returning its Temporal workflow_id/run_id."""
+    conv_id = resolve_conversation(client, conversation)
+    body: dict[str, Any] = {"conversation_id": conv_id, "flow_id": flow_id}
+    if inputs:
+        body["inputs"] = inputs
+    return client.post(
+        "/api/customer-flows/run",
+        data=body,
+        params={"conversation_id": conv_id},
+    )
+
+
+def list_flow_runs(
+    client: APIClient,
+    conversation: str,
+    status: str | None = None,
+    limit: int = 50,
+    page_token: str | None = None,
+) -> dict[str, Any]:
+    """List Temporal workflow executions (flow runs) for a channel.
+
+    ``status`` is one of ``all | running | failed | closed``. ``page_token``
+    is the ``next_page_token`` cursor from a previous response.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
+    if status:
+        params["status"] = status
+    if page_token:
+        params["page_token"] = page_token
+    return client.get("/api/customer-flow-runs/list", params)
+
+
+def get_flow_run(
+    client: APIClient,
+    conversation: str,
+    workflow_id: str,
+    run_id: str | None = None,
+    include_errors: bool = False,
+) -> dict[str, Any]:
+    """Get a single flow run's detail by workflow_id (optionally run_id)."""
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "workflow_id": workflow_id}
+    if run_id:
+        params["run_id"] = run_id
+    if include_errors:
+        params["include_errors"] = True
+    return client.get("/api/customer-flow-runs/get", params)
+
+
+def list_channel_templates(client: APIClient) -> dict[str, Any]:
+    """List the channel templates available in the workspace."""
+    return client.get("/api/conversations/templates")
 
 
 # ---------------------------------------------------------------------------

@@ -343,3 +343,128 @@ class TestCheckAccess:
     def test_check_access_empty_parts(self, mock_client, bad_input):
         with pytest.raises(PopcornError, match="Invalid repo format"):
             operations.check_access(mock_client, bad_input)
+
+
+class TestWebhookCreate:
+    def test_minimal(self, mock_client):
+        mock_client.post.return_value = {"id": "wh-1"}
+        operations.create_webhook(mock_client, "conv-1", "deploy hook")
+        mock_client.post.assert_called_once_with(
+            "/api/webhooks/create",
+            data={"name": "deploy hook"},
+            params={"conversation": "conv-1"},
+        )
+
+    def test_trigger_workflow(self, mock_client):
+        mock_client.post.return_value = {"id": "wh-1"}
+        operations.create_webhook(
+            mock_client,
+            "conv-1",
+            "flow hook",
+            action_mode="trigger_workflow",
+            trigger_flow_id="flow-abc",
+        )
+        body = mock_client.post.call_args.kwargs["data"]
+        assert body["action_mode"] == "trigger_workflow"
+        assert body["trigger_flow_id"] == "flow-abc"
+
+    def test_trigger_flow_id_omitted_when_none(self, mock_client):
+        mock_client.post.return_value = {"id": "wh-1"}
+        operations.create_webhook(mock_client, "conv-1", "hook")
+        assert "trigger_flow_id" not in mock_client.post.call_args.kwargs["data"]
+
+    def test_event_types(self, mock_client):
+        mock_client.get.return_value = {"sources": [], "action_modes": []}
+        operations.webhook_event_types(mock_client)
+        mock_client.get.assert_called_once_with("/api/webhooks/event-types")
+
+
+class TestFlows:
+    def test_list_flows(self, mock_client):
+        mock_client.get.return_value = {"flows": [{"id": "f1"}], "has_more": False}
+        result = operations.list_flows(mock_client, "conv-1")
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/list", {"conversation_id": "conv-1", "limit": 50}
+        )
+        assert result["flows"][0]["id"] == "f1"
+
+    def test_list_flows_offset(self, mock_client):
+        mock_client.get.return_value = {"flows": []}
+        operations.list_flows(mock_client, "conv-1", limit=10, offset=20)
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/list",
+            {"conversation_id": "conv-1", "limit": 10, "offset": 20},
+        )
+
+    def test_get_flow(self, mock_client):
+        mock_client.get.return_value = {"flow": {"id": "f1"}}
+        operations.get_flow(mock_client, "conv-1", "f1")
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/get", {"conversation_id": "conv-1", "flow_id": "f1"}
+        )
+
+    def test_run_flow_no_inputs(self, mock_client):
+        mock_client.post.return_value = {"workflow_id": "wf-1"}
+        operations.run_flow(mock_client, "conv-1", "f1")
+        mock_client.post.assert_called_once_with(
+            "/api/customer-flows/run",
+            data={"conversation_id": "conv-1", "flow_id": "f1"},
+            params={"conversation_id": "conv-1"},
+        )
+
+    def test_run_flow_with_inputs(self, mock_client):
+        mock_client.post.return_value = {"workflow_id": "wf-1"}
+        operations.run_flow(mock_client, "conv-1", "f1", inputs={"x": 1})
+        body = mock_client.post.call_args.kwargs["data"]
+        assert body["inputs"] == {"x": 1}
+
+    def test_list_flow_runs(self, mock_client):
+        mock_client.get.return_value = {"executions": [], "count": 0, "next_page_token": None}
+        operations.list_flow_runs(mock_client, "conv-1")
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flow-runs/list", {"conversation_id": "conv-1", "limit": 50}
+        )
+
+    def test_list_flow_runs_filters(self, mock_client):
+        mock_client.get.return_value = {"executions": []}
+        operations.list_flow_runs(
+            mock_client, "conv-1", status="running", limit=10, page_token="tok"
+        )
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flow-runs/list",
+            {
+                "conversation_id": "conv-1",
+                "limit": 10,
+                "status": "running",
+                "page_token": "tok",
+            },
+        )
+
+    def test_get_flow_run(self, mock_client):
+        mock_client.get.return_value = {"run": {"workflow_id": "wf-1"}}
+        operations.get_flow_run(mock_client, "conv-1", "wf-1")
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flow-runs/get",
+            {"conversation_id": "conv-1", "workflow_id": "wf-1"},
+        )
+
+    def test_get_flow_run_with_options(self, mock_client):
+        mock_client.get.return_value = {"run": {}}
+        operations.get_flow_run(mock_client, "conv-1", "wf-1", run_id="r-1", include_errors=True)
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flow-runs/get",
+            {
+                "conversation_id": "conv-1",
+                "workflow_id": "wf-1",
+                "run_id": "r-1",
+                "include_errors": True,
+            },
+        )
+
+
+class TestChannelTemplates:
+    def test_list_templates(self, mock_client):
+        mock_client.get.return_value = {"templates": [{"name": "crm"}]}
+        result = operations.list_channel_templates(mock_client)
+        mock_client.get.assert_called_once_with("/api/conversations/templates")
+        assert result["templates"][0]["name"] == "crm"

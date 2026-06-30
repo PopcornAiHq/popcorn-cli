@@ -620,6 +620,91 @@ class TestWebhook:
         args = parser.parse_args(["webhook", "deliveries", "#general"])
         assert args.include is None
 
+    def test_webhook_create_trigger_workflow(self, parser):
+        args = parser.parse_args(
+            [
+                "webhook",
+                "create",
+                "#general",
+                "flow-hook",
+                "--action-mode",
+                "trigger_workflow",
+                "--trigger-flow-id",
+                "flow-abc",
+            ]
+        )
+        assert args.action_mode == "trigger_workflow"
+        assert args.trigger_flow_id == "flow-abc"
+
+    def test_webhook_event_types(self, parser):
+        args = parser.parse_args(["webhook", "event-types"])
+        assert args.webhook_command == "event-types"
+
+
+class TestChannelTemplates:
+    def test_templates(self, parser):
+        args = parser.parse_args(["channel", "templates"])
+        assert args.command == "channel"
+        assert args.channel_command == "templates"
+
+
+class TestFlowCommands:
+    def test_flow_list(self, parser):
+        args = parser.parse_args(["flow", "list", "--channel", "#ops"])
+        assert args.command == "flow"
+        assert args.flow_command == "list"
+        assert args.channel == "#ops"
+
+    def test_flow_list_requires_channel(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["flow", "list"])
+
+    def test_flow_get(self, parser):
+        args = parser.parse_args(["flow", "get", "flow-1", "--channel", "#ops"])
+        assert args.flow_command == "get"
+        assert args.flow_id == "flow-1"
+
+    def test_flow_run(self, parser):
+        args = parser.parse_args(["flow", "run", "flow-1", "--channel", "#ops"])
+        assert args.flow_command == "run"
+        assert args.flow_id == "flow-1"
+        assert args.inputs is None
+
+    def test_flow_run_inputs(self, parser):
+        args = parser.parse_args(
+            ["flow", "run", "flow-1", "--channel", "#ops", "--inputs", '{"x":1}']
+        )
+        assert args.inputs == '{"x":1}'
+
+    def test_flow_runs_list(self, parser):
+        args = parser.parse_args(["flow", "runs", "list", "--channel", "#ops"])
+        assert args.flow_command == "runs"
+        assert args.flow_runs_command == "list"
+
+    def test_flow_runs_list_status(self, parser):
+        args = parser.parse_args(
+            ["flow", "runs", "list", "--channel", "#ops", "--status", "running"]
+        )
+        assert args.status == "running"
+
+    def test_flow_runs_list_status_invalid(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["flow", "runs", "list", "--channel", "#ops", "--status", "bogus"])
+
+    def test_flow_runs_list_page_token(self, parser):
+        args = parser.parse_args(
+            ["flow", "runs", "list", "--channel", "#ops", "--page-token", "tok"]
+        )
+        assert args.page_token == "tok"
+
+    def test_flow_runs_get(self, parser):
+        args = parser.parse_args(
+            ["flow", "runs", "get", "wf-1", "--channel", "#ops", "--include-errors"]
+        )
+        assert args.flow_runs_command == "get"
+        assert args.workflow_id == "wf-1"
+        assert args.include_errors is True
+
 
 class TestDidYouMean:
     def test_close_typo_suggests(self):
@@ -657,6 +742,33 @@ class TestCommands:
     def test_commands_parses(self, parser):
         args = parser.parse_args(["commands"])
         assert args.command == "commands"
+
+    def test_flow_schema_two_level_nesting(self, capsys):
+        import argparse
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        schema = json.loads(capsys.readouterr().out)
+        flow = next(c for c in schema["commands"] if c["name"] == "flow")
+        assert flow["category"] == "flows"
+        names = {s["name"] for s in flow["subcommands"]}
+        assert {"list", "get", "run", "runs"} <= names
+        runs = next(s for s in flow["subcommands"] if s["name"] == "runs")
+        # `runs` is itself a group → its own nested subcommands are described
+        runs_names = {s["name"] for s in runs["subcommands"]}
+        assert runs_names == {"list", "get"}
+
+    def test_flow_runs_list_in_pagination_commands(self, capsys):
+        import argparse
+        import json
+
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        schema = json.loads(capsys.readouterr().out)
+        assert "flow runs list" in schema["envelope"]["pagination"]["commands"]
 
     def test_commands_json_output(self, capsys):
         import json

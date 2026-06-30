@@ -96,10 +96,18 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel edit <conv> [--name N] [--description D]` | Update channel name or description |
 | `popcorn channel archive <conv> [--undo]` | Archive/unarchive a channel |
 | `popcorn channel delete <conv>` | Delete a channel |
+| `popcorn channel templates` | List available channel templates |
+| **Flows** | |
+| `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
+| `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
+| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON]` | Start a flow run |
+| `popcorn flow runs list --channel <conv> [--status S] [--limit N] [--page-token T]` | List flow runs |
+| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail |
 | **Webhooks** | |
-| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE]` | Create a webhook |
+| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-id ID]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
+| `popcorn webhook event-types` | List valid webhook sources and action modes |
 | **VM** | |
 | `popcorn vm monitor [--watch] [-n INTERVAL] [--raw]` | Show active workers and queue |
 | `popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]` | Token and cost analytics |

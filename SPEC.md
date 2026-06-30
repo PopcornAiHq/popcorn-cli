@@ -171,7 +171,7 @@ while [ "$next_flags" != "null" ]; do
 done
 ```
 
-Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`.
+Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`.
 
 For commands where the backend does not return `has_more`, the CLI uses a safe heuristic: emit `next` when the returned page is at least `--limit` items long. Worst case the agent fetches one empty page and stops — the loop always converges.
 
