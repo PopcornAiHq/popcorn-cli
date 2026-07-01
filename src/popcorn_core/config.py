@@ -123,6 +123,10 @@ def resolve_auth_env(profile: Profile) -> dict[str, str]:
 CONFIG_DIR = Path.home() / ".config" / "popcorn"
 CONFIG_FILE = CONFIG_DIR / "auth.json"
 
+# The one profile name that legitimately maps to the production defaults.
+# Any other profile name (e.g. "dev") resolving to DEFAULT_ENV is a footgun.
+DEFAULT_PROFILE_NAME = "default"
+
 OAUTH_CALLBACK_PORT = 28771  # Fixed port for Clerk redirect URI (ASCII "pc")
 
 
@@ -161,7 +165,7 @@ class Profile:
 @dataclass
 class Config:
     version: int = 1
-    default_profile: str = "default"
+    default_profile: str = DEFAULT_PROFILE_NAME
     profiles: dict[str, Profile] = field(default_factory=dict)
 
     def active_profile(self) -> Profile:
@@ -189,7 +193,7 @@ def load_config() -> Config:
         use_kr = _has_keyring()
         cfg = Config(
             version=data.get("version", 1),
-            default_profile=data.get("default_profile", "default"),
+            default_profile=data.get("default_profile", DEFAULT_PROFILE_NAME),
         )
         for name, pdata in data.get("profiles", {}).items():
             if use_kr:

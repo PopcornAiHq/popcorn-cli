@@ -262,6 +262,15 @@ export POPCORN_USER_ID=<user-id>
 
 Skips auth entirely — no browser login, no token refresh. Sends `X-Actor-User-ID` and `X-Workspace-ID` instead of `Authorization`.
 
+### Environment safety (issuer gate)
+
+Environments are profiles selected with `-e/--env`. To prevent a token minted for one environment from being used against another (e.g. a **prod** token silently running `-e dev` commands against production), the CLI enforces two guards:
+
+- **Issuer match at request time.** Before a request is sent, the token's `iss` claim must match the profile's configured Clerk issuer. On mismatch the CLI fails with `error_code: unauthorized` (exit `2`) instead of making the call. Opaque/issuer-less tokens and profiles without a configured issuer are not blocked.
+- **Prod-default guard at login.** `popcorn -e <name> auth login` for any `<name>` other than `default` that resolves to the **production** defaults (no `POPCORN_API_URL` / `POPCORN_CLERK_ISSUER` set, no stored non-prod endpoints) requires confirmation. In automation pass `--yes` / `POPCORN_ASSUME_YES=1`; in non-interactive mode without it, the login fails loudly (`error_code: validation`) rather than creating a mislabeled prod profile.
+
+Configure a non-prod environment by exporting `POPCORN_API_URL` and `POPCORN_CLERK_ISSUER` before `auth login`.
+
 ---
 
 ## Diagnostics

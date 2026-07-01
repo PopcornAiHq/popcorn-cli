@@ -61,6 +61,50 @@ def login_with_token(token: str) -> dict[str, Any]:
     return {"email": email, "exp": claims.get("exp", 0), "token": token}
 
 
+def decode_token_issuer(token: str) -> str | None:
+    """Return a JWT's ``iss`` claim, or None if absent/undecodable.
+
+    The signature is intentionally not verified — the issuer is read only for a
+    local environment-mismatch safety check, never for a trust decision.
+    """
+    try:
+        claims = jwt.decode(token, options={"verify_signature": False})
+    except jwt.PyJWTError:
+        return None
+    iss = claims.get("iss")
+    return iss if isinstance(iss, str) and iss else None
+
+
+def _normalize_issuer(issuer: str) -> str:
+    return issuer.rstrip("/").lower()
+
+
+def assert_token_env_match(token: str, expected_issuer: str, *, env: str = "") -> None:
+    """Guard against using a token minted for a different environment.
+
+    Raises :class:`AuthError` when the token's ``iss`` claim is present and does
+    not match ``expected_issuer``. This is the safety gate for the prod-fallback
+    footgun: ``popcorn -e dev`` must never silently send a prod-issued token.
+
+    No-op when either argument is empty or the token carries no issuer (opaque or
+    older tokens). We fail only on a *positive* mismatch so we never block a token
+    we cannot classify.
+    """
+    if not token or not expected_issuer:
+        return
+    actual = decode_token_issuer(token)
+    if actual is None:
+        return
+    if _normalize_issuer(actual) != _normalize_issuer(expected_issuer):
+        label = f" for environment '{env}'" if env else ""
+        raise AuthError(
+            f"Token/environment mismatch{label}: this token was issued by {actual}, "
+            f"but this environment expects {expected_issuer}. Re-authenticate for the "
+            "correct environment before continuing.",
+            hint="popcorn auth login",
+        )
+
+
 def exchange_code_for_tokens(
     token_endpoint: str,
     code: str,

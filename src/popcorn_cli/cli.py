@@ -100,13 +100,21 @@ from popcorn_core import APIClient, load_config, operations, save_config
 from popcorn_core.archive import create_tarball
 from popcorn_core.auth import (
     CallbackHandler,
+    assert_token_env_match,
     discover_oidc,
     exchange_code_for_tokens,
     login_with_token,
     pkce_pair,
     run_callback_server,
 )
-from popcorn_core.config import OAUTH_CALLBACK_PORT, Profile, resolve_auth_env, resolve_env
+from popcorn_core.config import (
+    DEFAULT_ENV,
+    DEFAULT_PROFILE_NAME,
+    OAUTH_CALLBACK_PORT,
+    Profile,
+    resolve_auth_env,
+    resolve_env,
+)
 from popcorn_core.errors import (
     ERROR_CODES,
     EXIT_AUTH,
@@ -433,6 +441,25 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
     profile.api_url = resolved["api_url"]
     profile.clerk_issuer = resolved["clerk_issuer"]
 
+    # Prod-fallback guard: a profile named anything other than "default" that
+    # resolves to the production defaults means no dev/staging endpoints were
+    # configured (no POPCORN_* env vars, no stored non-prod values). Logging in
+    # here would silently create e.g. a "dev" profile that talks to prod. Make
+    # the operator confirm rather than run "dev" commands against production.
+    resolves_to_prod = (
+        resolved["api_url"] == DEFAULT_ENV["api_url"]
+        and resolved["clerk_issuer"] == DEFAULT_ENV["clerk_issuer"]
+    )
+    if (env_name != DEFAULT_PROFILE_NAME and resolves_to_prod) and not _confirm(
+        args,
+        f"Profile '{env_name}' has no custom endpoints configured and will use "
+        f"PRODUCTION ({DEFAULT_ENV['api_url']}). Set POPCORN_API_URL and "
+        f"POPCORN_CLERK_ISSUER first for a non-prod environment. "
+        "Continue against production?",
+    ):
+        print("Login cancelled.")
+        return
+
     # --with-token: headless/CI mode
     if args.with_token:
         token = sys.stdin.read().strip()
@@ -440,6 +467,9 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
             raise AuthError("No token provided on stdin")
 
         result = login_with_token(token)
+        # Reject a token minted for a different environment (e.g. a prod token
+        # pasted into a dev-configured profile).
+        assert_token_env_match(result["token"], profile.clerk_issuer, env=env_name)
         profile.id_token = result["token"]
         profile.access_token = ""
         profile.refresh_token = ""
@@ -516,6 +546,10 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
     tokens = exchange_code_for_tokens(
         oidc["token_endpoint"], code, redirect_uri, client_id, verifier
     )
+
+    # Defense-in-depth: the token came from endpoints discovered off this
+    # profile's issuer, so this should always pass — but assert the invariant.
+    assert_token_env_match(tokens["id_token"], profile.clerk_issuer, env=env_name)
 
     profile.id_token = tokens["id_token"]
     profile.access_token = tokens["access_token"]

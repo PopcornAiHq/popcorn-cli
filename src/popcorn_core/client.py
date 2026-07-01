@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import jwt
 
-from .auth import discover_oidc
+from .auth import assert_token_env_match, discover_oidc
 from .config import Profile, load_config, save_config
 from .errors import APIError, AuthError
 
@@ -34,6 +34,11 @@ class APIClient:
         now = int(time.time())
         if self.profile.expires_at > 0 and self.profile.expires_at < now:
             self._refresh_token()
+        # Safety gate: never send a token whose issuer doesn't match this
+        # environment's Clerk issuer (prevents a prod token leaking to a dev
+        # profile, or vice versa). No-op for opaque/older tokens or when the
+        # profile has no configured issuer.
+        assert_token_env_match(self.profile.id_token, self.profile.clerk_issuer)
         return self.profile.id_token
 
     def _refresh_token(self) -> None:
