@@ -98,11 +98,23 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel delete <conv>` | Delete a channel |
 | `popcorn channel templates` | List available channel templates |
 | **Flows** | |
+| `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
-| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON]` | Start a flow run |
+| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |
 | `popcorn flow runs list --channel <conv> [--status S] [--limit N] [--page-token T]` | List flow runs |
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail |
+| **Tables** (channel data-store) | |
+| `popcorn table list --channel <conv>` | List tables in a channel |
+| `popcorn table schema <name> --channel <conv>` | Show a table's columns |
+| `popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N] [--cursor C]` | List rows in a table |
+| `popcorn table row get <name> <record_id> --channel <conv>` | Get one row |
+| `popcorn table row patch <name> <record_id> --channel <conv> --data JSON` | Patch one row's columns |
+| `popcorn table row delete <name> <record_id> --channel <conv>` | Delete one row (confirms) |
+| `popcorn table scalar list --channel <conv> [--limit N]` | List channel scalars |
+| `popcorn table scalar get <key> --channel <conv>` | Read one scalar |
+| `popcorn table scalar set <key> <value> --channel <conv>` | Write one scalar |
+| `popcorn table audit --channel <conv> [--limit N] [--cursor C]` | Recent data-store audit entries |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-id ID]` | Create a webhook |
 | `popcorn webhook list <conv>` | List webhooks |

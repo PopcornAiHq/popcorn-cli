@@ -119,6 +119,7 @@ Stable enum. All values are lowercase `snake_case`. The set is frozen at 1.0.0; 
 | `server_error` | 5xx — retryable with backoff | |
 | `network_error` | Transport failure (no HTTP response) | DNS, TLS, connection refused |
 | `unhealthy` | Deploy succeeded but site is unhealthy | Post-deploy health check failed |
+| `timeout` | Client-side wait elapsed before the operation finished | `flow run --wait` hit `--timeout-run` |
 | `internal` | Unexpected internal CLI error | Bug; please report |
 
 Machine-readable copy of this table is embedded in `popcorn commands --json` under `error_codes`.
@@ -171,7 +172,7 @@ while [ "$next_flags" != "null" ]; do
 done
 ```
 
-Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`.
+Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`, `table rows`, `table scalar list`, `table audit`.
 
 For commands where the backend does not return `has_more`, the CLI uses a safe heuristic: emit `next` when the returned page is at least `--limit` items long. Worst case the agent fetches one empty page and stops — the loop always converges.
 
@@ -230,6 +231,7 @@ The format ID is `ndjson`, surfaced in `popcorn commands --json` under `envelope
 - `version` is the CLI version (semver).
 - `schema_version` is the version of the *schema itself*; bumped only on breaking changes to the agent contract.
 - `popcorn commands --json --groups=message,channel` filters to specific command groups.
+- Command families declared in the CLI's command registry (`flow`, `table`) have their `subcommands` / `arguments` entries **generated** from that single declaration rather than hand-maintained, so the schema cannot drift from the commands it describes. The emitted shape is identical either way.
 
 ---
 
