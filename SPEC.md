@@ -230,6 +230,7 @@ The format ID is `ndjson`, surfaced in `popcorn commands --json` under `envelope
 - `version` is the CLI version (semver).
 - `schema_version` is the version of the *schema itself*; bumped only on breaking changes to the agent contract.
 - `popcorn commands --json --groups=message,channel` filters to specific command groups.
+- Command families declared in the CLI's command registry (`flow`, `table`) have their `subcommands` / `arguments` entries **generated** from that single declaration rather than hand-maintained, so the schema cannot drift from the commands it describes. The emitted shape is identical either way.
 
 ---
 

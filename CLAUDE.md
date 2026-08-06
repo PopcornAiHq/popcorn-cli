@@ -36,6 +36,15 @@ make check      # lint + typecheck + test
 - **Python:** >=3.10
 - **Version:** runtime via `importlib.metadata` — update only in `pyproject.toml`
 
+## Command architecture
+
+New command families go in `src/popcorn_cli/commands/<name>.py` and are declared
+once via `src/popcorn_cli/registry.py` — which derives argparse, dispatch, both
+shell completions, `popcorn commands --json`, and the fuzzy-match list. Do **not**
+add a family by hand-editing the completion generators or the schema builder.
+Families still living in `cli.py` are mid-migration; see
+`docs/architecture-commands.md`.
+
 ## Auth
 
 Clerk OAuth PKCE flow with two modes:
