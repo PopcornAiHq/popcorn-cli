@@ -3200,7 +3200,7 @@ Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
 
 Flows:
-  flow            Flow commands (list, get, run, runs list, runs get)
+  flow            Flow commands (activities, list, get, run, runs list, runs get)
 
 Webhooks:
   webhook         Webhook commands (create, deliveries, event-types, list)

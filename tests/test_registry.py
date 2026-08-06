@@ -174,7 +174,8 @@ class TestDispatchIsWired:
         with pytest.raises(SystemExit) as exc:
             self._run(monkeypatch, ["flow"])
         assert exc.value.code == EXIT_VALIDATION
-        assert "popcorn flow [get|list|run|runs]" in capsys.readouterr().err
+        expected = "|".join(registry.completion_words("flow"))
+        assert f"popcorn flow [{expected}]" in capsys.readouterr().err
 
     def test_group_with_no_subcommand_exits_with_a_usage_error(self, monkeypatch, capsys):
         from popcorn_core.errors import EXIT_VALIDATION
@@ -183,3 +184,60 @@ class TestDispatchIsWired:
             self._run(monkeypatch, ["flow", "runs"])
         assert exc.value.code == EXIT_VALIDATION
         assert "popcorn flow runs [get|list]" in capsys.readouterr().err
+
+
+class TestFlowActivities:
+    def test_activities_takes_filters(self, parser):
+        args = parser.parse_args(
+            ["flow", "activities", "--tier", "foundation", "--status", "release"]
+        )
+        assert args.flow_command == "activities"
+        assert args.tier == "foundation"
+        assert args.status == "release"
+
+    def test_activities_does_not_require_channel(self, parser):
+        args = parser.parse_args(["flow", "activities"])
+        assert getattr(args, "channel", None) is None
+
+    def test_activities_rejects_an_unknown_tier(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["flow", "activities", "--tier", "bogus"])
+
+    def test_activities_reaches_its_handler_and_filters_client_side(self, monkeypatch, capsys):
+        """The endpoint takes no filter params, so filtering is ours to get right."""
+        from popcorn_core import operations
+
+        catalog = {
+            "activities": [
+                {
+                    "name": "foundation.store.upsert_rows",
+                    "tier": "foundation",
+                    "status": "release",
+                    "category": "store",
+                    "description": "Upsert rows",
+                },
+                {
+                    "name": "foundation.channel.post",
+                    "tier": "foundation",
+                    "status": "beta",
+                    "category": "channel",
+                    "description": "Post a message",
+                },
+                {
+                    "name": "app.alerts.tick",
+                    "tier": "app",
+                    "status": "release",
+                    "category": "alerts",
+                    "description": "Tick",
+                },
+            ]
+        }
+        monkeypatch.setattr(operations, "list_activity_catalog", lambda *a, **kw: catalog)
+        TestDispatchIsWired()._run(
+            monkeypatch, ["flow", "activities", "--tier", "foundation", "--status", "release"]
+        )
+        out = capsys.readouterr().out
+        assert "foundation.store.upsert_rows" in out
+        assert "foundation.channel.post" not in out  # wrong status
+        assert "app.alerts.tick" not in out  # wrong tier
+        assert "Activities (1)" in out

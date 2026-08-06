@@ -562,3 +562,16 @@ class TestDataStoreOperations:
         mock_client.get.assert_called_once_with(
             "/api/v1/conversations/conv-uuid/data-store/audit", {"limit": 10}
         )
+
+
+class TestActivityCatalog:
+    def test_list_activity_catalog_hits_the_human_surface(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "activities": []}
+        operations.list_activity_catalog(mock_client)
+        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog")
+
+    def test_conversation_is_accepted_and_ignored(self, mock_client):
+        """The catalog is global — no conversation scope reaches the wire."""
+        mock_client.get.return_value = {"ok": True, "activities": []}
+        operations.list_activity_catalog(mock_client, "#ops")
+        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog")

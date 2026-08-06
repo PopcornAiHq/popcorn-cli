@@ -98,6 +98,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel delete <conv>` | Delete a channel |
 | `popcorn channel templates` | List available channel templates |
 | **Flows** | |
+| `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON]` | Start a flow run |

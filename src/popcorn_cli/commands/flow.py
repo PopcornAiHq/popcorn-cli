@@ -18,6 +18,27 @@ from ..registry import Argument, Command, Subcommand, register
 _CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
 
 
+def _flow_activities(args: argparse.Namespace) -> None:
+    from ..cli import _get_client, _output
+
+    resp = operations.list_activity_catalog(_get_client(args))
+    activities = resp.get("activities", [])
+    # The endpoint takes no filter params — narrow client-side.
+    for key in ("tier", "status", "category"):
+        want = getattr(args, key, None)
+        if want:
+            activities = [a for a in activities if a.get(key) == want]
+    resp = {**resp, "activities": activities}
+    lines = [f"Activities ({len(activities)}):"]
+    for a in sorted(activities, key=lambda x: x.get("name", "")):
+        summary = (a.get("description") or "").splitlines()
+        lines.append(
+            f"  {a.get('name', '?'):<42} {a.get('status', '?'):<10} "
+            f"{summary[0][:60] if summary else ''}"
+        )
+    _output(args, resp, "\n".join(lines))
+
+
 def _flow_list(args: argparse.Namespace) -> None:
     from ..cli import _attach_pagination, _get_client, _output
 
@@ -126,8 +147,29 @@ register(
     Command(
         name="flow",
         category="flows",
-        description="Flow commands (list, get, run, runs list, runs get)",
+        description="Flow commands (activities, list, get, run, runs list, runs get)",
         subcommands=[
+            # First: the discovery entry point for a template author.
+            Subcommand(
+                "activities",
+                "List the DSL activity catalog",
+                _flow_activities,
+                [
+                    Argument(
+                        "tier",
+                        "Filter by tier (foundation, feature, app, system)",
+                        type=str,
+                        choices=["foundation", "feature", "app", "system"],
+                    ),
+                    Argument(
+                        "status",
+                        "Filter by status",
+                        type=str,
+                        choices=["release", "beta", "alpha", "deprecated"],
+                    ),
+                    Argument("category", "Filter by category (store, channel, …)", type=str),
+                ],
+            ),
             Subcommand(
                 "list",
                 "List flows in a channel",

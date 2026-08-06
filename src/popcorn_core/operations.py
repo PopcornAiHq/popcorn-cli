@@ -678,6 +678,17 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+def list_activity_catalog(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
+    """The global DSL activity catalog (identical for every workspace).
+
+    Workspace-member gated with no conversation scope — the catalog is derived
+    in-process from the activity registries, so `conversation` is accepted and
+    ignored for signature symmetry with the other flow operations. The endpoint
+    takes no filter params; callers filter the returned list themselves.
+    """
+    return client.get("/api/customer-flows/activity-catalog")
+
+
 def list_channel_templates(client: APIClient) -> dict[str, Any]:
     """List the channel templates available in the workspace."""
     return client.get("/api/conversations/templates")
