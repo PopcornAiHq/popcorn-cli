@@ -468,3 +468,97 @@ class TestChannelTemplates:
         result = operations.list_channel_templates(mock_client)
         mock_client.get.assert_called_once_with("/api/conversations/templates")
         assert result["templates"][0]["name"] == "crm"
+
+
+class TestDataStoreOperations:
+    """The data-store surface at /api/v1/conversations/{id}/data-store/…
+
+    The channel ref is resolved to a conversation UUID and baked into the
+    path, so every assertion here pins the resolved path shape.
+    """
+
+    def test_list_tables(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "tables": []}
+        operations.list_tables(mock_client, "conv-uuid")
+        mock_client.get.assert_called_once_with("/api/v1/conversations/conv-uuid/data-store/tables")
+
+    def test_get_table(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "table": {}}
+        operations.get_table(mock_client, "conv-uuid", "alerts")
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/tables/alerts"
+        )
+
+    def test_list_records_builds_scoped_path(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "records": []}
+        operations.list_records(
+            mock_client, "conv-uuid", "alerts", filter={"Status": "firing"}, limit=10
+        )
+        path, params = mock_client.get.call_args.args
+        assert path == "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records"
+        assert params["limit"] == 10
+        # The endpoint takes `filter` as a JSON-encoded string, not a nested dict.
+        assert params["filter"] == '{"Status": "firing"}'
+
+    def test_list_records_omits_absent_filter(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "records": []}
+        operations.list_records(mock_client, "conv-uuid", "alerts")
+        _, params = mock_client.get.call_args.args
+        assert "filter" not in params
+        assert params == {"limit": 50}
+
+    def test_list_records_passes_cursor(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "records": []}
+        operations.list_records(mock_client, "conv-uuid", "alerts", cursor="cur-1")
+        _, params = mock_client.get.call_args.args
+        assert params["cursor"] == "cur-1"
+
+    def test_get_record(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "record": {}}
+        operations.get_record(mock_client, "conv-uuid", "alerts", 7)
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records/7"
+        )
+
+    def test_patch_record_sends_data_body(self, mock_client):
+        mock_client.patch.return_value = {"ok": True, "record": {}}
+        operations.patch_record(mock_client, "conv-uuid", "alerts", 7, {"Status": "acked"})
+        (path,) = mock_client.patch.call_args.args
+        assert path.endswith("/data-store/tables/alerts/records/7")
+        # PatchRecordRequest wraps the columns in a `data` envelope.
+        assert mock_client.patch.call_args.kwargs["data"] == {"data": {"Status": "acked"}}
+
+    def test_delete_record(self, mock_client):
+        mock_client.delete.return_value = {}
+        operations.delete_record(mock_client, "conv-uuid", "alerts", 7)
+        mock_client.delete.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records/7"
+        )
+
+    def test_list_scalars(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "scalars": []}
+        operations.list_scalars(mock_client, "conv-uuid")
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/scalars"
+        )
+
+    def test_get_scalar(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "scalar": {}}
+        operations.get_scalar(mock_client, "conv-uuid", "alerts_summary")
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/scalars/alerts_summary"
+        )
+
+    def test_set_scalar_uses_put(self, mock_client):
+        mock_client.put.return_value = {"ok": True, "scalar": {}}
+        operations.set_scalar(mock_client, "conv-uuid", "alerts_summary", "3 firing")
+        (path,) = mock_client.put.call_args.args
+        assert path.endswith("/data-store/scalars/alerts_summary")
+        assert mock_client.put.call_args.kwargs["data"] == {"value": "3 firing"}
+
+    def test_list_store_audit(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "events": []}
+        operations.list_store_audit(mock_client, "conv-uuid", limit=10)
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/audit", {"limit": 10}
+        )

@@ -6,6 +6,7 @@ No I/O, no formatting, no argparse — just business logic.
 
 from __future__ import annotations
 
+import json
 import mimetypes
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -875,3 +876,95 @@ def raw_api_call(
         params = {**embedded, **(params or {})}
         path = parsed.path
     return client.request(method, path, params=params, data=data)
+
+
+# ---------------------------------------------------------------------------
+# Agent-store data-store (tables, records, scalars, audit)
+#
+# The user-JWT surface at /api/v1/conversations/{conversation_id}/data-store/…
+# The conversation is a *path* segment here, not a query param, so every
+# operation resolves the channel ref up front and bakes it into the path.
+# ---------------------------------------------------------------------------
+
+
+def _store_base(client: APIClient, conversation: str) -> str:
+    conv_id = resolve_conversation(client, conversation)
+    return f"/api/v1/conversations/{conv_id}/data-store"
+
+
+def list_tables(client: APIClient, conversation: str) -> dict[str, Any]:
+    """List the data-store tables in a channel (`tables`: name, record_count)."""
+    return client.get(f"{_store_base(client, conversation)}/tables")
+
+
+def get_table(client: APIClient, conversation: str, name: str) -> dict[str, Any]:
+    """Get one table (`table.schema_version.schema_def.columns` holds the schema)."""
+    return client.get(f"{_store_base(client, conversation)}/tables/{name}")
+
+
+def list_records(
+    client: APIClient,
+    conversation: str,
+    name: str,
+    filter: dict[str, Any] | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
+) -> dict[str, Any]:
+    """List rows (`records`). `filter` is sent JSON-encoded, as the API expects."""
+    params: dict[str, Any] = {"limit": limit}
+    if filter:
+        params["filter"] = json.dumps(filter)
+    if cursor:
+        params["cursor"] = cursor
+    return client.get(f"{_store_base(client, conversation)}/tables/{name}/records", params)
+
+
+def get_record(
+    client: APIClient, conversation: str, name: str, record_id: int | str
+) -> dict[str, Any]:
+    """Get one row by record id."""
+    return client.get(f"{_store_base(client, conversation)}/tables/{name}/records/{record_id}")
+
+
+def patch_record(
+    client: APIClient,
+    conversation: str,
+    name: str,
+    record_id: int | str,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    """Patch one row's columns. Columns go inside a `data` envelope."""
+    return client.patch(
+        f"{_store_base(client, conversation)}/tables/{name}/records/{record_id}",
+        data={"data": data},
+    )
+
+
+def delete_record(
+    client: APIClient, conversation: str, name: str, record_id: int | str
+) -> dict[str, Any]:
+    """Delete one row. The API answers 204, so this returns an empty dict."""
+    return client.delete(f"{_store_base(client, conversation)}/tables/{name}/records/{record_id}")
+
+
+def list_scalars(client: APIClient, conversation: str) -> dict[str, Any]:
+    """List the channel's data-store scalars (`scalars`: key, value, timestamps)."""
+    return client.get(f"{_store_base(client, conversation)}/scalars")
+
+
+def get_scalar(client: APIClient, conversation: str, key: str) -> dict[str, Any]:
+    """Read one scalar (`scalar.value`)."""
+    return client.get(f"{_store_base(client, conversation)}/scalars/{key}")
+
+
+def set_scalar(client: APIClient, conversation: str, key: str, value: str) -> dict[str, Any]:
+    """Write one scalar. Scalars are strings on the wire."""
+    return client.put(
+        f"{_store_base(client, conversation)}/scalars/{key}",
+        data={"value": value},
+    )
+
+
+def list_store_audit(client: APIClient, conversation: str, limit: int = 50) -> dict[str, Any]:
+    """Recent data-store audit entries (`events`: operation, entity, changed_at)."""
+    return client.get(f"{_store_base(client, conversation)}/audit", {"limit": limit})

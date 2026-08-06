@@ -262,6 +262,11 @@ class APIClient:
                 err.hint = "popcorn workspace list  # then: popcorn workspace switch <id>"
             raise err
 
+        # 204 No Content (and any empty 2xx body) is a success, not malformed
+        # JSON — the data-store DELETE endpoints answer this way.
+        if resp.status_code == 204 or not resp.content:
+            return {}
+
         try:
             return resp.json()  # type: ignore[no-any-return]
         except (ValueError, Exception) as e:
