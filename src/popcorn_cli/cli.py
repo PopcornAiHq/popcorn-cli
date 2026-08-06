@@ -139,6 +139,8 @@ from popcorn_core.local_state import (
 )
 from popcorn_core.validation import extract
 
+from . import commands as _registered_commands  # noqa: F401  — registers the families
+from . import registry
 from .formatting import (
     fmt_activity,
     fmt_conversation,
@@ -1320,108 +1322,6 @@ def cmd_channel_templates(args: argparse.Namespace) -> None:
         if desc:
             lines.append(f"    {desc}")
     _output(args, resp, "\n".join(lines))
-
-
-# ---------------------------------------------------------------------------
-# Flows (Temporal workflow automations per channel)
-# ---------------------------------------------------------------------------
-
-
-def _cmd_flow_runs(args: argparse.Namespace, client: APIClient) -> None:
-    sub = getattr(args, "flow_runs_command", None)
-    if sub == "list":
-        limit = getattr(args, "limit", None) or 50
-        resp = operations.list_flow_runs(
-            client,
-            args.channel,
-            status=getattr(args, "status", None),
-            limit=limit,
-            page_token=getattr(args, "page_token", None),
-        )
-        execs = resp.get("executions", [])
-        token = resp.get("next_page_token")
-        _attach_pagination(resp, {"page-token": token} if token else None)
-        count = resp.get("count", len(execs))
-        lines = [f"Flow runs in {args.channel} ({count}):"]
-        for e in execs:
-            lines.append(
-                f"  {(e.get('status') or '?'):<10} {e.get('workflow_id', '?')}  "
-                f"{e.get('workflow_type', '')}  {e.get('start_time', '')}"
-            )
-        _output(args, resp, "\n".join(lines))
-    elif sub == "get":
-        resp = operations.get_flow_run(
-            client,
-            args.channel,
-            args.workflow_id,
-            run_id=getattr(args, "run_id", None),
-            include_errors=getattr(args, "include_errors", False),
-        )
-        run = resp.get("run") or resp
-        lines = [
-            f"{run.get('status', '?')}  {run.get('workflow_id', '?')}",
-            f"  type:    {run.get('workflow_type', '-')}",
-            f"  run_id:  {run.get('run_id', '-')}",
-            f"  started: {run.get('start_time', '-')}",
-            f"  closed:  {run.get('close_time', '-')}",
-        ]
-        _output(args, resp, "\n".join(lines))
-    else:
-        raise PopcornError("Usage: popcorn flow runs [list|get]")
-
-
-def cmd_flow(args: argparse.Namespace) -> None:
-    sub = getattr(args, "flow_command", None)
-    client = _get_client(args)
-
-    if sub == "list":
-        limit = getattr(args, "limit", None) or 50
-        offset = getattr(args, "offset", None) or 0
-        resp = operations.list_flows(client, args.channel, limit=limit, offset=offset)
-        flows = resp.get("flows", [])
-        next_flags = {"offset": str(offset + limit)} if resp.get("has_more") else None
-        _attach_pagination(resp, next_flags)
-        lines = [f"Flows in {args.channel} ({len(flows)}):"]
-        for fl in flows:
-            lines.append(
-                f"  {fl.get('id', '?')}  {fl.get('name', '?')} (v{fl.get('version', '?')})"
-            )
-        _output(args, resp, "\n".join(lines))
-    elif sub == "get":
-        resp = operations.get_flow(client, args.channel, args.flow_id)
-        flow = resp.get("flow") or resp
-        lines = [
-            f"{flow.get('name', '?')} (v{flow.get('version', '?')})",
-            f"  id: {flow.get('id', '?')}",
-        ]
-        if flow.get("description"):
-            lines.append(f"  {flow['description']}")
-        _output(args, resp, "\n".join(lines))
-    elif sub == "run":
-        inputs: dict[str, Any] | None = None
-        raw_inputs = getattr(args, "inputs", None)
-        if raw_inputs:
-            try:
-                parsed = json.loads(_resolve_data_arg(raw_inputs))
-            except json.JSONDecodeError as e:
-                raise PopcornError(
-                    f"--inputs must be valid JSON: {e}", error_code="validation"
-                ) from e
-            if not isinstance(parsed, dict):
-                raise PopcornError("--inputs must be a JSON object", error_code="validation")
-            inputs = parsed
-        resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
-        name = resp.get("flow_name", args.flow_id)
-        lines = [
-            f"Started flow '{name}' (v{resp.get('flow_version', '?')})",
-            f"  workflow_id: {resp.get('workflow_id', '?')}",
-            f"  run_id:      {resp.get('run_id', '-')}",
-        ]
-        _output(args, resp, "\n".join(lines))
-    elif sub == "runs":
-        _cmd_flow_runs(args, client)
-    else:
-        raise PopcornError("Usage: popcorn flow [list|get|run|runs]")
 
 
 # ---------------------------------------------------------------------------
@@ -2690,7 +2590,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
 # Shell completions
 # ---------------------------------------------------------------------------
 
-_BASH_COMPLETION = r"""
+_BASH_COMPLETION_TEMPLATE = r"""
 _popcorn_completions() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -2698,7 +2598,7 @@ _popcorn_completions() {
 
     case "$prev" in
         popcorn)
-            COMPREPLY=($(compgen -W "api auth channel commands completion env flow help message site upgrade version vm webhook whoami workspace --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
+            COMPREPLY=($(compgen -W "{top_level} --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
         auth)
             COMPREPLY=($(compgen -W "login logout status token" -- "$cur"))
@@ -2715,12 +2615,6 @@ _popcorn_completions() {
         channel)
             COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
             ;;
-        flow)
-            COMPREPLY=($(compgen -W "list get run runs" -- "$cur"))
-            ;;
-        runs)
-            COMPREPLY=($(compgen -W "list get" -- "$cur"))
-            ;;
         webhook)
             COMPREPLY=($(compgen -W "create deliveries event-types list" -- "$cur"))
             ;;
@@ -2730,14 +2624,14 @@ _popcorn_completions() {
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
-        -e|--env)
+{registry_branches}        -e|--env)
             ;;
     esac
 }
 complete -F _popcorn_completions popcorn
 """.strip()
 
-_ZSH_COMPLETION = r"""
+_ZSH_COMPLETION_TEMPLATE = r"""
 #compdef popcorn
 
 _popcorn() {
@@ -2749,14 +2643,13 @@ _popcorn() {
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
-        'flow:Flow commands (list, get, run, runs)'
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
         'webhook:Webhook commands (create, deliveries, event-types, list)'
         'whoami:Show current user and workspace'
         'workspace:Workspace commands (check-access, inbox, list, switch, users)'
-    )
+{registry_commands}    )
 
     _arguments \
         '--json[Output raw JSON]' \
@@ -2775,11 +2668,10 @@ _popcorn() {
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
                 channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
-                flow) _values 'subcommand' list get run runs ;;
                 webhook) _values 'subcommand' create deliveries event-types list ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
-            esac
+{registry_args}            esac
             ;;
     esac
 }
@@ -2788,12 +2680,65 @@ _popcorn "$@"
 """.strip()
 
 
+# Top-level command names that are still declared by hand in build_parser.
+# Registry families are merged in at render time — do not add one here.
+_STATIC_TOP_LEVEL = [
+    "api",
+    "auth",
+    "channel",
+    "commands",
+    "completion",
+    "env",
+    "help",
+    "message",
+    "site",
+    "upgrade",
+    "version",
+    "vm",
+    "webhook",
+    "whoami",
+    "workspace",
+]
+
+
+def _render_bash_completion() -> str:
+    """Fill the bash template from the registry.
+
+    Nested groups (`flow runs`) get their own branch: bash keys on the
+    previous word alone, so the nesting is emitted flat.
+    """
+    branches = "".join(
+        f'        {name})\n            COMPREPLY=($(compgen -W "{" ".join(words)}" -- "$cur"))\n            ;;\n'
+        for name, words in registry.completion_groups()
+    )
+    top_level = " ".join(sorted([*_STATIC_TOP_LEVEL, *registry.descriptions()]))
+    return _BASH_COMPLETION_TEMPLATE.replace("{top_level}", top_level).replace(
+        "{registry_branches}", branches
+    )
+
+
+def _render_zsh_completion() -> str:
+    """Fill the zsh template from the registry.
+
+    Only the family level is completed, matching the hand-written families in
+    the template — zsh keys on `words[1]`, which is the family name.
+    """
+    cmds = "".join(f"        '{c.name}:{c.description}'\n" for c in registry.COMMANDS)
+    families = "".join(
+        f"                {name}) _values 'subcommand' {' '.join(registry.completion_words(name))} ;;\n"
+        for name in registry.descriptions()
+    )
+    return _ZSH_COMPLETION_TEMPLATE.replace("{registry_commands}", cmds).replace(
+        "{registry_args}", families
+    )
+
+
 def cmd_completion(args: argparse.Namespace) -> None:
     shell = args.shell
     if shell == "bash":
-        print(_BASH_COMPLETION)
+        print(_render_bash_completion())
     elif shell == "zsh":
-        print(_ZSH_COMPLETION)
+        print(_render_zsh_completion())
     else:
         raise PopcornError(f"Unknown shell: {shell}. Supported: bash, zsh")
 
@@ -2863,7 +2808,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
     "message": "messages",
     "channel": "channels",
-    "flow": "flows",
     "webhook": "webhooks",
     "vm": "vm",
     "auth": "auth",
@@ -2880,7 +2824,6 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
-    "flow": "Flow commands (list, get, run, runs list, runs get)",
     "webhook": "Webhook commands (create, deliveries, event-types, list)",
     "vm": "VM commands (monitor, usage)",
     "auth": "Auth commands (login, logout, status, token)",
@@ -2896,8 +2839,23 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+def _command_categories() -> dict[str, str]:
+    """Hand-declared categories, plus every registry family's."""
+    return {**_COMMAND_CATEGORIES, **registry.categories()}
+
+
+def _command_descriptions() -> dict[str, str]:
+    """Hand-declared descriptions, plus every registry family's."""
+    return {**_COMMAND_DESCRIPTIONS, **registry.descriptions()}
+
+
 def cmd_commands(args: argparse.Namespace) -> None:
-    """Dump full CLI schema as JSON for agent bootstrapping."""
+    """Dump full CLI schema as JSON for agent bootstrapping.
+
+    Per-argument detail comes from argparse introspection (it knows types,
+    choices and defaults); names, categories and descriptions come from the
+    registry for the families it owns. Top-level keys are frozen at 1.0.0.
+    """
     groups_filter: set[str] | None = None
     if raw := getattr(args, "groups", None):
         groups_filter = {g.strip().lower() for g in raw.split(",") if g.strip()}
@@ -2910,14 +2868,17 @@ def cmd_commands(args: argparse.Namespace) -> None:
             sub_action = action
             break
 
+    categories = _command_categories()
+    descriptions = _command_descriptions()
+
     commands: list[dict[str, Any]] = []
     if sub_action:
         for name, sub_parser in sub_action.choices.items():
             cmd: dict[str, Any] = {"name": name}
-            if name in _COMMAND_CATEGORIES:
-                cmd["category"] = _COMMAND_CATEGORIES[name]
-            if name in _COMMAND_DESCRIPTIONS:
-                cmd["description"] = _COMMAND_DESCRIPTIONS[name]
+            if name in categories:
+                cmd["category"] = categories[name]
+            if name in descriptions:
+                cmd["description"] = descriptions[name]
             # Check for nested subcommands (auth, workspace, webhook, flow, …);
             # recurses for multi-level groups like `flow runs list`.
             subcmds = _describe_subcommands(sub_parser)
@@ -3599,55 +3560,6 @@ Other:
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
 
-    # --- Flows (Temporal workflow automations per channel) ---
-
-    flow_parser = sub.add_parser("flow", help=_h)
-    flow_sub = flow_parser.add_subparsers(dest="flow_command")
-
-    flow_list_p = flow_sub.add_parser("list", help="List flows in a channel")
-    flow_list_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
-    flow_list_p.add_argument("--limit", type=int, help="Max results (default 50)")
-    flow_list_p.add_argument("--offset", type=int, help="Pagination offset")
-
-    flow_get_p = flow_sub.add_parser("get", help="Get a flow definition")
-    flow_get_p.add_argument("flow_id", help="Flow UUID")
-    flow_get_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
-
-    flow_run_p = flow_sub.add_parser("run", help="Start a flow run")
-    flow_run_p.add_argument("flow_id", help="Flow UUID")
-    flow_run_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
-    flow_run_p.add_argument(
-        "--inputs",
-        type=str,
-        help="JSON object of flow inputs (use '@-' for stdin, '@path' for a file)",
-    )
-
-    flow_runs_p = flow_sub.add_parser("runs", help="Inspect flow runs (list, get)")
-    flow_runs_sub = flow_runs_p.add_subparsers(dest="flow_runs_command")
-
-    flow_runs_list_p = flow_runs_sub.add_parser("list", help="List flow runs in a channel")
-    flow_runs_list_p.add_argument(
-        "--channel", required=True, help="Channel name (#general) or UUID"
-    )
-    flow_runs_list_p.add_argument(
-        "--status",
-        type=str,
-        choices=["all", "running", "failed", "closed"],
-        help="Filter by run status (default all)",
-    )
-    flow_runs_list_p.add_argument("--limit", type=int, help="Max results, 1-200 (default 50)")
-    flow_runs_list_p.add_argument(
-        "--page-token", type=str, help="Cursor from a previous response's pagination.next"
-    )
-
-    flow_runs_get_p = flow_runs_sub.add_parser("get", help="Get a flow run's detail")
-    flow_runs_get_p.add_argument("workflow_id", help="Temporal workflow ID")
-    flow_runs_get_p.add_argument("--channel", required=True, help="Channel name (#general) or UUID")
-    flow_runs_get_p.add_argument("--run-id", type=str, help="Specific run ID (optional)")
-    flow_runs_get_p.add_argument(
-        "--include-errors", action="store_true", help="Include error details in the run"
-    )
-
     # --- Escape hatch ---
 
     api_p = sub.add_parser("api", help=_h)
@@ -3723,6 +3635,10 @@ Other:
     sub.add_parser("upgrade", help=_h)
     sub.add_parser("doctor", help=_h)
 
+    # --- Registry-declared families (flow, …) — see registry.py ---
+
+    registry.add_to_parser(sub)
+
     # Hide the auto-generated subparser list — the epilog handles display
     sub._choices_actions = []
     for ag in parser._action_groups:
@@ -3750,7 +3666,17 @@ _COMMANDS = {
 
 # Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
 _ALL_COMMAND_NAMES.extend(
-    [*_COMMANDS.keys(), "auth", "workspace", "webhook", "vm", "site", "message", "channel", "flow"]
+    [
+        *_COMMANDS.keys(),
+        "auth",
+        "workspace",
+        "webhook",
+        "vm",
+        "site",
+        "message",
+        "channel",
+        *registry.descriptions(),
+    ]
 )
 
 
@@ -3831,6 +3757,12 @@ def main() -> None:
         sys.exit(0)
 
     try:
+        # Registry-declared families first — they carry their own dispatch and
+        # their own usage errors. Returns False for anything not registered,
+        # which falls through to the hand-written chain below.
+        if registry.dispatch(args):
+            return
+
         if args.command == "auth":
             sub = {
                 "login": cmd_auth_login,
@@ -3860,8 +3792,6 @@ def main() -> None:
                 )
         elif args.command == "webhook":
             cmd_webhook(args)
-        elif args.command == "flow":
-            cmd_flow(args)
         elif args.command == "site":
             site_sub = {
                 "cancel": cmd_vm_cancel,
