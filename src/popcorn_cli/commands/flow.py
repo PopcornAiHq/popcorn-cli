@@ -8,8 +8,6 @@ import would be a cycle.
 from __future__ import annotations
 
 import argparse
-import json
-from typing import Any
 
 from popcorn_core import operations
 
@@ -71,21 +69,11 @@ def _flow_get(args: argparse.Namespace) -> None:
 
 
 def _flow_run(args: argparse.Namespace) -> None:
-    from popcorn_core.errors import PopcornError
-
-    from ..cli import _get_client, _output, _resolve_data_arg
+    from ..cli import _get_client, _output, _read_json_object
 
     client = _get_client(args)
-    inputs: dict[str, Any] | None = None
     raw_inputs = getattr(args, "inputs", None)
-    if raw_inputs:
-        try:
-            parsed = json.loads(_resolve_data_arg(raw_inputs))
-        except json.JSONDecodeError as e:
-            raise PopcornError(f"--inputs must be valid JSON: {e}", error_code="validation") from e
-        if not isinstance(parsed, dict):
-            raise PopcornError("--inputs must be a JSON object", error_code="validation")
-        inputs = parsed
+    inputs = _read_json_object(raw_inputs, "--inputs") if raw_inputs else None
     resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
     name = resp.get("flow_name", args.flow_id)
     lines = [

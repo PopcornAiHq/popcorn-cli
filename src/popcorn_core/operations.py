@@ -958,9 +958,14 @@ def delete_record(
     return client.delete(f"{_store_base(client, conversation)}/tables/{name}/records/{record_id}")
 
 
-def list_scalars(client: APIClient, conversation: str) -> dict[str, Any]:
+def list_scalars(
+    client: APIClient, conversation: str, limit: int = 50, cursor: str | None = None
+) -> dict[str, Any]:
     """List the channel's data-store scalars (`scalars`: key, value, timestamps)."""
-    return client.get(f"{_store_base(client, conversation)}/scalars")
+    params: dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    return client.get(f"{_store_base(client, conversation)}/scalars", params)
 
 
 def get_scalar(client: APIClient, conversation: str, key: str) -> dict[str, Any]:
@@ -976,6 +981,11 @@ def set_scalar(client: APIClient, conversation: str, key: str, value: str) -> di
     )
 
 
-def list_store_audit(client: APIClient, conversation: str, limit: int = 50) -> dict[str, Any]:
+def list_store_audit(
+    client: APIClient, conversation: str, limit: int = 50, cursor: str | None = None
+) -> dict[str, Any]:
     """Recent data-store audit entries (`events`: operation, entity, changed_at)."""
-    return client.get(f"{_store_base(client, conversation)}/audit", {"limit": limit})
+    params: dict[str, Any] = {"limit": limit}
+    if cursor:
+        params["cursor"] = cursor
+    return client.get(f"{_store_base(client, conversation)}/audit", params)

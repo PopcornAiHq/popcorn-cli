@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from . import flow
+from . import flow, table
 
-__all__ = ["flow"]
+__all__ = ["flow", "table"]

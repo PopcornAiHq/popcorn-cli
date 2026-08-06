@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import ClassVar
 
 import pytest
 
@@ -241,3 +242,234 @@ class TestFlowActivities:
         assert "foundation.channel.post" not in out  # wrong status
         assert "app.alerts.tick" not in out  # wrong tier
         assert "Activities (1)" in out
+
+
+class TestTableFamily:
+    def test_rows_takes_filter_and_limit(self, parser):
+        args = parser.parse_args(
+            [
+                "table",
+                "rows",
+                "alerts",
+                "--channel",
+                "#ops",
+                "--filter",
+                '{"Status":"firing"}',
+                "--limit",
+                "5",
+            ]
+        )
+        assert args.table_command == "rows"
+        assert args.name == "alerts"
+        assert args.filter == '{"Status":"firing"}'
+        assert args.limit == 5
+
+    def test_row_patch_is_nested(self, parser):
+        args = parser.parse_args(
+            [
+                "table",
+                "row",
+                "patch",
+                "alerts",
+                "7",
+                "--channel",
+                "#ops",
+                "--data",
+                '{"Status":"acked"}',
+            ]
+        )
+        assert args.table_row_command == "patch"
+        assert args.record_id == "7"
+
+    def test_row_patch_requires_data(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["table", "row", "patch", "alerts", "7", "--channel", "#ops"])
+
+    def test_scalar_set_takes_value(self, parser):
+        args = parser.parse_args(
+            ["table", "scalar", "set", "alerts_summary", "3 firing", "--channel", "#ops"]
+        )
+        assert args.table_scalar_command == "set"
+        assert args.key == "alerts_summary"
+        assert args.value == "3 firing"
+
+    def test_table_appears_in_schema(self):
+        assert any(c["name"] == "table" for c in registry.schema())
+
+
+class TestTableHandlersRenderTheRealShapes:
+    """The API's keys, not plausible ones: `records`/`events`/`scalar.value`,
+    and columns nested under `table.schema_version.schema_def`."""
+
+    def test_rows_renders_records_and_paginates(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        seen = {}
+
+        def fake(client, conversation, name, filter=None, limit=50, cursor=None):
+            seen.update(name=name, filter=filter, limit=limit)
+            return {
+                "records": [{"id": 4, "data": {"Status": "firing", "Alarm": "cpu"}}],
+                "cursor": "cur-2",
+                "has_more": True,
+            }
+
+        monkeypatch.setattr(operations, "list_records", fake)
+        TestDispatchIsWired()._run(
+            monkeypatch,
+            ["table", "rows", "alerts", "--channel", "#ops", "--filter", '{"Status":"firing"}'],
+        )
+        out = capsys.readouterr().out
+        assert seen == {"name": "alerts", "filter": {"Status": "firing"}, "limit": 50}
+        assert "firing" in out and "4" in out
+
+    def test_rows_emits_a_cursor_the_agent_can_feed_back(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            "list_records",
+            lambda *a, **kw: {"records": [], "cursor": "cur-2", "has_more": True},
+        )
+        TestDispatchIsWired()._run(
+            monkeypatch, ["table", "rows", "alerts", "--channel", "#ops", "--json"]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"]["pagination"]["next"] == {"cursor": "cur-2"}
+
+    def test_rows_reports_no_next_page_when_exhausted(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            "list_records",
+            lambda *a, **kw: {"records": [], "cursor": None, "has_more": False},
+        )
+        TestDispatchIsWired()._run(
+            monkeypatch, ["table", "rows", "alerts", "--channel", "#ops", "--json"]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["pagination"]["next"] is None
+
+    def test_schema_reads_columns_from_the_schema_version(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            "get_table",
+            lambda *a, **kw: {
+                "table": {
+                    "name": "alerts",
+                    "schema_version": {
+                        "version": 3,
+                        "schema_def": {
+                            "columns": [
+                                {"name": "Alarm", "type": "string", "required": True},
+                                {"name": "Seen At", "type": "datetime", "internal": True},
+                            ]
+                        },
+                    },
+                }
+            },
+        )
+        TestDispatchIsWired()._run(monkeypatch, ["table", "schema", "alerts", "--channel", "#ops"])
+        out = capsys.readouterr().out
+        assert "2 columns" in out
+        assert "Alarm" in out and "required" in out
+        assert "Seen At" in out and "internal" in out
+
+    def test_scalar_get_prints_the_nested_value(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            "get_scalar",
+            lambda *a, **kw: {"scalar": {"key": "alerts_summary", "value": "3 firing"}},
+        )
+        TestDispatchIsWired()._run(
+            monkeypatch, ["table", "scalar", "get", "alerts_summary", "--channel", "#ops"]
+        )
+        assert capsys.readouterr().out.strip() == "3 firing"
+
+    def test_audit_renders_events(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            "list_store_audit",
+            lambda *a, **kw: {
+                "events": [
+                    {
+                        "changed_at": "2026-08-06T12:00:00Z",
+                        "operation": "update",
+                        "entity_type": "record",
+                        "entity_id": "4",
+                    }
+                ],
+                "has_more": False,
+            },
+        )
+        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--channel", "#ops"])
+        out = capsys.readouterr().out
+        assert "Audit (1)" in out
+        assert "update" in out and "record" in out
+
+    def test_row_delete_confirms_before_deleting(self, monkeypatch, capsys):
+        """Destructive, so it must go through _confirm — which fails loudly
+        in a non-TTY without --yes rather than silently deleting."""
+        from popcorn_core import operations
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        called = []
+        monkeypatch.setattr(operations, "delete_record", lambda *a, **kw: called.append(a) or {})
+        with pytest.raises(SystemExit) as exc:
+            TestDispatchIsWired()._run(
+                monkeypatch, ["table", "row", "delete", "alerts", "7", "--channel", "#ops"]
+            )
+        assert exc.value.code == EXIT_VALIDATION
+        assert called == [], "deleted without confirmation"
+
+        TestDispatchIsWired()._run(
+            monkeypatch,
+            ["table", "row", "delete", "alerts", "7", "--channel", "#ops", "--yes"],
+        )
+        assert len(called) == 1
+
+
+class TestPaginationIsDeclared:
+    """Every command that emits data.pagination.next must say so in the schema,
+    or an agent has no way to learn it can page."""
+
+    _PAGINATED: ClassVar[list[str]] = ["table rows", "table scalar list", "table audit"]
+
+    def test_table_paginated_commands_are_declared(self, capsys):
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        schema = json.loads(capsys.readouterr().out)
+        declared = schema["envelope"]["pagination"]["commands"]
+        for cmd in self._PAGINATED:
+            assert cmd in declared, f"{cmd} paginates but is not declared"
+
+    @pytest.mark.parametrize(
+        ("argv", "operation", "payload_key"),
+        [
+            (["table", "rows", "alerts"], "list_records", "records"),
+            (["table", "scalar", "list"], "list_scalars", "scalars"),
+            (["table", "audit"], "list_store_audit", "events"),
+        ],
+    )
+    def test_declared_commands_really_emit_a_cursor(
+        self, monkeypatch, capsys, argv, operation, payload_key
+    ):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations,
+            operation,
+            lambda *a, **kw: {payload_key: [], "cursor": "cur-9", "has_more": True},
+        )
+        TestDispatchIsWired()._run(monkeypatch, [*argv, "--channel", "#ops", "--json"])
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["data"]["pagination"]["next"] == {"cursor": "cur-9"}

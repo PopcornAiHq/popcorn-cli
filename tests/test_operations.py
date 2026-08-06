@@ -539,7 +539,7 @@ class TestDataStoreOperations:
         mock_client.get.return_value = {"ok": True, "scalars": []}
         operations.list_scalars(mock_client, "conv-uuid")
         mock_client.get.assert_called_once_with(
-            "/api/v1/conversations/conv-uuid/data-store/scalars"
+            "/api/v1/conversations/conv-uuid/data-store/scalars", {"limit": 50}
         )
 
     def test_get_scalar(self, mock_client):

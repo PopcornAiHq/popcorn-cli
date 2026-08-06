@@ -38,6 +38,16 @@ Usage:
     popcorn channel kick <conversation> <user_id>
     popcorn channel leave <conversation>
     popcorn channel list [query] [--dms]
+    popcorn flow activities [--tier T] [--status S] [--category C]
+    popcorn flow list --channel <conv>
+    popcorn flow run <flow_id> --channel <conv> [--inputs JSON]
+    popcorn flow runs list --channel <conv>
+    popcorn table list --channel <conv>
+    popcorn table schema <name> --channel <conv>
+    popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N]
+    popcorn table row get|patch|delete <name> <record_id> --channel <conv>
+    popcorn table scalar list|get|set --channel <conv>
+    popcorn table audit --channel <conv>
     popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
     popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
     popcorn commands --json
@@ -343,6 +353,22 @@ def _resolve_data_arg(value: str) -> str:
         except OSError as e:
             raise PopcornError(f"Cannot read --data file {path}: {e}") from e
     return value
+
+
+def _read_json_object(raw: str, flag: str) -> dict[str, Any]:
+    """Parse a flag whose value is a JSON object, with ``@``-prefix support.
+
+    Shares ``_resolve_data_arg``'s ``@-``/``@path`` sources, so ``--inputs``,
+    ``--filter`` and ``--data`` all accept a literal, stdin or a file. Raises
+    a ``validation`` error rather than letting a JSONDecodeError escape.
+    """
+    try:
+        parsed = json.loads(_resolve_data_arg(raw))
+    except json.JSONDecodeError as e:
+        raise PopcornError(f"{flag} must be valid JSON: {e}", error_code="validation") from e
+    if not isinstance(parsed, dict):
+        raise PopcornError(f"{flag} must be a JSON object", error_code="validation")
+    return parsed
 
 
 def _format_payload_preview(payload: Any, max_len: int = 200) -> str:
@@ -2936,6 +2962,9 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "workspace inbox",
                     "flow list",
                     "flow runs list",
+                    "table rows",
+                    "table scalar list",
+                    "table audit",
                 ],
             },
         },
@@ -3201,6 +3230,9 @@ Channels:
 
 Flows:
   flow            Flow commands (activities, list, get, run, runs list, runs get)
+
+Tables:
+  table           Data-store commands (list, schema, rows, row, scalar, audit)
 
 Webhooks:
   webhook         Webhook commands (create, deliveries, event-types, list)
