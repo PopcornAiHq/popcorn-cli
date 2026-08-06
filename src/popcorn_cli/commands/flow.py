@@ -8,12 +8,55 @@ import would be a cycle.
 from __future__ import annotations
 
 import argparse
+import time
+from typing import TYPE_CHECKING, Any
 
 from popcorn_core import operations
 
 from ..registry import Argument, Command, Subcommand, register
 
+if TYPE_CHECKING:
+    from popcorn_core.client import APIClient
+
 _CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
+
+# Temporal execution statuses that mean the run is over. Anything else is
+# still in flight.
+_TERMINAL_OK = {"COMPLETED"}
+_TERMINAL_BAD = {"FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"}
+_POLL_SECONDS = 3
+_DEFAULT_WAIT_SECONDS = 300
+
+
+def _poll_until_closed(
+    client: APIClient, channel: str, workflow_id: str, timeout: int
+) -> dict[str, Any]:
+    """Poll a flow run until it reaches a terminal status.
+
+    Raises PopcornError on a failed run (so the shell sees a non-zero exit) or
+    when `timeout` seconds elapse without a terminal status.
+    """
+    from popcorn_core.errors import PopcornError
+
+    started = time.monotonic()
+    while True:
+        resp = operations.get_flow_run(client, channel, workflow_id, include_errors=True)
+        run = resp.get("run") or resp
+        status = (run.get("status") or "").upper()
+        if status in _TERMINAL_OK:
+            return dict(run)
+        if status in _TERMINAL_BAD:
+            raise PopcornError(
+                f"Flow run {workflow_id} ended {status}",
+                error_code="validation",
+            )
+        if time.monotonic() - started > timeout:
+            raise PopcornError(
+                f"Waiting for {workflow_id} timed out after {timeout}s "
+                f"(last status {status or 'unknown'})",
+                error_code="timeout",
+            )
+        time.sleep(_POLL_SECONDS)
 
 
 def _flow_activities(args: argparse.Namespace) -> None:
@@ -69,7 +112,9 @@ def _flow_get(args: argparse.Namespace) -> None:
 
 
 def _flow_run(args: argparse.Namespace) -> None:
-    from ..cli import _get_client, _output, _read_json_object
+    from popcorn_core.errors import PopcornError
+
+    from ..cli import _get_client, _output, _read_json_object, _status
 
     client = _get_client(args)
     raw_inputs = getattr(args, "inputs", None)
@@ -81,6 +126,24 @@ def _flow_run(args: argparse.Namespace) -> None:
         f"  workflow_id: {resp.get('workflow_id', '?')}",
         f"  run_id:      {resp.get('run_id', '-')}",
     ]
+
+    if getattr(args, "wait", False):
+        workflow_id = resp.get("workflow_id") or (resp.get("run") or {}).get("workflow_id")
+        if not workflow_id:
+            raise PopcornError(
+                f"Run started but returned no workflow_id: {resp}",
+                error_code="internal",
+            )
+        _status(f"Waiting for {workflow_id}...")
+        run = _poll_until_closed(
+            client,
+            args.channel,
+            workflow_id,
+            timeout=getattr(args, "timeout_run", None) or _DEFAULT_WAIT_SECONDS,
+        )
+        resp = {**resp, "run": run}
+        lines.append(f"  status:      {run.get('status', '?')}")
+
     _output(args, resp, "\n".join(lines))
 
 
@@ -188,6 +251,16 @@ register(
                         "inputs",
                         "JSON object of flow inputs (use '@-' for stdin, '@path' for a file)",
                         type=str,
+                    ),
+                    Argument(
+                        "wait",
+                        "Poll until the run reaches a terminal status",
+                        action="store_true",
+                    ),
+                    Argument(
+                        "timeout-run",
+                        f"Seconds to wait with --wait (default {_DEFAULT_WAIT_SECONDS})",
+                        type=int,
                     ),
                 ],
             ),

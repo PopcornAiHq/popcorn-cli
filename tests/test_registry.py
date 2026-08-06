@@ -473,3 +473,90 @@ class TestPaginationIsDeclared:
         TestDispatchIsWired()._run(monkeypatch, [*argv, "--channel", "#ops", "--json"])
         payload = json.loads(capsys.readouterr().out)
         assert payload["data"]["pagination"]["next"] == {"cursor": "cur-9"}
+
+
+class TestFlowRunWait:
+    def test_run_takes_wait_and_timeout(self, parser):
+        args = parser.parse_args(
+            ["flow", "run", "abc", "--channel", "#ops", "--wait", "--timeout-run", "60"]
+        )
+        assert args.wait is True
+        assert args.timeout_run == 60
+
+    def test_global_timeout_does_not_collide_with_timeout_run(self, parser):
+        """--timeout is the global HTTP timeout and is hoisted ahead of the
+        subcommand, so the two must never be confused for one another."""
+        from popcorn_cli.cli import _hoist_global_flags
+
+        argv = _hoist_global_flags(
+            ["flow", "run", "abc", "--channel", "#ops", "--wait", "--timeout-run", "60"]
+        )
+        assert argv[0] == "flow", "--timeout-run must not be hoisted as a global flag"
+        args = parser.parse_args(argv)
+        assert args.timeout_run == 60
+        assert args.timeout is None
+
+        args = parser.parse_args(
+            _hoist_global_flags(["flow", "run", "abc", "--channel", "#ops", "--timeout", "5"])
+        )
+        assert args.timeout == 5.0
+        assert getattr(args, "timeout_run", None) is None
+
+    def test_run_without_wait_does_not_poll(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        polled = []
+        monkeypatch.setattr(
+            operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1", "run_id": "r-1"}
+        )
+        monkeypatch.setattr(operations, "get_flow_run", lambda *a, **kw: polled.append(1) or {})
+        TestDispatchIsWired()._run(monkeypatch, ["flow", "run", "abc", "--channel", "#ops"])
+        assert polled == []
+        assert "wid-1" in capsys.readouterr().out
+
+    def test_run_with_wait_polls_and_reports_the_final_run(self, monkeypatch, capsys):
+        from popcorn_cli.commands import flow as mod
+        from popcorn_core import operations
+
+        monkeypatch.setattr(
+            operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1", "run_id": "r-1"}
+        )
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        monkeypatch.setattr(
+            operations,
+            "get_flow_run",
+            lambda *a, **kw: {"run": {"status": "COMPLETED", "workflow_id": "wid-1"}},
+        )
+        TestDispatchIsWired()._run(
+            monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait", "--json"]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"]["run"]["status"] == "COMPLETED"
+
+    def test_wait_on_a_failed_run_exits_non_zero(self, monkeypatch, capsys):
+        from popcorn_cli.commands import flow as mod
+        from popcorn_core import operations
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        monkeypatch.setattr(operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1"})
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        monkeypatch.setattr(
+            operations, "get_flow_run", lambda *a, **kw: {"run": {"status": "FAILED"}}
+        )
+        with pytest.raises(SystemExit) as exc:
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
+            )
+        assert exc.value.code == EXIT_VALIDATION
+        assert "FAILED" in capsys.readouterr().err
+
+    def test_wait_fails_loudly_when_the_run_returns_no_workflow_id(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        monkeypatch.setattr(operations, "run_flow", lambda *a, **kw: {"flow_name": "ingest"})
+        with pytest.raises(SystemExit):
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
+            )
+        assert "no workflow_id" in capsys.readouterr().err

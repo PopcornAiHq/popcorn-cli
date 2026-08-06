@@ -27,6 +27,7 @@ ERROR_CODE_CLIENT = "client_error"
 ERROR_CODE_SERVER = "server_error"
 ERROR_CODE_NETWORK = "network_error"
 ERROR_CODE_UNHEALTHY = "unhealthy"
+ERROR_CODE_TIMEOUT = "timeout"
 ERROR_CODE_INTERNAL = "internal"
 
 # List form for schema introspection via `popcorn commands --json`
@@ -44,6 +45,10 @@ ERROR_CODES: list[dict[str, str]] = [
     {"code": ERROR_CODE_SERVER, "description": "5xx error — retryable with backoff"},
     {"code": ERROR_CODE_NETWORK, "description": "Transport failure (no HTTP response)"},
     {"code": ERROR_CODE_UNHEALTHY, "description": "Deploy succeeded but site is unhealthy"},
+    {
+        "code": ERROR_CODE_TIMEOUT,
+        "description": "Client-side wait elapsed before the operation finished",
+    },
     {"code": ERROR_CODE_INTERNAL, "description": "Unexpected internal CLI error"},
 ]
 

@@ -40,7 +40,7 @@ Usage:
     popcorn channel list [query] [--dms]
     popcorn flow activities [--tier T] [--status S] [--category C]
     popcorn flow list --channel <conv>
-    popcorn flow run <flow_id> --channel <conv> [--inputs JSON]
+    popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]
     popcorn flow runs list --channel <conv>
     popcorn table list --channel <conv>
     popcorn table schema <name> --channel <conv>
