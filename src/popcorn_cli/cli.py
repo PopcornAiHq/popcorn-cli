@@ -39,6 +39,7 @@ Usage:
     popcorn channel leave <conversation>
     popcorn channel list [query] [--dms]
     popcorn flow activities [--tier T] [--status S] [--category C]
+    popcorn flow validate <file|dir> --channel <conv>
     popcorn flow list --channel <conv>
     popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]
     popcorn flow runs list --channel <conv>
@@ -3229,7 +3230,7 @@ Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
 
 Flows:
-  flow            Flow commands (activities, list, get, run, runs list, runs get)
+  flow            Flow commands (activities, validate, list, get, run, runs list, runs get)
 
 Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)

@@ -678,6 +678,21 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> dict[str, Any]:
+    """Parse + statically validate one flow YAML. Never persists.
+
+    A semantically invalid flow is a **200** with ``valid: false`` and an
+    ``issues`` list — not an error status — so callers must branch on
+    ``valid``, not on an exception. Only a malformed request 422s.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.post(
+        "/api/customer-flows/validate",
+        data={"yaml_text": yaml_text},
+        params={"conversation_id": conv_id},
+    )
+
+
 def list_activity_catalog(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
     """The global DSL activity catalog (identical for every workspace).
 
