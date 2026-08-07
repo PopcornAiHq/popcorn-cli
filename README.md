@@ -100,6 +100,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | **Flows** | |
 | `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
 | `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
+| `popcorn flow import <dir> --channel <conv> [--dry-run]` | Install a template bundle; `--dry-run` reports the plan (including flows it would delete) and installs nothing |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |

@@ -599,3 +599,110 @@ class TestFlowValidation:
         resp = operations.validate_flow_yaml(mock_client, "conv-uuid", "name: x\n")
         assert resp["valid"] is False
         assert len(resp["issues"]) == 1
+
+
+class TestTemplatePacking:
+    def test_pack_skips_dotfiles_and_macos_cruft(self, tmp_path):
+        import io
+        import zipfile
+
+        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
+        (tmp_path / ".DS_Store").write_text("junk")
+        (tmp_path / "__MACOSX").mkdir()
+        (tmp_path / "__MACOSX" / "x.yaml").write_text("name: ghost\n")
+        (tmp_path / "fixtures").mkdir()
+        (tmp_path / "fixtures" / "a.json").write_text("{}")
+
+        data = operations.pack_template_dir(str(tmp_path))
+        names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
+        assert "manifest.yaml" in names
+        assert "fixtures/a.json" in names, "nested paths must keep their relative prefix"
+        assert not any(".DS_Store" in n or "__MACOSX" in n for n in names)
+
+    def test_pack_skips_a_dotdir_anywhere_in_the_path(self, tmp_path):
+        import io
+        import zipfile
+
+        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("junk")
+        (tmp_path / "sub").mkdir()
+        (tmp_path / "sub" / ".hidden.yaml").write_text("name: ghost\n")
+
+        names = set(
+            zipfile.ZipFile(io.BytesIO(operations.pack_template_dir(str(tmp_path)))).namelist()
+        )
+        assert names == {"manifest.yaml"}
+
+    def test_pack_rejects_oversized_entry(self, tmp_path):
+        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
+        (tmp_path / "big.yaml").write_text("x" * (1024 * 1024 + 1))
+
+        with pytest.raises(PopcornError) as exc:
+            operations.pack_template_dir(str(tmp_path))
+        assert "1 MiB" in str(exc.value) or "per-file limit" in str(exc.value)
+
+    def test_pack_requires_a_manifest(self, tmp_path):
+        (tmp_path / "only_a_flow.yaml").write_text("name: x\n")
+        with pytest.raises(PopcornError) as exc:
+            operations.pack_template_dir(str(tmp_path))
+        assert "manifest" in str(exc.value).lower()
+
+    def test_pack_accepts_config_yaml_as_the_manifest(self, tmp_path):
+        (tmp_path / "config.yaml").write_text("display_name: X\n")
+        (tmp_path / "a.yaml").write_text("name: x\n")
+        assert operations.pack_template_dir(str(tmp_path))
+
+    def test_pack_rejects_a_non_directory(self, tmp_path):
+        f = tmp_path / "bundle.zip"
+        f.write_text("x")
+        with pytest.raises(PopcornError, match="Not a directory"):
+            operations.pack_template_dir(str(f))
+
+
+class TestTemplateImport:
+    def _bundle(self, tmp_path):
+        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
+        return str(tmp_path)
+
+    def test_import_uploads_then_posts_the_file_key(self, mock_client, monkeypatch, tmp_path):
+        # upload_file returns a media *content part* — the key lives under
+        # `url`, not `file_key`.
+        monkeypatch.setattr(
+            operations,
+            "upload_file",
+            lambda c, conv, path: {"type": "media", "url": "fk-123", "filename": "b.zip"},
+        )
+        mock_client.post.return_value = {"ok": True, "summary": {}, "dry_run": False}
+        operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
+        mock_client.post.assert_called_once_with(
+            "/api/customer-flows/import",
+            data={"conversation_id": "conv-uuid", "zip_file_key": "fk-123"},
+            params={"conversation_id": "conv-uuid"},
+        )
+
+    def test_import_sends_dry_run_when_asked(self, mock_client, monkeypatch, tmp_path):
+        monkeypatch.setattr(operations, "upload_file", lambda c, conv, path: {"url": "fk-1"})
+        mock_client.post.return_value = {"ok": True, "summary": {}, "dry_run": True}
+        operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path), dry_run=True)
+        assert mock_client.post.call_args.kwargs["data"]["dry_run"] is True
+
+    def test_import_fails_loudly_when_upload_returns_no_key(
+        self, mock_client, monkeypatch, tmp_path
+    ):
+        monkeypatch.setattr(operations, "upload_file", lambda c, conv, path: {"type": "media"})
+        with pytest.raises(APIError, match="no file key"):
+            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
+
+    def test_import_does_not_upload_an_invalid_bundle(self, mock_client, monkeypatch, tmp_path):
+        """Packing must fail before anything is uploaded — a missing manifest
+        should not leave a stray zip in the channel."""
+        uploaded = []
+        monkeypatch.setattr(
+            operations, "upload_file", lambda c, conv, path: uploaded.append(path) or {"url": "k"}
+        )
+        (tmp_path / "no_manifest.yaml").write_text("name: x\n")
+        with pytest.raises(PopcornError):
+            operations.import_template(mock_client, "conv-uuid", str(tmp_path))
+        assert uploaded == []
+        mock_client.post.assert_not_called()

@@ -680,3 +680,116 @@ class TestFlowValidate:
         assert payload["ok"] is True
         assert payload["data"]["invalid"] == 0
         assert payload["data"]["results"][0]["file"] == str(f)
+
+
+class TestFlowImport:
+    def test_import_takes_dir_and_dry_run(self, parser):
+        args = parser.parse_args(["flow", "import", "./bundle", "--channel", "#ops", "--dry-run"])
+        assert args.flow_command == "import"
+        assert args.directory == "./bundle"
+        assert args.dry_run is True
+
+    def test_dry_run_defaults_off(self, parser):
+        args = parser.parse_args(["flow", "import", "./bundle", "--channel", "#ops"])
+        assert args.dry_run is False
+
+    def _run_import(self, monkeypatch, resp, argv_extra=()):
+        from popcorn_core import operations
+
+        seen = {}
+
+        def fake(client, conversation, dir_path, dry_run=False):
+            seen.update(dir_path=dir_path, dry_run=dry_run)
+            return resp
+
+        monkeypatch.setattr(operations, "import_template", fake)
+        TestDispatchIsWired()._run(
+            monkeypatch, ["flow", "import", "./bundle", "--channel", "#ops", *argv_extra]
+        )
+        return seen
+
+    _DRY: ClassVar[dict] = {
+        "ok": True,
+        "dry_run": True,
+        "summary": {
+            "flows": {
+                "create": ["alert_webhook"],
+                "update": ["alert_tick"],
+                "delete": ["legacy_flow"],
+            },
+            "tables": ["alerts"],
+            "schedules": 2,
+            "schedules_replace_existing": True,
+            "webhooks": 1,
+            "scalars": ["alerts_summary"],
+            "app_type": "alerttracker",
+        },
+    }
+
+    def test_dry_run_passes_the_flag_through(self, monkeypatch, capsys):
+        seen = self._run_import(monkeypatch, self._DRY, ("--dry-run",))
+        assert seen == {"dir_path": "./bundle", "dry_run": True}
+        assert "Would install" in capsys.readouterr().out
+
+    def test_dry_run_surfaces_deletions_prominently(self, monkeypatch, capsys):
+        """install PRUNES flows the bundle does not cover. A summary that
+        renders `flows` as a raw dict buries the destructive line."""
+        self._run_import(monkeypatch, self._DRY, ("--dry-run",))
+        out = capsys.readouterr().out
+        assert "legacy_flow" in out
+        assert "delete" in out.lower()
+        # Not a bare dict repr — the nesting must be broken out.
+        assert "{'create'" not in out and '{"create"' not in out
+
+    def test_dry_run_reports_that_schedules_are_replaced_wholesale(self, monkeypatch, capsys):
+        self._run_import(monkeypatch, self._DRY, ("--dry-run",))
+        out = capsys.readouterr().out.lower()
+        assert "replace" in out
+
+    def test_dry_run_warns_when_the_bundle_would_clear_app_type(self, monkeypatch, capsys):
+        """An untyped bundle CLEARS the channel's app_type — the one
+        irreversible-feeling surprise in the whole install."""
+        untyped = {**self._DRY, "summary": {**self._DRY["summary"], "app_type": None}}
+        self._run_import(monkeypatch, untyped, ("--dry-run",))
+        combined = capsys.readouterr()
+        assert "app_type" in (combined.out + combined.err)
+        assert "clear" in (combined.out + combined.err).lower()
+
+    def test_dry_run_does_not_warn_for_a_typed_bundle(self, monkeypatch, capsys):
+        self._run_import(monkeypatch, self._DRY, ("--dry-run",))
+        assert "clear" not in (capsys.readouterr().out.lower())
+
+    def test_real_install_renders_the_install_summary_shape(self, monkeypatch, capsys):
+        """A real install returns InstallSummary's flat snake_case keys, not
+        the dry run's nested shape."""
+        seen = self._run_import(
+            monkeypatch,
+            {
+                "ok": True,
+                "dry_run": False,
+                "summary": {
+                    "template": "alerttracker",
+                    "flows_created": ["alert_webhook"],
+                    "flows_updated": [],
+                    "flows_deleted": ["legacy_flow"],
+                    "scalars_set": ["alerts_summary"],
+                    "schedules_created": [],
+                    "required_connections": [],
+                },
+            },
+        )
+        assert seen == {"dir_path": "./bundle", "dry_run": False}
+        out = capsys.readouterr().out
+        assert "Installed" in out
+        assert "alert_webhook" in out
+        assert "legacy_flow" in out
+        # Empty sections are noise — omit them.
+        assert "flows_updated" not in out
+        assert "required_connections" not in out
+
+    def test_json_output_carries_the_raw_summary(self, monkeypatch, capsys):
+        self._run_import(monkeypatch, self._DRY, ("--dry-run", "--json"))
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"]["summary"]["flows"]["delete"] == ["legacy_flow"]
+        assert payload["data"]["dry_run"] is True
