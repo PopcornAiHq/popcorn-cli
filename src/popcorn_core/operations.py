@@ -678,6 +678,92 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+# Mirrors the backend read_zip's per-entry ceiling so an oversized bundle fails
+# locally with a clear message instead of as an opaque 400.
+_MAX_TEMPLATE_ENTRY_BYTES = 1024 * 1024
+
+
+def pack_template_dir(path: str) -> bytes:
+    """Zip a template directory the way the importer expects to read it.
+
+    Skips the same cruft the server skips (dotfiles/dotdirs, ``__MACOSX``) and
+    enforces the same per-entry ceiling. Requires a manifest: a bundle without
+    one installs flows with no tables, schedules or webhooks, which is almost
+    never what the author meant.
+    """
+    import io
+    import zipfile
+
+    root = Path(path)
+    if not root.is_dir():
+        raise PopcornError(f"Not a directory: {path}", error_code="validation")
+
+    entries: list[tuple[Path, str]] = []
+    for file in sorted(root.rglob("*")):
+        if not file.is_file():
+            continue
+        rel = file.relative_to(root)
+        if any(p.startswith(".") or p == "__MACOSX" for p in rel.parts):
+            continue
+        size = file.stat().st_size
+        if size > _MAX_TEMPLATE_ENTRY_BYTES:
+            raise PopcornError(
+                f"{rel} is {size} bytes, over the 1 MiB per-file limit",
+                error_code="validation",
+            )
+        entries.append((file, rel.as_posix()))
+
+    if not any(name in ("manifest.yaml", "config.yaml") for _, name in entries):
+        raise PopcornError(f"No manifest.yaml in {path}", error_code="validation")
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for file, name in entries:
+            zf.write(file, name)
+    return buf.getvalue()
+
+
+def import_template(
+    client: APIClient,
+    conversation: str,
+    dir_path: str,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Install (or preflight) a template directory into a channel.
+
+    Zips locally *first* — an invalid bundle must not leave a stray upload in
+    the channel — then uploads the zip to the target channel (the import
+    endpoint resolves the file against the active conversation) and imports it
+    by key.
+
+    On a ``dry_run`` the response's ``summary`` is a different shape from a
+    real install's; see ``popcorn_cli.commands.flow`` for the two renderings.
+    """
+    import tempfile
+
+    conv_id = resolve_conversation(client, conversation)
+    data = pack_template_dir(dir_path)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        zip_path = Path(tmp) / f"{Path(dir_path).resolve().name}.zip"
+        zip_path.write_bytes(data)
+        uploaded = upload_file(client, conv_id, str(zip_path))
+
+    # upload_file returns a media content part: the key is under `url`.
+    file_key = uploaded.get("url") or uploaded.get("file_key")
+    if not file_key:
+        raise APIError(f"Upload returned no file key: {uploaded}")
+
+    body: dict[str, Any] = {"conversation_id": conv_id, "zip_file_key": file_key}
+    if dry_run:
+        body["dry_run"] = True
+    return client.post(
+        "/api/customer-flows/import",
+        data=body,
+        params={"conversation_id": conv_id},
+    )
+
+
 def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> dict[str, Any]:
     """Parse + statically validate one flow YAML. Never persists.
 

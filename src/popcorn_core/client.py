@@ -226,6 +226,13 @@ class APIClient:
                             "detail", detail.get("error", detail.get("message", str(detail)))
                         )
                     )
+                    # Keep a structured `issues` list. For flow validation it is
+                    # the entire diagnostic, and collapsing it to the error slug
+                    # ("flow_validation_failed") leaves the author nothing to act
+                    # on.
+                    issues = detail.get("issues")
+                    if isinstance(issues, list) and issues:
+                        msg = "\n".join([msg, *(f"  - {i}" for i in issues)])
                 elif isinstance(detail, list):
                     # Pydantic 422 validation errors
                     parts = []
