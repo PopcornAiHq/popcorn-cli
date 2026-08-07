@@ -575,3 +575,27 @@ class TestActivityCatalog:
         mock_client.get.return_value = {"ok": True, "activities": []}
         operations.list_activity_catalog(mock_client, "#ops")
         mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog")
+
+
+class TestFlowValidation:
+    def test_validate_flow_yaml_posts_yaml_text(self, mock_client):
+        mock_client.post.return_value = {"ok": True, "valid": True, "steps": []}
+        operations.validate_flow_yaml(mock_client, "conv-uuid", "name: x\n")
+        mock_client.post.assert_called_once_with(
+            "/api/customer-flows/validate",
+            data={"yaml_text": "name: x\n"},
+            params={"conversation_id": "conv-uuid"},
+        )
+
+    def test_validate_returns_the_body_verbatim(self, mock_client):
+        """An invalid flow is a 200 with valid:false — not an APIError — so the
+        caller must see the issues rather than an exception."""
+        mock_client.post.return_value = {
+            "ok": True,
+            "valid": False,
+            "issues": ["steps[0](a).args.text: missing required arg: text"],
+            "steps": [],
+        }
+        resp = operations.validate_flow_yaml(mock_client, "conv-uuid", "name: x\n")
+        assert resp["valid"] is False
+        assert len(resp["issues"]) == 1

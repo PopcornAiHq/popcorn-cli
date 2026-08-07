@@ -59,6 +59,49 @@ def _poll_until_closed(
         time.sleep(_POLL_SECONDS)
 
 
+# Bundle files that are not flows. A manifest is checked by `flow import
+# --dry-run`, not here; config/strings are template data.
+_NOT_A_FLOW = {"manifest.yaml", "config.yaml", "strings.yaml"}
+
+
+def _flow_validate(args: argparse.Namespace) -> None:
+    from pathlib import Path
+
+    from popcorn_core.errors import PopcornError
+
+    from ..cli import _get_client, _output
+
+    client = _get_client(args)
+    target = Path(args.path)
+    if target.is_dir():
+        files = [p for p in sorted(target.glob("*.y*ml")) if p.name not in _NOT_A_FLOW]
+    else:
+        files = [target]
+    if not files:
+        raise PopcornError(f"No flow YAML found at {args.path}", error_code="validation")
+
+    results: list[dict[str, Any]] = []
+    lines: list[str] = []
+    bad = 0
+    for path in files:
+        resp = operations.validate_flow_yaml(client, args.channel, path.read_text())
+        results.append({"file": str(path), **resp})
+        # An invalid flow is a 200 with valid:false — branch on the field.
+        if resp.get("valid"):
+            steps = ", ".join(s.get("id", "?") for s in resp.get("steps", []))
+            lines.append(f"  ok    {path}  [{steps}]")
+        else:
+            bad += 1
+            lines.append(f"  FAIL  {path}")
+            for issue in resp.get("issues", []):
+                lines.append(f"          {issue}")
+
+    header = f"Validated {len(files)} flow(s), {bad} invalid:"
+    _output(args, {"results": results, "invalid": bad}, "\n".join([header, *lines]))
+    if bad:
+        raise PopcornError(f"{bad} flow(s) failed validation", error_code="validation")
+
+
 def _flow_activities(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -198,7 +241,7 @@ register(
     Command(
         name="flow",
         category="flows",
-        description="Flow commands (activities, list, get, run, runs list, runs get)",
+        description="Flow commands (activities, validate, list, get, run, runs list, runs get)",
         subcommands=[
             # First: the discovery entry point for a template author.
             Subcommand(
@@ -219,6 +262,15 @@ register(
                         choices=["release", "beta", "alpha", "deprecated"],
                     ),
                     Argument("category", "Filter by category (store, channel, …)", type=str),
+                ],
+            ),
+            Subcommand(
+                "validate",
+                "Validate flow YAML without installing",
+                _flow_validate,
+                [
+                    Argument("path", "Flow YAML file, or a bundle directory", positional=True),
+                    _CHANNEL,
                 ],
             ),
             Subcommand(

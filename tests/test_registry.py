@@ -560,3 +560,123 @@ class TestFlowRunWait:
                 monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
             )
         assert "no workflow_id" in capsys.readouterr().err
+
+
+class TestFlowValidate:
+    def test_validate_takes_a_path(self, parser):
+        args = parser.parse_args(["flow", "validate", "alert_webhook.yaml", "--channel", "#ops"])
+        assert args.flow_command == "validate"
+        assert args.path == "alert_webhook.yaml"
+
+    def test_validate_requires_channel(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["flow", "validate", "x.yaml"])
+
+    def _stub(self, monkeypatch, by_name):
+        """Stub the operation, keyed on a marker inside each file's text."""
+        from popcorn_core import operations
+
+        seen = []
+
+        def fake(client, conversation, yaml_text):
+            seen.append(yaml_text)
+            for marker, resp in by_name.items():
+                if marker in yaml_text:
+                    return resp
+            raise AssertionError(f"unexpected yaml: {yaml_text!r}")
+
+        monkeypatch.setattr(operations, "validate_flow_yaml", fake)
+        return seen
+
+    def test_a_valid_file_exits_zero_and_lists_step_ids(self, monkeypatch, capsys, tmp_path):
+        f = tmp_path / "ok.yaml"
+        f.write_text("name: ok_flow\n")
+        self._stub(
+            monkeypatch,
+            {"ok_flow": {"valid": True, "issues": [], "steps": [{"id": "say_hello"}]}},
+        )
+        TestDispatchIsWired()._run(monkeypatch, ["flow", "validate", str(f), "--channel", "#ops"])
+        out = capsys.readouterr().out
+        assert "0 invalid" in out
+        assert "say_hello" in out
+
+    def test_an_invalid_file_prints_issues_and_exits_non_zero(self, monkeypatch, capsys, tmp_path):
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        f = tmp_path / "bad.yaml"
+        f.write_text("name: bad_flow\n")
+        self._stub(
+            monkeypatch,
+            {
+                "bad_flow": {
+                    "valid": False,
+                    "issues": ["steps[0](a).args.text: missing required arg: text"],
+                    "steps": [],
+                }
+            },
+        )
+        with pytest.raises(SystemExit) as exc:
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "validate", str(f), "--channel", "#ops"]
+            )
+        assert exc.value.code == EXIT_VALIDATION
+        out = capsys.readouterr()
+        assert "missing required arg: text" in out.out
+        assert "1 flow(s) failed validation" in out.err
+
+    def test_a_directory_validates_every_flow_and_skips_reserved_names(
+        self, monkeypatch, capsys, tmp_path
+    ):
+        (tmp_path / "a.yaml").write_text("name: flow_a\n")
+        (tmp_path / "b.yml").write_text("name: flow_b\n")
+        # Reserved: a manifest is not a flow. flow import --dry-run checks it.
+        (tmp_path / "manifest.yaml").write_text("name: manifest_should_be_skipped\n")
+        (tmp_path / "config.yaml").write_text("name: config_should_be_skipped\n")
+        (tmp_path / "strings.yaml").write_text("name: strings_should_be_skipped\n")
+        (tmp_path / "fixture.json").write_text("{}")
+
+        ok = {"valid": True, "issues": [], "steps": []}
+        seen = self._stub(monkeypatch, {"flow_a": ok, "flow_b": ok})
+        TestDispatchIsWired()._run(
+            monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+        )
+        assert len(seen) == 2, f"validated {len(seen)} files, expected just a.yaml + b.yml"
+        assert "Validated 2 flow(s), 0 invalid" in capsys.readouterr().out
+
+    def test_one_bad_file_among_several_still_exits_non_zero(self, monkeypatch, capsys, tmp_path):
+        (tmp_path / "a.yaml").write_text("name: flow_a\n")
+        (tmp_path / "b.yaml").write_text("name: flow_b\n")
+        self._stub(
+            monkeypatch,
+            {
+                "flow_a": {"valid": True, "issues": [], "steps": []},
+                "flow_b": {"valid": False, "issues": ["boom"], "steps": []},
+            },
+        )
+        with pytest.raises(SystemExit):
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+            )
+        assert "Validated 2 flow(s), 1 invalid" in capsys.readouterr().out
+
+    def test_empty_directory_is_an_error_not_a_silent_pass(self, monkeypatch, capsys, tmp_path):
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        with pytest.raises(SystemExit) as exc:
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+            )
+        assert exc.value.code == EXIT_VALIDATION
+        assert "No flow YAML found" in capsys.readouterr().err
+
+    def test_json_output_carries_per_file_results(self, monkeypatch, capsys, tmp_path):
+        f = tmp_path / "ok.yaml"
+        f.write_text("name: ok_flow\n")
+        self._stub(monkeypatch, {"ok_flow": {"valid": True, "issues": [], "steps": []}})
+        TestDispatchIsWired()._run(
+            monkeypatch, ["flow", "validate", str(f), "--channel", "#ops", "--json"]
+        )
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"]["invalid"] == 0
+        assert payload["data"]["results"][0]["file"] == str(f)
