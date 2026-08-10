@@ -299,6 +299,75 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+def _failure_lines(failure: dict[str, Any] | None, indent: str) -> list[str]:
+    """Render a FailureInfo and its `cause` chain, outermost first.
+
+    The API unwinds `cause` recursively and the root is usually the line that
+    actually explains the failure, so the whole chain is worth printing.
+    """
+    lines: list[str] = []
+    node: dict[str, Any] | None = failure
+    prefix = ""
+    while isinstance(node, dict):
+        kind = node.get("type")
+        label = f"{kind}: " if kind else ""
+        lines.append(f"{indent}{prefix}{label}{node.get('message', '')}")
+        node = node.get("cause")
+        prefix = "caused by: "
+        indent += "  "
+    return lines
+
+
+def _run_detail_lines(run: dict[str, Any]) -> list[str]:
+    """Render one flow run: header, in-flight activities, failures.
+
+    `--include-errors` populates `error_history`; without rendering it here the
+    flag was a no-op outside `--json`. Note the API gives no DSL step id — an
+    activity is identified only by `activity_type`, because the interpreter
+    schedules activities without setting Temporal's activity_id.
+    """
+    lines = [
+        f"{run.get('status', '?')}  {run.get('workflow_id', '?')}",
+        f"  type:    {run.get('workflow_type', '-')}",
+        f"  run_id:  {run.get('run_id', '-')}",
+        f"  started: {run.get('start_time', '-')}",
+        f"  closed:  {run.get('close_time', '-')}",
+    ]
+
+    pending = run.get("current_activities") or []
+    if pending:
+        lines.append(f"  in flight ({len(pending)}):")
+        for a in pending:
+            lines.append(
+                f"    {a.get('activity_type', '?')!s:<32} "
+                f"{a.get('state', '?')}  "
+                f"attempt {a.get('attempt', '?')}/{a.get('maximum_attempts', '?')}"
+            )
+            # The failure that caused the current retry — the reason a run is
+            # stuck, and otherwise invisible.
+            if a.get("last_failure"):
+                lines.extend(_failure_lines(a["last_failure"], "      "))
+
+    if run.get("failure"):
+        lines.append("  failure:")
+        lines.extend(_failure_lines(run["failure"], "    "))
+
+    history = run.get("error_history") or []
+    if history:
+        lines.append(f"  activity failures ({len(history)}):")
+        for e in history:
+            meta = "  ".join(str(v) for v in (e.get("time"), e.get("type")) if v is not None)
+            lines.append(
+                f"    {e.get('activity_type', '?')!s:<32} "
+                f"attempt {e.get('attempt', '?')}"
+                f"{'  ' + meta if meta else ''}"
+            )
+            if e.get("message"):
+                lines.append(f"      {e['message']}")
+
+    return lines
+
+
 def _flow_runs_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -311,14 +380,7 @@ def _flow_runs_get(args: argparse.Namespace) -> None:
         include_errors=getattr(args, "include_errors", False),
     )
     run = resp.get("run") or resp
-    lines = [
-        f"{run.get('status', '?')}  {run.get('workflow_id', '?')}",
-        f"  type:    {run.get('workflow_type', '-')}",
-        f"  run_id:  {run.get('run_id', '-')}",
-        f"  started: {run.get('start_time', '-')}",
-        f"  closed:  {run.get('close_time', '-')}",
-    ]
-    _output(args, resp, "\n".join(lines))
+    _output(args, resp, "\n".join(_run_detail_lines(run)))
 
 
 register(

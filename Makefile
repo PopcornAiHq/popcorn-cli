@@ -1,4 +1,4 @@
-.PHONY: install install-local dev fmt lint typecheck test check clean release
+.PHONY: install install-local dev fmt lint typecheck test check ci clean release
 
 # ── Setup ────────────────────────────────────────────────────────────
 
@@ -35,6 +35,12 @@ test-cov:  ## Run tests with coverage
 		--cov-report=term-missing tests/
 
 check: lint typecheck test  ## Run all checks (lint + typecheck + test)
+
+ci:  ## Non-mutating check for CI — same gates, but fails instead of fixing
+	uv run ruff check .
+	uv run ruff format --check .
+	uv run mypy src/popcorn_core src/popcorn_cli
+	uv run pytest tests/
 
 # ── Version ──────────────────────────────────────────────────────────
 

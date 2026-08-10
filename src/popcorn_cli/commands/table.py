@@ -37,6 +37,25 @@ def _table_list(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+def _column_line(c: dict) -> str:
+    """Render one column: name, type, governance flags, merge policy.
+
+    `merge` is a design-time attribute that changes what a write DOES — concat
+    accumulates onto the existing value, replace overwrites — but it leaves no
+    trace in the row data, so it has to be visible here. Only `concat` is
+    printed: `replace` is the default on every column and listing it everywhere
+    would bury the one column that accumulates.
+    """
+    flags = [k for k in ("unique", "required", "internal", "pii", "restricted") if c.get(k)]
+    if c.get("merge") == "concat":
+        separator = c.get("merge_separator")
+        # None means the server applies its "\n" default — don't render an
+        # explicit separator we cannot vouch for.
+        flags.append(f"concat sep={separator!r}" if separator else "concat")
+    suffix = f"  [{', '.join(flags)}]" if flags else ""
+    return f"  {c.get('name', '?'):<24} {c.get('type', '?'):<10}{suffix}"
+
+
 def _table_schema(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -45,10 +64,7 @@ def _table_schema(args: argparse.Namespace) -> None:
     schema_version = table.get("schema_version") or {}
     cols = (schema_version.get("schema_def") or {}).get("columns", [])
     lines = [f"{args.name} (v{schema_version.get('version', '?')}, {len(cols)} columns):"]
-    for c in cols:
-        flags = [k for k in ("unique", "required", "internal", "pii", "restricted") if c.get(k)]
-        suffix = f"  [{', '.join(flags)}]" if flags else ""
-        lines.append(f"  {c.get('name', '?'):<24} {c.get('type', '?'):<10}{suffix}")
+    lines.extend(_column_line(c) for c in cols)
     _output(args, resp, "\n".join(lines))
 
 
