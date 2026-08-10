@@ -12,6 +12,7 @@ EXIT_AUTH = 2  # Auth failures — re-login required
 EXIT_CLIENT = 3  # 4xx API errors — request is wrong
 EXIT_SERVER = 4  # 5xx API errors — retryable
 EXIT_UNHEALTHY = 5  # Deploy succeeded but site is unhealthy
+EXIT_TIMEOUT = 6  # Client-side wait elapsed — the operation may still be running
 EXIT_INTERRUPT = 130  # Ctrl+C
 
 # Stable machine-readable error codes for agents.
@@ -84,20 +85,34 @@ class PopcornError(Exception):
     # Default stable machine-readable code; subclasses or callers can override
     # by passing `error_code=` to __init__ or by setting the class attribute.
     error_code: str = ERROR_CODE_VALIDATION
+    # Whether re-running the same command could plausibly succeed. Most
+    # PopcornErrors are bad input, so the default is False.
+    retryable: bool = False
 
-    def __init__(self, *args: Any, error_code: str | None = None, hint: str | None = None) -> None:
+    def __init__(
+        self,
+        *args: Any,
+        error_code: str | None = None,
+        hint: str | None = None,
+        exit_code: int | None = None,
+        retryable: bool | None = None,
+    ) -> None:
         super().__init__(*args)
         if error_code is not None:
             self.error_code = error_code
         if hint is not None:
             self.hint = hint
+        if exit_code is not None:
+            self.exit_code = exit_code
+        if retryable is not None:
+            self.retryable = retryable
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
             "error": str(self),
             "error_code": self.error_code,
             "code": type(self).__name__,
-            "retryable": False,
+            "retryable": self.retryable,
         }
         if self.hint:
             d["hint"] = self.hint
@@ -147,8 +162,8 @@ class APIError(PopcornError):
             return EXIT_CLIENT
         return EXIT_VALIDATION  # network errors, no status code
 
-    @property
-    def retryable(self) -> bool:
+    @property  # type: ignore[override]
+    def retryable(self) -> bool:  # type: ignore[override]
         return self.status_code >= 500 or self.status_code == 429
 
     @property  # type: ignore[override]
