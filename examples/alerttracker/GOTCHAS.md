@@ -276,24 +276,40 @@ row showed `Post Message Id`. Nothing errored.
 Rule: renaming a column means renaming every write site too, and the only
 thing that catches a miss is reading a row back.
 
-## 25. `flow run <name>` does not resolve a flow by name
+## 25. ~~`flow run <name>` does not resolve a flow by name~~ — FIXED in 0.16.0
 
-`popcorn flow list` shows `seed_test_alert`, but:
+Both halves of this are fixed; kept for the diagnosis, which was not obvious.
 
-```
-$ popcorn flow run seed_test_alert --channel <id>
-Error: flow 'seed_test_alert' not found on this channel
-```
+`popcorn flow list` showed `seed_test_alert`, but `flow run seed_test_alert`
+returned `flow 'seed_test_alert' not found on this channel` — and that was the
+SERVER's message, not the CLI's. The API does support by-name addressing
+(`backend:services/api/customer_flows.py:1477`), but it resolves through the
+channel_app binding, which only covers flows installed as a bound bundle. A
+bundle installed ad-hoc by `flow import` is a UUID-addressed `customer_flows`
+row, so its own name never matched.
 
-Passing the flow's UUID works. Also, `flow run` does NOT auto-supply
-`conversation_id`; a flow declaring it needs `--inputs '{"conversation_id":
-"<id>"}'` explicitly, or it fails with
-`ReferenceError: $inputs.conversation_id: key not found`.
+Fixed client-side: `run_flow` now maps a non-UUID ref through `flow list`
+before calling the API, and passes an unmatched name through untouched so the
+server's channel_app resolution still works.
 
-## 26. `flow runs list --status failed` matches nothing
+Separately, `flow run` did not supply `conversation_id`, so a flow declaring
+it started fine and then died at runtime with
+`ReferenceError: $inputs.conversation_id: key not found`. It is now defaulted
+from `--channel`; an explicit value in `--inputs` still wins.
 
-The unfiltered list shows runs with status `Failed` (capitalised, Temporal's
-casing); `--status failed` returns zero. Filter client-side, or match casing.
+## 26. ~~`flow runs list --status failed` matches nothing~~ — RETRACTED
+
+**This entry was wrong.** `--status failed` works correctly; the server
+vocabulary is `all | running | failed | closed` and maps to
+`ExecutionStatus = "Failed"` internally.
+
+What actually happened: the response key is `executions`, not `runs`, and the
+`--json` parse used to "verify" this read `.runs` and got an empty list. The
+bug was in the check, not the CLI.
+
+Kept rather than deleted as a reminder: a negative result from your own
+scratch parser is not evidence until you have confirmed the shape it parses.
+Read the keys first (`--json | python3 -c "print(list(d.keys()))"`).
 
 ## 27. `start_flow` is asynchronous — the parent completing proves nothing
 
@@ -346,3 +362,40 @@ applied per-field — which is what this bundle does and what the docs teach.
 
 The stronger platform ask remains gotcha #21: a `foundation.workflow.offset`
 activity, which would remove the last LLM call from `alert_tick` entirely.
+
+
+## 28. A missing key hard-fails reference resolution, and `on_error` cannot save it
+
+`alert_tick` swept a row that had no `PostMessageId` (its `post` step had been
+skipped) and the scheduled run died:
+
+```
+ReferenceError: $row.PostMessageId: key not found
+```
+
+The step carried `on_error: {policy: skip, retry: 1}` and it made no
+difference — **reference resolution happens before the activity is invoked**,
+so the step never reaches the point where its error policy applies. An error
+policy protects against the activity failing, not against the arguments being
+unresolvable.
+
+This is the same failure mode as #22 (`details` missing from an
+`output_schema`), which makes it a general rule rather than a store quirk:
+
+> Never dereference a field that might be absent. Guarantee its presence
+> upstream — in an `output_schema`'s `required`, or in a `list_rows` filter
+> with `$exists: true`.
+
+Fixed by giving the edit steps their own narrowed query rather than reusing
+the sweep's row set. Note the ordering constraint that comes with it: the
+`$exists` query filters `Status: firing`, so it must run BEFORE the patch step
+that sets `Status: resolved`.
+
+Worth knowing for diagnosis: activities commit individually, so a run that
+dies at step 7 leaves steps 1-6 applied. The failing ticks had already
+resolved rows before crashing, which is why the table looked half-swept.
+
+**This bug was invisible for six hours.** It only fires once
+`auto_resolve_hours` has elapsed and a sweep actually engages a row missing
+the key — no amount of same-session testing would have surfaced it. Leave a
+scheduled bundle running overnight before believing it.

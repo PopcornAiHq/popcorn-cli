@@ -101,12 +101,27 @@ steps:
   # correctly instead of accumulating status messages. PostMessageId is the
   # one column renamed space-free, because this line dereferences it.
   #
-  # skip-on-error: a row whose post predates this column, or whose message was
-  # deleted, must not fail the whole action.
+  # Its own query, narrowed by `$exists`, rather than reusing `find`. A row
+  # without a PostMessageId — the post step was skipped, or the row predates
+  # the column — makes `$row.PostMessageId` a hard ReferenceError that fails
+  # the run, and `on_error: skip` does NOT rescue it: reference resolution
+  # happens before the activity runs, so the error policy never applies.
+  # Only the query can guarantee the key is there.
+  - id: closable
+    activity: foundation.store.list_rows
+    when: $inputs.action == 'resolve'
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Fingerprint: { $in: $inputs.fingerprints }
+        PostMessageId: { $exists: true }
+      drop_columns: [Raw]
+
   - id: close_post
     activity: foundation.channel.edit
     when: $inputs.action == 'resolve'
-    foreach: $steps.find.output.rows
+    foreach: $steps.closable.output.rows
     as: row
     max_parallel: 1
     on_error: { policy: skip, retry: 1 }

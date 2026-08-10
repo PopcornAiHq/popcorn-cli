@@ -622,6 +622,49 @@ def get_flow(client: APIClient, conversation: str, flow_id: str) -> dict[str, An
     )
 
 
+def _looks_like_uuid(value: str) -> bool:
+    return len(value) == 36 and value.count("-") == 4
+
+
+def resolve_flow_ref(client: APIClient, conversation: str, ref: str, lister: Any = None) -> str:
+    """Turn a flow NAME into its id, leaving ids and unknown names alone.
+
+    `flow list` prints names and the authoring docs use them, but a flow
+    installed by `flow import` is a UUID-addressed row. The server's by-name
+    path only covers flows bound through a channel_app, so a bundle installed
+    ad-hoc 404s on its own name. Resolving here closes that gap.
+
+    Best-effort by design: an unmatched name is passed through so the server's
+    own by-name resolution still gets its turn, and a failed lookup falls back
+    rather than breaking a run that would otherwise work.
+    """
+    if _looks_like_uuid(ref):
+        return ref
+    lookup = lister or list_flows
+    try:
+        flows = (lookup(client, conversation) or {}).get("flows") or []
+    except Exception:  # convenience lookup, never fatal
+        return ref
+    for flow in flows:
+        if flow.get("name") == ref and flow.get("id"):
+            return str(flow["id"])
+    return ref
+
+
+def with_conversation_id(inputs: dict[str, Any] | None, conversation_id: str) -> dict[str, Any]:
+    """Default `conversation_id` into a run's inputs.
+
+    Practically every flow declares it, and omitting it fails at RUNTIME with
+    `ReferenceError: $inputs.conversation_id: key not found` — the run starts,
+    reports success, and only then dies. Since the caller already addressed a
+    channel, filling it in removes a whole class of confusing failure. An
+    explicit value always wins: a flow may target another conversation.
+    """
+    merged = dict(inputs or {})
+    merged.setdefault("conversation_id", conversation_id)
+    return merged
+
+
 def run_flow(
     client: APIClient,
     conversation: str,
@@ -630,6 +673,8 @@ def run_flow(
 ) -> dict[str, Any]:
     """Start a flow run, returning its Temporal workflow_id/run_id."""
     conv_id = resolve_conversation(client, conversation)
+    flow_id = resolve_flow_ref(client, conversation, flow_id)
+    inputs = with_conversation_id(inputs, conv_id)
     body: dict[str, Any] = {"conversation_id": conv_id, "flow_id": flow_id}
     if inputs:
         body["inputs"] = inputs

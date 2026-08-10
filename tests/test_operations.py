@@ -404,11 +404,17 @@ class TestFlows:
         )
 
     def test_run_flow_no_inputs(self, mock_client):
+        """conversation_id is supplied even with no --inputs: nearly every flow
+        declares it, and omitting it fails at runtime rather than here."""
         mock_client.post.return_value = {"workflow_id": "wf-1"}
         operations.run_flow(mock_client, "conv-1", "f1")
         mock_client.post.assert_called_once_with(
             "/api/customer-flows/run",
-            data={"conversation_id": "conv-1", "flow_id": "f1"},
+            data={
+                "conversation_id": "conv-1",
+                "flow_id": "f1",
+                "inputs": {"conversation_id": "conv-1"},
+            },
             params={"conversation_id": "conv-1"},
         )
 
@@ -416,7 +422,13 @@ class TestFlows:
         mock_client.post.return_value = {"workflow_id": "wf-1"}
         operations.run_flow(mock_client, "conv-1", "f1", inputs={"x": 1})
         body = mock_client.post.call_args.kwargs["data"]
-        assert body["inputs"] == {"x": 1}
+        assert body["inputs"] == {"x": 1, "conversation_id": "conv-1"}
+
+    def test_run_flow_does_not_override_an_explicit_conversation_id(self, mock_client):
+        mock_client.post.return_value = {"workflow_id": "wf-1"}
+        operations.run_flow(mock_client, "conv-1", "f1", inputs={"conversation_id": "other"})
+        body = mock_client.post.call_args.kwargs["data"]
+        assert body["inputs"]["conversation_id"] == "other"
 
     def test_list_flow_runs(self, mock_client):
         mock_client.get.return_value = {"executions": [], "count": 0, "next_page_token": None}

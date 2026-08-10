@@ -246,6 +246,8 @@ def _flow_run(args: argparse.Namespace) -> None:
     client = _get_client(args)
     raw_inputs = getattr(args, "inputs", None)
     inputs = _read_json_object(raw_inputs, "--inputs") if raw_inputs else None
+    # Name->id resolution and the conversation_id default both live in
+    # operations.run_flow, which already resolves the conversation.
     resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
     name = resp.get("flow_name", args.flow_id)
     lines = [

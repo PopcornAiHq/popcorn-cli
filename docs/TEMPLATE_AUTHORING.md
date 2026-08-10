@@ -338,12 +338,19 @@ A freshly created channel is **not resolvable by `#name` for ~5 minutes**
 (negative resolution caching). Use the conversation UUID immediately after
 creating it.
 
-`flow run` takes a flow **UUID**, not a name, and does not auto-supply
-`conversation_id`:
+`flow run` accepts a flow **name or UUID**, and defaults `conversation_id`
+into the inputs from `--channel`:
 
 ```bash
-popcorn flow run <flow-uuid> --channel <id> \
-  --inputs '{"conversation_id":"<id>"}' --wait
+popcorn flow run alert_tick --channel <id> --wait
+```
+
+Pass `--inputs` for a flow's own arguments; an explicit `conversation_id`
+there always wins, so a flow can still target another conversation.
+
+```bash
+popcorn flow run alert_apply --channel <id> \
+  --inputs '{"action":"ack","fingerprints":["..."]}' --wait
 ```
 
 ### Validation will not save you
@@ -367,8 +374,11 @@ Watch for these when reading results:
 - Posting the same webhook body twice does not test your merge logic — the
   *webhook layer* dedupes identical deliveries and no flow runs at all. Vary
   the body while keeping the identity fields.
-- `flow runs list --status failed` matches nothing; Temporal's casing is
-  `Failed`.
+- A field that might be **absent** must never be dereferenced. A missing key
+  is a hard `ReferenceError` that fails the run, and `on_error` does not
+  rescue it — reference resolution happens before the activity is invoked.
+  Guarantee presence upstream: in an `output_schema`'s `required`, or with
+  `$exists: true` in the query that produced the rows.
 
 ## 8. Gotchas, condensed
 
@@ -396,3 +406,6 @@ Watch for these when reading results:
 18. A column name with a space cannot be dereferenced.
 19. The store accepts undeclared columns silently.
 20. Every `output_schema` property you reference must be `required`.
+21. A missing key is a hard `ReferenceError`, and `on_error` cannot rescue it —
+    resolution precedes invocation. Guarantee presence in the query
+    (`$exists: true`) or the schema (`required`).
