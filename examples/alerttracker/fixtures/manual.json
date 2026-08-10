@@ -1,0 +1,10 @@
+{
+  "source": "manual",
+  "severity": "warning",
+  "env": "tools",
+  "resource": "popcorn-tools-s3-bridge",
+  "title": "Bridge asset uploads failing intermittently",
+  "details": "Three of the last twenty asset uploads to the tools bridge bucket returned 503. No pattern by object size. Raised by hand while investigating; not yet alarmed on.",
+  "reported_by": "shaun@popcorn.ai",
+  "reported_at": "2026-08-09T15:20:00+00:00"
+}

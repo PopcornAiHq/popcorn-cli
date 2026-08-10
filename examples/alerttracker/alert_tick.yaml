@@ -1,0 +1,181 @@
+name: alert_tick
+version: 1
+description: >
+  Periodic sweep: nudge alerts nobody has acked, auto-resolve alerts that have
+  gone quiet, and refresh the channel summary. Driven by the `alert-tick`
+  schedule (300s, overlap: skip).
+
+  THE SHAPE OF THIS FLOW IS DICTATED BY TWO PLATFORM LIMITS.
+
+  1. `when:` supports only `==` / `!=` (one comparison, no `&&`). So "is this
+     row older than the threshold" cannot be a step gate.
+  2. Nothing in the DSL does date arithmetic. All 44 foundation activities
+     were enumerated; `workflow.now` takes no arguments and there is no
+     duration-offset activity.
+
+  The answer to (1) is the agent-store filter DSL, which does support
+  `$lt`/`$gte`/`$in`/`$exists` and compares ISO-8601 correctly because the
+  comparison is lexicographic. Every selection below happens in the database,
+  exactly, rather than in a step gate.
+
+  The answer to (2) is the single `cutoffs` step: one LLM call per tick whose
+  entire job is to subtract two durations from `now`. Its output is used ONLY
+  as filter operands, so the database still does the selecting and the model's
+  blast radius is two strings. A bad cutoff affects one tick and self-corrects
+  on the next. A `foundation.workflow.offset` activity would delete this step
+  outright — see GOTCHAS.md #21.
+
+inputs:
+  conversation_id: { type: string }
+
+steps:
+  - id: now
+    activity: foundation.workflow.now
+
+  # The only non-deterministic step, and deliberately the narrowest possible
+  # task. `computed` is the recognition flag every transform in this bundle
+  # carries: a required output schema makes the model INVENT a value rather
+  # than fail (observed in Step 0'), so the flag plus a hard guard is the only
+  # way to turn bad output into a failure instead of a wrong sweep.
+  - id: cutoffs
+    activity: foundation.agent.transform
+    on_error: { policy: fail, retry: 1 }
+    args:
+      data:
+        now: $steps.now.output.iso
+        nudge_after_minutes: $channel.nudge_after_minutes
+        auto_resolve_hours: $channel.auto_resolve_hours
+      prompt: >
+        You are doing arithmetic on timestamps. Do not interpret, summarise, or
+        add commentary.
+
+        Given `now` (an ISO-8601 UTC timestamp), compute exactly two values:
+
+        - `nudge_cutoff` = now minus `nudge_after_minutes` minutes
+        - `resolve_cutoff` = now minus `auto_resolve_hours` hours
+
+        Return both in the SAME ISO-8601 format as the `now` you were given,
+        UTC, including the timezone offset. Set `computed` to true if you
+        performed both subtractions successfully and neither result is LATER
+        than `now`. A threshold of 0 is legitimate and means the cutoff equals
+        `now` — that is a valid result, not a failure. Set `computed` to false
+        only when a value is missing, non-numeric, or you are otherwise
+        unsure: a wrong cutoff silently resolves live alerts, which is far
+        worse than a skipped tick.
+      output_schema:
+        type: object
+        required: [computed, nudge_cutoff, resolve_cutoff]
+        properties:
+          computed: { type: boolean }
+          nudge_cutoff: { type: string }
+          resolve_cutoff: { type: string }
+
+  - id: guard
+    activity: foundation.workflow.fail
+    when: $steps.cutoffs.output.computed == false
+    args:
+      reason: Could not compute sweep cutoffs; skipping this tick rather than sweeping on bad bounds.
+      code: CutoffComputationFailed
+
+  # ---- auto-resolve -------------------------------------------------------
+  # Anything still `firing` whose last sighting predates the resolve cutoff.
+  # Both predicates live in the filter; neither is expressible as a `when:`.
+  # "Last Seen" keeps its space: filter keys are JSON, not refs.
+  - id: stale
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Status: firing
+        Last Seen: { $lt: $steps.cutoffs.output.resolve_cutoff }
+      drop_columns: [Raw]
+
+  - id: auto_resolve
+    activity: foundation.store.patch_row
+    foreach: $steps.stale.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      record_id: $row._record_id
+      patch:
+        Status: resolved
+        Resolved At: $steps.now.output.iso
+
+  - id: close_posts
+    activity: foundation.channel.edit
+    foreach: $steps.stale.output.rows
+    as: row
+    max_parallel: 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      message_id: $row.PostMessageId
+      text: $row.Title
+
+  # ---- nudge --------------------------------------------------------------
+  # Still firing, first seen before the nudge cutoff, and never nudged.
+  # `$exists: false` is what keeps this from re-nudging every 5 minutes —
+  # `Nudged At` is a concat column, so once it holds anything the row drops
+  # out of this filter. That makes the nudge exactly-once per incident, which
+  # is why a second tick inside the window posts nothing.
+  - id: unacked
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Status: firing
+        First Seen: { $lt: $steps.cutoffs.output.nudge_cutoff }
+        Nudged At: { $exists: false }
+      drop_columns: [Raw]
+
+  - id: nudge
+    activity: foundation.channel.post
+    foreach: $steps.unacked.output.rows
+    as: row
+    max_parallel: 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      text: $row.Title
+
+  - id: mark_nudged
+    activity: foundation.store.patch_row
+    foreach: $steps.unacked.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      record_id: $row._record_id
+      patch:
+        # concat column: one ISO stamp appended per nudge, never a counter.
+        Nudged At: $steps.now.output.iso
+
+  # ---- summary ------------------------------------------------------------
+  # Runtime state, so it is deliberately NOT declared under the manifest's
+  # `scalars:` — those UPSERT on every install and would reset a live channel.
+  - id: firing_now
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Status: firing
+      drop_columns: [Raw]
+
+  - id: summary
+    activity: foundation.store.set_scalar
+    args:
+      conversation_id: $inputs.conversation_id
+      key: alerts_summary
+      # Scalars are strings on the wire. unix_str exists precisely so a
+      # timestamp can be fed straight into set_scalar without coercion.
+      value: $steps.now.output.unix_str
+
+outputs:
+  resolved: $steps.stale.output.rows
+  nudged: $steps.unacked.output.rows

@@ -52,6 +52,17 @@ add a family by hand-editing the completion generators or the schema builder.
 Families still living in `cli.py` are mid-migration; see
 `docs/architecture-commands.md`.
 
+## Channel templates
+
+`docs/TEMPLATE_AUTHORING.md` is the guide for authoring a channel-template
+bundle with this CLI, and `examples/alerttracker/` is a complete, live-verified
+bundle it refers to. Both were written from a real authoring run; the evidence
+log is `examples/alerttracker/GOTCHAS.md`.
+
+The guide deliberately does **not** restate activity names, arguments, or
+result schemas — those are served by `flow activities` and enforced by `flow
+validate`, and duplicating them here would rot. Keep it that way when editing.
+
 ## Auth
 
 Clerk OAuth PKCE flow with two modes:

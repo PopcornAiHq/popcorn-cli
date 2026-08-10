@@ -1,0 +1,157 @@
+name: alert_webhook
+version: 1
+description: >
+  Ingest ONE ops alert delivered by a `trigger_workflow` webhook.
+
+  The delivery handler starts this flow with inputs
+  `{conversation_id, payload, headers, source_hint, delivery_id, webhook_id}`;
+  we declare only what we read. workspace_id is NOT an input — it rides the
+  auth context.
+
+  The DSL cannot reach sub-fields of an `object` input, so the raw payload is
+  normalized by an LLM step whose `output_schema` declares the shape; only
+  after that are fields referenceable. Everything downstream is deterministic.
+
+inputs:
+  conversation_id: { type: string }
+  payload: { type: object }
+
+steps:
+  - id: now
+    activity: foundation.workflow.now
+
+  - id: normalize
+    activity: foundation.agent.transform
+    on_error: { policy: fail, retry: 1 }
+    args:
+      data: $inputs.payload
+      prompt: >
+        You are normalizing one ops alert into a fixed shape.
+
+        FIRST decide whether this payload is actually an ops alert at all. Set
+        `recognized` to false when it is not — arbitrary JSON, an empty body,
+        a health check, or anything with no identifiable alarm/condition.
+
+        When `recognized` is false: put the empty string in `fingerprint`,
+        `title`, `resource` and `details`, and do NOT invent plausible values —
+        a junk row is worse than a failure. Leave `source`, `severity`, `env`
+        and `state` at ANY value their enum allows; those four are discarded
+        when `recognized` is false, and the empty string is not a legal enum
+        value, so trying to blank them contradicts the schema.
+
+        Return the JSON object and nothing else — no commentary before or
+        after it, and no reasoning about these instructions.
+
+        When `recognized` is true: derive a stable `fingerprint` of the form
+        "<source>:<resource>:<env>" using lowercase and hyphens, so the same
+        alarm always produces the same fingerprint. `state` is "resolved" only
+        when the payload clearly says the condition cleared (e.g. an OK state
+        transition); otherwise "firing". Keep `title` under 100 characters. If
+        a real alert genuinely names no resource, use "unknown".
+      output_schema:
+        type: object
+        # EVERY property that any downstream step references must be listed
+        # here. A property that is declared but not required is genuinely
+        # optional to the model — it included `details` on one run and omitted
+        # it on the next — and a missing key is a hard ReferenceError that
+        # fails the run, not a null that flows through:
+        #   ReferenceError: $steps.normalize.output.details: key not found
+        required:
+          [recognized, fingerprint, title, source, severity, env, resource, details, state]
+        properties:
+          # The guard below hard-stops the flow when this is false. Without it
+          # the model fabricates a plausible alert to satisfy `required` —
+          # observed: {"garbage": true} became
+          # "manual:unknown:dev" / "Unknown Alert" / severity info.
+          recognized: { type: boolean }
+          fingerprint: { type: string }
+          title: { type: string }
+          source:
+            type: string
+            enum: [cloudwatch, alertmanager, github, manual]
+          severity: { type: string, enum: [critical, warning, info] }
+          env: { type: string, enum: [dev, prod, tools] }
+          resource: { type: string }
+          details: { type: string }
+          state: { type: string, enum: [firing, resolved] }
+
+  # Hard-stop before anything is written. An `output_schema` with `required`
+  # fields does not reject a non-alert payload — it makes the model invent one
+  # — so unrecognized input has to be turned into an explicit failure. The run
+  # then shows up in `popcorn flow runs list --status failed`.
+  - id: guard
+    activity: foundation.workflow.fail
+    when: $steps.normalize.output.recognized == false
+    args:
+      reason: Payload is not a recognizable ops alert; nothing was ingested.
+      code: UnrecognizedAlertPayload
+
+  - id: upsert
+    activity: foundation.store.upsert_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      merge_on: [Fingerprint]
+      on_conflict: merge
+      rows:
+        - Fingerprint: $steps.normalize.output.fingerprint
+          Title: $steps.normalize.output.title
+          Source: $steps.normalize.output.source
+          Severity: $steps.normalize.output.severity
+          Env: $steps.normalize.output.env
+          Resource: $steps.normalize.output.resource
+          Details: $steps.normalize.output.details
+          Status: $steps.normalize.output.state
+          # `First Seen` is deliberately NOT written here. Every column
+          # defaults to merge:replace and the only other mode is concat, so
+          # there is no "keep the original" policy — sending it on every fire
+          # would overwrite the first-seen time on each re-fire (observed:
+          # it advanced with Last Seen). It is set once by `stamp`, which is
+          # gated on created == 1.
+          #
+          # foundation.workflow.now returns {unix, unix_str, iso} — `.iso`
+          # is the datetime string; there is no `.now`.
+          Last Seen: $steps.now.output.iso
+          Seen At: $steps.now.output.iso
+          Raw: $inputs.payload
+
+  # `created` is 1 only for a genuinely new fingerprint, so this gate posts
+  # once per incident instead of once per fire. upsert_rows has a permissive
+  # result_schema, so `.created` and `.ids` are NOT checked by static
+  # validation — they are confirmed against the runtime response shape
+  # (agent-store RecordsInsertResponse: {ids, created, updated,
+  # schema_version_id}).
+  - id: post
+    activity: foundation.channel.post
+    when: $steps.upsert.output.created == 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      text: $steps.normalize.output.title
+
+  - id: stamp
+    activity: foundation.store.patch_row
+    when: $steps.upsert.output.created == 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      # Array indexing uses DOTS, never brackets: `ids[0]` is rejected as a
+      # malformed reference and would be treated as a literal string.
+      record_id: $steps.upsert.output.ids.0
+      patch:
+        # Written once, on creation only — see the note in `upsert`.
+        First Seen: $steps.now.output.iso
+        # channel.post returns a BARE STRING (the message id), not an object
+        # — `.message_id` is not a field. Its catalog description says so.
+        #
+        # Space-free because alert_tick/alert_apply DEREFERENCE it as
+        # `$row.PostMessageId` to edit the original post. The store accepts
+        # any key, declared or not, so writing "Post Message Id" here would
+        # silently produce a column the schema doesn't have and the refs
+        # can't reach — observed exactly that. See GOTCHAS.md #19.
+        PostMessageId: $steps.post.output
+
+outputs:
+  fingerprint: $steps.normalize.output.fingerprint
+  created: $steps.upsert.output.created

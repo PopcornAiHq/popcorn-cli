@@ -1,0 +1,55 @@
+name: seed_test_alert
+version: 1
+description: >
+  Fire a canned alert through `alert_webhook` without touching the webhook
+  URL. This is the loop you use to exercise the tracker in a fresh channel:
+  seed, then watch the tick nudge and resolve it.
+
+  `start_flow` launches a SIBLING flow installed in the same conversation, so
+  the seeded payload travels the identical ingest path as a real delivery —
+  normalize, guard, upsert, post. Nothing here shortcuts into the table.
+
+  Every input has a default, so `flow run seed_test_alert` with no inputs is a
+  valid smoke test.
+
+inputs:
+  conversation_id: { type: string }
+  resource: { type: string, required: false, default: popcorn-dev-seed-service }
+  severity: { type: string, required: false, default: warning }
+  env: { type: string, required: false, default: dev }
+  reason: { type: string, required: false, default: Seeded test alert from seed_test_alert. }
+
+steps:
+  # The payload is shaped like a CloudWatch alarm notification body because
+  # that is the shape `alert_webhook`'s normalizer sees most often. It is
+  # passed as `payload`, the same input the delivery handler supplies.
+  - id: fire
+    activity: foundation.workflow.start_flow
+    args:
+      conversation_id: $inputs.conversation_id
+      flow_name: alert_webhook
+      inputs:
+        conversation_id: $inputs.conversation_id
+        payload:
+          AlarmName: $inputs.resource
+          AlarmDescription: $inputs.reason
+          NewStateValue: ALARM
+          NewStateReason: $inputs.reason
+          Region: US West (Oregon)
+          Trigger:
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Statistic: AVERAGE
+            Threshold: 85.0
+          # Read by the normalizer to derive `env`; keeping the same key the
+          # real CloudWatch fixtures use means the seeded alert fingerprints
+          # the same way a real one would.
+          Dimensions:
+            - name: Environment
+              value: $inputs.env
+            - name: ServiceName
+              value: $inputs.resource
+          SeverityHint: $inputs.severity
+
+outputs:
+  workflow_id: $steps.fire.output.workflow_id
