@@ -9,7 +9,7 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (~228 tests)
+├── tests/                     ← pytest (~590 tests)
 ├── scripts/                   ← test-install.sh (Docker-based install tests)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check, dev
@@ -25,8 +25,15 @@ make fmt        # ruff format
 make lint       # ruff check --fix
 make typecheck  # mypy
 make test       # pytest
-make check      # lint + typecheck + test
+make check      # lint + typecheck + test (lint auto-fixes)
+make ci         # what CI runs — same gates, but fails instead of auto-fixing
 ```
+
+`make check` runs `ruff check --fix`, so a lint violation is silently repaired
+rather than reported. `make ci` is the non-mutating form (`ruff check`,
+`ruff format --check`) and is what `.github/workflows/ci.yml` executes on every
+PR across Python 3.10–3.13. Run `make ci` before pushing if you want the same
+answer CI will give.
 
 ## Key Details
 
