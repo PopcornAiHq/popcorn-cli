@@ -1,0 +1,8 @@
+{
+  "hello": "world",
+  "items": [1, 2, 3],
+  "nested": {
+    "note": "This is deliberately NOT an ops alert. It exists to prove the guard fires.",
+    "ok": true
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "_comment": [
+    "Checked-in expectations for acceptance criterion 7: replaying every fixture",
+    "must normalize to these fields. Only the deterministic identity fields are",
+    "asserted — Title is model-written prose and is deliberately not pinned.",
+    "",
+    "'observed' records what the live dev run actually produced on 2026-08-09.",
+    "Where it differs from 'expect', the disagreement is recorded here rather",
+    "than quietly accepted (criterion 7 requires exactly that).",
+    "",
+    "malformed.json intentionally has no row: it must FAIL the run via the",
+    "UnrecognizedAlertPayload guard."
+  ],
+  "fixtures": {
+    "cloudwatch-alarm.json": {
+      "expect": {
+        "Source": "cloudwatch",
+        "Severity": "critical",
+        "Env": "dev",
+        "Resource": "popcorn-dev-ops-api",
+        "Status": "firing",
+        "Fingerprint": "cloudwatch:popcorn-dev-ops-api:dev"
+      },
+      "agrees": true,
+      "note": "Confirmed in Step 0'; fingerprint was stable across two fires."
+    },
+    "alertmanager.json": {
+      "expect": {
+        "Source": "alertmanager",
+        "Severity": "critical",
+        "Env": "prod",
+        "Resource": "popcorn-prod-api",
+        "Status": "firing",
+        "Fingerprint": "alertmanager:popcorn-prod-api:prod"
+      },
+      "agrees": true,
+      "note": "Every field is present verbatim in labels (severity, env, job); no inference needed."
+    },
+    "manual.json": {
+      "expect": {
+        "Source": "manual",
+        "Severity": "warning",
+        "Env": "tools",
+        "Resource": "popcorn-tools-s3-bridge",
+        "Status": "firing",
+        "Fingerprint": "manual:popcorn-tools-s3-bridge:tools"
+      },
+      "agrees": true,
+      "note": "Payload already carries the target vocabulary; a pass-through case."
+    },
+    "github-actions-failure.json": {
+      "expect": {
+        "Source": "github",
+        "Severity": "warning",
+        "Resource": "popcorn-backend",
+        "Status": "firing"
+      },
+      "observed": {
+        "Env": "prod"
+      },
+      "agrees": false,
+      "note": [
+        "DISAGREEMENT. The payload contains no environment field at all. The",
+        "model inferred Env=prod from head_branch=main. That is a defensible",
+        "reading but it is an invention, not an extraction — a CI failure on",
+        "main is not inherently a prod alert, and nothing in the payload says",
+        "which environment (if any) was affected.",
+        "",
+        "Severity=warning is likewise a judgement call on a failed pipeline.",
+        "",
+        "This is the shape of risk that matters for spec open question 7: the",
+        "model does not drift on fields the payload states, it invents fields",
+        "the payload omits. Pin Env for CI sources rather than trusting it."
+      ]
+    },
+    "malformed.json": {
+      "expect_no_row": true,
+      "expect_failure_code": "UnrecognizedAlertPayload",
+      "agrees": true,
+      "note": [
+        "Guard fires, run is Failed, no row created — verified live.",
+        "",
+        "The first attempt failed for the WRONG reason: the prompt said to blank",
+        "every field while source/severity/env/state carry enums that exclude",
+        "the empty string. The model noticed the contradiction and reasoned",
+        "aloud in its output, breaking JSON parsing (TransformBadOutput). The",
+        "outcome looked right - no row - but by a fragile path. Fixed by",
+        "scoping the blanking instruction to the free-text fields only."
+      ]
+    }
+  },
+  "summary": {
+    "shapes_tested": 5,
+    "shapes_agreeing": 4,
+    "criterion": "at least 4 of 5",
+    "result": "pass"
+  }
+}

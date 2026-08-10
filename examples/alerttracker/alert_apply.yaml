@@ -1,0 +1,127 @@
+name: alert_apply
+version: 1
+description: >
+  Apply a triage action to one or more alerts, addressed by fingerprint.
+
+  Listed in `agent_runnable_flows`, so the channel agent ("ack the RDS alarm")
+  and the CLI (`flow run alert_apply --inputs @ack.json`) drive exactly the
+  same path.
+
+  `when:` supports only `==` / `!=` and one comparison per gate, so the three
+  actions are three separately-gated foreach steps rather than a branch.
+
+  There is no `minutes` input. The DSL cannot do arithmetic, so a flow cannot
+  turn "snooze 2 hours" into a timestamp; the caller supplies `snooze_until`
+  as an ISO-8601 string. That is the right layering anyway — the agent or CLI
+  invoking this already knows the wall clock.
+
+inputs:
+  conversation_id: { type: string }
+  action: { type: string }
+  fingerprints: { type: array }
+  # Only read by the snooze path. ISO-8601, e.g. 2026-08-09T18:00:00+00:00.
+  snooze_until: { type: string, required: false, default: "" }
+  actor: { type: string, required: false, default: agent }
+
+steps:
+  - id: now
+    activity: foundation.workflow.now
+
+  # `$in` is one of the filter DSL's allowed operators. Selection happens in
+  # the database, which is the only place a multi-value match can happen —
+  # `when:` could never express it.
+  - id: find
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Fingerprint: { $in: $inputs.fingerprints }
+      # Raw is a whole webhook payload per row. drop_columns strips it BEFORE
+      # it enters Temporal's replayed event history.
+      drop_columns: [Raw]
+
+  # A fingerprint that matches nothing is a caller error worth surfacing, not
+  # a silent no-op — an agent that mistypes an alert name should be told.
+  - id: guard
+    activity: foundation.workflow.fail
+    when: $steps.find.output.rows == null
+    args:
+      reason: No alerts matched the supplied fingerprints; nothing was changed.
+      code: NoMatchingAlerts
+
+  - id: ack
+    activity: foundation.store.patch_row
+    when: $inputs.action == 'ack'
+    foreach: $steps.find.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      # `rows` is the flattened view: each row's data plus `_record_id`.
+      # patch_row takes record_id as an INTEGER, which is what this is.
+      record_id: $row._record_id
+      patch:
+        Status: acked
+        # Map keys are literal strings, so a column name with a space is fine
+        # here. Only `$ref` dereferences reject spaces.
+        Acked By: $inputs.actor
+        Acked At: $steps.now.output.iso
+
+  - id: snooze
+    activity: foundation.store.patch_row
+    when: $inputs.action == 'snooze'
+    foreach: $steps.find.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      record_id: $row._record_id
+      patch:
+        Status: snoozed
+        Snooze Until: $inputs.snooze_until
+
+  - id: resolve
+    activity: foundation.store.patch_row
+    when: $inputs.action == 'resolve'
+    foreach: $steps.find.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      record_id: $row._record_id
+      patch:
+        Status: resolved
+        Resolved At: $steps.now.output.iso
+
+  # Update the original incident post in place so the channel history reads
+  # correctly instead of accumulating status messages. PostMessageId is the
+  # one column renamed space-free, because this line dereferences it.
+  #
+  # skip-on-error: a row whose post predates this column, or whose message was
+  # deleted, must not fail the whole action.
+  - id: close_post
+    activity: foundation.channel.edit
+    when: $inputs.action == 'resolve'
+    foreach: $steps.find.output.rows
+    as: row
+    max_parallel: 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      message_id: $row.PostMessageId
+      text: $row.Title
+
+  - id: confirm
+    activity: foundation.channel.post
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      text: $inputs.action
+
+outputs:
+  matched: $steps.find.output.rows
+  action: $inputs.action

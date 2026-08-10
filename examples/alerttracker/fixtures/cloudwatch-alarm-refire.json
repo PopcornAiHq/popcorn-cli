@@ -1,0 +1,40 @@
+{
+  "AlarmName": "popcorn-dev-ops-ecs-cpu-high",
+  "AlarmDescription": "ECS service CPU above 85% for 10 minutes on the dev ops cluster.",
+  "AWSAccountId": "123456789012",
+  "AlarmConfigurationUpdatedTimestamp": "2026-08-01T09:14:22.113+0000",
+  "NewStateValue": "ALARM",
+  "NewStateReason": "Threshold Crossed: 2 out of the last 2 datapoints [93.8 (07/08/26 22:05:00), 90.1 (07/08/26 22:00:00)] were greater than the threshold (85.0).",
+  "StateChangeTime": "2026-08-07T22:10:47.918+0000",
+  "Region": "US West (Oregon)",
+  "AlarmArn": "arn:aws:cloudwatch:us-west-2:123456789012:alarm:popcorn-dev-ops-ecs-cpu-high",
+  "OldStateValue": "OK",
+  "OKActions": [],
+  "AlarmActions": [
+    "arn:aws:sns:us-west-2:123456789012:popcorn-dev-ops-alerts"
+  ],
+  "InsufficientDataActions": [],
+  "Trigger": {
+    "MetricName": "CPUUtilization",
+    "Namespace": "AWS/ECS",
+    "StatisticType": "Statistic",
+    "Statistic": "AVERAGE",
+    "Unit": null,
+    "Dimensions": [
+      {
+        "value": "popcorn-dev-ops",
+        "name": "ClusterName"
+      },
+      {
+        "value": "popcorn-dev-ops-api",
+        "name": "ServiceName"
+      }
+    ],
+    "Period": 300,
+    "EvaluationPeriods": 2,
+    "ComparisonOperator": "GreaterThanThreshold",
+    "Threshold": 85.0,
+    "TreatMissingData": "missing",
+    "EvaluateLowSampleCountPercentile": ""
+  }
+}

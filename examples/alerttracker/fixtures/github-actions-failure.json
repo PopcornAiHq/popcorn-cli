@@ -1,0 +1,38 @@
+{
+  "action": "completed",
+  "workflow_run": {
+    "id": 31345213774,
+    "name": "Main Pipeline",
+    "head_branch": "main",
+    "head_sha": "ce0cca4f21b8d3907a1e5c6b4d2f8a09e7c31b55",
+    "run_number": 2841,
+    "event": "push",
+    "status": "completed",
+    "conclusion": "failure",
+    "workflow_id": 4471902,
+    "html_url": "https://github.com/PopcornAiHq/popcorn-backend/actions/runs/31345213774",
+    "created_at": "2026-08-09T13:40:02Z",
+    "updated_at": "2026-08-09T13:52:47Z",
+    "run_attempt": 1,
+    "head_commit": {
+      "id": "ce0cca4f21b8d3907a1e5c6b4d2f8a09e7c31b55",
+      "message": "fix(worker): drop the stale sweep flag",
+      "timestamp": "2026-08-09T13:39:51Z"
+    }
+  },
+  "workflow": {
+    "id": 4471902,
+    "name": "Main Pipeline",
+    "path": ".github/workflows/main.yml"
+  },
+  "repository": {
+    "id": 771294455,
+    "name": "popcorn-backend",
+    "full_name": "PopcornAiHq/popcorn-backend",
+    "private": true
+  },
+  "sender": {
+    "login": "shaun",
+    "type": "User"
+  }
+}
