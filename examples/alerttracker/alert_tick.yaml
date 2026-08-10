@@ -91,6 +91,33 @@ steps:
         Last Seen: { $lt: $steps.cutoffs.output.resolve_cutoff }
       drop_columns: [Raw]
 
+  # A SECOND query, not a reuse of `stale`, and the difference is load-bearing.
+  #
+  # Not every row has a PostMessageId: the `post` step in alert_webhook is
+  # gated on created == 1 and can be skipped, and any row predating the column
+  # simply lacks the key. Referencing a MISSING key is a hard ReferenceError
+  # that fails the whole run:
+  #
+  #   ReferenceError: $row.PostMessageId: key not found
+  #
+  # `on_error: {policy: skip}` does NOT rescue it — reference resolution
+  # happens before the activity is invoked, so the step never gets far enough
+  # for its error policy to apply. Observed live: the first scheduled tick to
+  # sweep an old row died here.
+  #
+  # So the guarantee has to come from the query. `$exists: true` means every
+  # row reaching this foreach is known to carry the key.
+  - id: closable
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: alerts
+      filter:
+        Status: firing
+        Last Seen: { $lt: $steps.cutoffs.output.resolve_cutoff }
+        PostMessageId: { $exists: true }
+      drop_columns: [Raw]
+
   - id: auto_resolve
     activity: foundation.store.patch_row
     foreach: $steps.stale.output.rows
@@ -106,7 +133,7 @@ steps:
 
   - id: close_posts
     activity: foundation.channel.edit
-    foreach: $steps.stale.output.rows
+    foreach: $steps.closable.output.rows
     as: row
     max_parallel: 1
     on_error: { policy: skip, retry: 1 }
