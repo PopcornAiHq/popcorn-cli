@@ -1133,7 +1133,7 @@ class TestStatus:
         assert "my-site" in output
         assert "Detailed status not available" in output
 
-    def test_status_no_local_json(self, tmp_path, monkeypatch):
+    def test_status_no_local_json(self, mock_client, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         args = MagicMock()
         args.channel = None
@@ -1142,7 +1142,14 @@ class TestStatus:
         args.env = None
         args.workspace = None
 
-        with pytest.raises(PopcornError, match="No channel specified"):
+        # cmd_status calls _get_client before resolving the channel, so without
+        # this patch the test reads the developer's real ~/.config/popcorn and
+        # dies on "Not logged in" — it passed only on a logged-in machine. Every
+        # sibling test in this class patches the client for the same reason.
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=mock_client),
+            pytest.raises(PopcornError, match="No channel specified"),
+        ):
             from popcorn_cli.cli import cmd_status
 
             cmd_status(args)
