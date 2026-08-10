@@ -36,7 +36,7 @@ def _poll_until_closed(
     Raises PopcornError on a failed run (so the shell sees a non-zero exit) or
     when `timeout` seconds elapse without a terminal status.
     """
-    from popcorn_core.errors import PopcornError
+    from popcorn_core.errors import EXIT_TIMEOUT, PopcornError
 
     started = time.monotonic()
     while True:
@@ -55,6 +55,12 @@ def _poll_until_closed(
                 f"Waiting for {workflow_id} timed out after {timeout}s "
                 f"(last status {status or 'unknown'})",
                 error_code="timeout",
+                # Not EXIT_VALIDATION — the request was fine, the deadline just
+                # elapsed and the run is likely still going. Agents need to tell
+                # "wait longer / poll again" apart from "your input was wrong",
+                # in the exit code and in the JSON envelope alike.
+                exit_code=EXIT_TIMEOUT,
+                retryable=True,
             )
         time.sleep(_POLL_SECONDS)
 

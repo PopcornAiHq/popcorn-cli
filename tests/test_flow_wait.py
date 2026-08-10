@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from popcorn_cli.commands.flow import _poll_until_closed
-from popcorn_core.errors import EXIT_VALIDATION, PopcornError
+from popcorn_core.errors import EXIT_TIMEOUT, EXIT_VALIDATION, PopcornError
 
 
 class _Runs:
@@ -77,6 +77,14 @@ def test_raises_on_timeout(monkeypatch):
         _poll_until_closed(None, "#ops", "wid-1", timeout=30)
     assert "timed out" in str(exc.value).lower()
     assert exc.value.error_code == "timeout"
+    # A deadline is not bad input. Exiting EXIT_VALIDATION would tell an agent
+    # its request was malformed and to stop retrying — the exact opposite of
+    # what a wait deadline means, and it defeats the point of --wait.
+    assert exc.value.exit_code == EXIT_TIMEOUT
+    assert exc.value.exit_code != EXIT_VALIDATION
+    # Same correction in the JSON envelope: an agent reading retryable:false
+    # would give up on a run that is very likely still going.
+    assert exc.value.to_dict()["retryable"] is True
 
 
 def test_timeout_error_code_is_in_the_stable_enum():
@@ -84,3 +92,20 @@ def test_timeout_error_code_is_in_the_stable_enum():
     from popcorn_core.errors import ERROR_CODES
 
     assert "timeout" in {e["code"] for e in ERROR_CODES}
+
+
+def test_timeout_exit_code_is_discoverable_in_the_schema(capsys):
+    """Agents switch on `popcorn commands --json` exit_codes — a code that is
+    not published there is a code they cannot branch on."""
+    import argparse
+    import json
+
+    from popcorn_cli.cli import cmd_commands
+
+    cmd_commands(argparse.Namespace(groups=None))
+    schema = json.loads(capsys.readouterr().out)
+
+    exit_codes = schema["exit_codes"]
+    assert exit_codes["timeout"] == EXIT_TIMEOUT
+    # Every published code must be distinct, or branching on one is ambiguous.
+    assert len(set(exit_codes.values())) == len(exit_codes)
