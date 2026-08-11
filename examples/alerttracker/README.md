@@ -55,8 +55,11 @@ installed as a flow — the importer keys entries by basename.
 
 | Parameter | Default | Effect |
 |---|---|---|
-| `nudge_after_minutes` | 30 | how long an alert may sit unacked before one nudge is posted |
-| `auto_resolve_hours` | 6 | silence after which a firing alert is auto-resolved |
+| `nudge_offset_minutes` | -30 | how long an alert may sit unacked before one nudge is posted |
+| `auto_resolve_offset_hours` | -6 | silence after which a firing alert is auto-resolved |
+
+Both are **negative**: they are passed straight to `foundation.workflow.offset`,
+which takes signed durations, and the DSL cannot negate a reference.
 
 The nudge is once per incident, not once per tick — `Nudged At` being
 non-empty is what removes a row from the nudge set.
@@ -66,10 +69,10 @@ non-empty is what removes a row from the nudge set.
 - **Snoozing needs a caller-supplied timestamp.** `alert_apply` takes
   `snooze_until` as ISO-8601 rather than "minutes", because the flow DSL has
   no arithmetic. The agent or CLI computes it.
-- **The tick spends one LLM call per run on date arithmetic.** Nothing in the
-  DSL can subtract a duration from a timestamp, so the sweep cutoffs are
-  computed by `agent.transform` and then used only as database filter
-  operands. See `GOTCHAS.md` #21.
+- **The tick is fully deterministic** — no LLM call. Its sweep cutoffs come
+  from `foundation.workflow.offset`. Note the offsets are configured NEGATIVE
+  (`nudge_offset_minutes: -30`): the activity takes signed durations and the
+  DSL cannot negate a reference. See `GOTCHAS.md` #21.
 - **Ingest costs one LLM call per alert.** That is what buys source-agnostic
   normalization. At ops alert volume it is not a meaningful cost.
 - **No SNS subscription handshake.** Pointing a raw SNS topic at the webhook

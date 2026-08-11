@@ -215,18 +215,34 @@ The only in-repo precedent, `app.delivery.pool.prune`, does its age cutoff
 inside a bespoke Python activity — an `app`-tier activity a portable bundle
 cannot call (gotcha 10).
 
-`alert_tick` therefore spends one `agent.transform` per run turning
-`{now, nudge_after_minutes, auto_resolve_hours}` into two ISO cutoff strings,
-guarded like every other transform (gotcha: fabrication). Everything after
-that is exact: the cutoffs are only ever used as filter operands, so the
-database performs the actual selection and the LLM's blast radius is one
-string. A wrong cutoff affects one tick and self-corrects on the next.
+**CLOSED 2026-08-10** by `foundation.workflow.offset` (popcorn-backend
+PR #1701), which takes a signed duration and returns `workflow.now`'s
+`{unix, unix_str, iso}` shape.
 
-**This is a platform gap, not a bundle quirk.** A `foundation.workflow.offset`
-activity (`{iso, minutes|hours}` → shifted ISO) would make every time-window
-flow fully deterministic and remove the last LLM call from the tick. It is the
-strongest candidate for the "Related platform work" DSL spec — stronger than
-typed object inputs, because this one has no workaround at all.
+Before it existed, `alert_tick` spent one `agent.transform` per run turning
+`{now, nudge_after_minutes, auto_resolve_hours}` into two ISO cutoff strings,
+guarded by a recognition flag — 288 LLM calls a day for subtraction. The tick
+is now fully deterministic:
+
+```yaml
+  - id: resolve_cutoff
+    activity: foundation.workflow.offset
+    args:
+      iso: $steps.now.output.iso
+      hours: $channel.auto_resolve_offset_hours     # NEGATIVE, see below
+```
+
+**The offsets must be negative in the parameter itself.** `workflow.offset`
+takes signed durations and the DSL cannot negate a reference — confirmed live:
+
+```
+steps[0](cut).args.minutes: literal does not match schema:
+  '-$channel.nudge_after_minutes' is not of type 'integer'
+```
+
+A bare `$channel.x` *does* validate in an integer arg; it is only the minus
+sign that fails. Hence `nudge_offset_minutes: -30` rather than a
+`nudge_after_minutes: 30` that no step could negate.
 
 ## 22. A declared-but-not-required `output_schema` property is genuinely optional
 
@@ -360,8 +376,11 @@ say "if the payload does not state `env`, fail rather than infer". Today the
 only tool for that is the `recognized` flag plus a `workflow.fail` guard,
 applied per-field — which is what this bundle does and what the docs teach.
 
-The stronger platform ask remains gotcha #21: a `foundation.workflow.offset`
-activity, which would remove the last LLM call from `alert_tick` entirely.
+The stronger platform ask from gotcha #21 — a `foundation.workflow.offset`
+activity — has since shipped and removed the last LLM call from `alert_tick`.
+The remaining ask is the mirror of the finding above: a DETERMINISTIC way to
+extract declared fields from an object input, so ingest stops needing an LLM
+for field mapping at all. That is where the fabrication risk actually lives.
 
 
 ## 28. A missing key hard-fails reference resolution, and `on_error` cannot save it

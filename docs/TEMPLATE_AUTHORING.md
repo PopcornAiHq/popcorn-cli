@@ -199,16 +199,41 @@ non-idempotent step must set `retry: 0`. `policy: skip` continues the flow;
 
 ### There is no arithmetic
 
-Nothing in the DSL adds, subtracts, counts, or compares magnitudes. No
-activity does date math: `workflow.now` takes no arguments and there is no
-duration-offset activity. Consequences:
+Nothing in the DSL adds, subtracts, counts, or compares magnitudes. There is
+no expression syntax: you cannot write `$a + $b`, and you cannot even negate a
+reference — `-$channel.minutes` is parsed as a literal string and fails type
+validation. Consequences:
 
 - **Never design a counter column.** Accumulate with a `merge: concat` string
   column and let readers count entries.
-- **Time windows need a workaround.** Either have the caller pass a computed
-  timestamp in, or spend one `agent.transform` on the arithmetic and use its
-  output only as a filter operand (what `examples/alerttracker/alert_tick.yaml`
-  does, and why).
+- **A signed value must carry its sign in the data.** If an activity takes a
+  signed duration, configure the parameter negative
+  (`nudge_offset_minutes: -30`) — no step can flip it for you. Name the
+  parameter so the sign reads as intentional rather than as a typo.
+
+**Time windows are the exception, and they have a real activity.**
+`foundation.workflow.offset` shifts a timestamp by a signed duration and
+returns `workflow.now`'s `{unix, unix_str, iso}` shape, so its output drops
+straight into a filter:
+
+```yaml
+  - id: cutoff
+    activity: foundation.workflow.offset
+    args:
+      iso: $steps.now.output.iso     # omit to shift from now
+      hours: -6
+
+  - id: stale
+    activity: foundation.store.list_rows
+    args:
+      filter:
+        Last Seen: { $lt: $steps.cutoff.output.iso }
+```
+
+Pass `iso` explicitly when several cutoffs must derive from the same instant.
+`examples/alerttracker/alert_tick.yaml` does exactly this, and is fully
+deterministic as a result — it previously spent an LLM call per run on the
+subtraction.
 
 ## 5. Table schemas
 
@@ -397,7 +422,9 @@ Watch for these when reading results:
 10. `app.*` activities are private to shipped apps. Author against
     `tier: foundation|feature`, `status: release`.
 11. Scalars are strings on the wire; `channel_parameters` keep their types.
-12. **No arithmetic anywhere.** Never design a counter.
+12. **No arithmetic anywhere**, and no negating a reference. Never design a
+    counter; use `foundation.workflow.offset` for time windows and put the
+    sign in the configured value.
 13. **An untyped bundle CLEARS `app_type`.**
 14. A `.yaml` anywhere in the zip becomes a flow. Fixtures are `.json`.
 15. Permissive output schemas validate any path.
