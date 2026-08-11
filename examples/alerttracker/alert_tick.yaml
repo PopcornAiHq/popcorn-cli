@@ -5,25 +5,20 @@ description: >
   gone quiet, and refresh the channel summary. Driven by the `alert-tick`
   schedule (300s, overlap: skip).
 
-  THE SHAPE OF THIS FLOW IS DICTATED BY TWO PLATFORM LIMITS.
+  This flow is fully deterministic — no LLM call — and the shape it takes is
+  dictated by one platform limit.
 
-  1. `when:` supports only `==` / `!=` (one comparison, no `&&`). So "is this
-     row older than the threshold" cannot be a step gate.
-  2. Nothing in the DSL does date arithmetic. All 44 foundation activities
-     were enumerated; `workflow.now` takes no arguments and there is no
-     duration-offset activity.
+  `when:` supports only `==` / `!=`, one comparison, no `&&`. So "is this row
+  older than the threshold" cannot be expressed as a step gate. The answer is
+  the agent-store filter DSL, which does support `$lt`/`$gte`/`$in`/`$exists`
+  and orders ISO-8601 correctly because the comparison is lexicographic. Every
+  selection below happens in the database, exactly, rather than in a gate.
 
-  The answer to (1) is the agent-store filter DSL, which does support
-  `$lt`/`$gte`/`$in`/`$exists` and compares ISO-8601 correctly because the
-  comparison is lexicographic. Every selection below happens in the database,
-  exactly, rather than in a step gate.
-
-  The answer to (2) is the single `cutoffs` step: one LLM call per tick whose
-  entire job is to subtract two durations from `now`. Its output is used ONLY
-  as filter operands, so the database still does the selecting and the model's
-  blast radius is two strings. A bad cutoff affects one tick and self-corrects
-  on the next. A `foundation.workflow.offset` activity would delete this step
-  outright — see GOTCHAS.md #21.
+  It used to spend one `agent.transform` per run — 288 LLM calls a day — purely
+  to subtract two durations from `now`, because nothing in the DSL could do
+  date arithmetic. `foundation.workflow.offset` (popcorn-backend PR #1701)
+  closed that gap, and the two `*_cutoff` steps below replaced the LLM call and
+  the recognition guard that had to police it.
 
 inputs:
   conversation_id: { type: string }
@@ -32,50 +27,25 @@ steps:
   - id: now
     activity: foundation.workflow.now
 
-  # The only non-deterministic step, and deliberately the narrowest possible
-  # task. `computed` is the recognition flag every transform in this bundle
-  # carries: a required output schema makes the model INVENT a value rather
-  # than fail (observed in Step 0'), so the flag plus a hard guard is the only
-  # way to turn bad output into a failure instead of a wrong sweep.
-  - id: cutoffs
-    activity: foundation.agent.transform
-    on_error: { policy: fail, retry: 1 }
+  # Both sweep bounds, computed deterministically. `iso` pins them to the one
+  # clock read above, so every timestamp in this tick derives from the same
+  # instant rather than three separate reads.
+  #
+  # The offsets are NEGATIVE because workflow.offset takes signed durations
+  # and the DSL cannot negate a reference — `-$channel.x` is parsed as a
+  # literal string and fails the integer check. That is why the parameters are
+  # named `*_offset_*`: the sign is part of the value's meaning.
+  - id: resolve_cutoff
+    activity: foundation.workflow.offset
     args:
-      data:
-        now: $steps.now.output.iso
-        nudge_after_minutes: $channel.nudge_after_minutes
-        auto_resolve_hours: $channel.auto_resolve_hours
-      prompt: >
-        You are doing arithmetic on timestamps. Do not interpret, summarise, or
-        add commentary.
+      iso: $steps.now.output.iso
+      hours: $channel.auto_resolve_offset_hours
 
-        Given `now` (an ISO-8601 UTC timestamp), compute exactly two values:
-
-        - `nudge_cutoff` = now minus `nudge_after_minutes` minutes
-        - `resolve_cutoff` = now minus `auto_resolve_hours` hours
-
-        Return both in the SAME ISO-8601 format as the `now` you were given,
-        UTC, including the timezone offset. Set `computed` to true if you
-        performed both subtractions successfully and neither result is LATER
-        than `now`. A threshold of 0 is legitimate and means the cutoff equals
-        `now` — that is a valid result, not a failure. Set `computed` to false
-        only when a value is missing, non-numeric, or you are otherwise
-        unsure: a wrong cutoff silently resolves live alerts, which is far
-        worse than a skipped tick.
-      output_schema:
-        type: object
-        required: [computed, nudge_cutoff, resolve_cutoff]
-        properties:
-          computed: { type: boolean }
-          nudge_cutoff: { type: string }
-          resolve_cutoff: { type: string }
-
-  - id: guard
-    activity: foundation.workflow.fail
-    when: $steps.cutoffs.output.computed == false
+  - id: nudge_cutoff
+    activity: foundation.workflow.offset
     args:
-      reason: Could not compute sweep cutoffs; skipping this tick rather than sweeping on bad bounds.
-      code: CutoffComputationFailed
+      iso: $steps.now.output.iso
+      minutes: $channel.nudge_offset_minutes
 
   # ---- auto-resolve -------------------------------------------------------
   # Anything still `firing` whose last sighting predates the resolve cutoff.
@@ -88,7 +58,7 @@ steps:
       table_name: alerts
       filter:
         Status: firing
-        Last Seen: { $lt: $steps.cutoffs.output.resolve_cutoff }
+        Last Seen: { $lt: $steps.resolve_cutoff.output.iso }
       drop_columns: [Raw]
 
   # A SECOND query, not a reuse of `stale`, and the difference is load-bearing.
@@ -114,7 +84,7 @@ steps:
       table_name: alerts
       filter:
         Status: firing
-        Last Seen: { $lt: $steps.cutoffs.output.resolve_cutoff }
+        Last Seen: { $lt: $steps.resolve_cutoff.output.iso }
         PostMessageId: { $exists: true }
       drop_columns: [Raw]
 
@@ -155,7 +125,7 @@ steps:
       table_name: alerts
       filter:
         Status: firing
-        First Seen: { $lt: $steps.cutoffs.output.nudge_cutoff }
+        First Seen: { $lt: $steps.nudge_cutoff.output.iso }
         Nudged At: { $exists: false }
       drop_columns: [Raw]
 
