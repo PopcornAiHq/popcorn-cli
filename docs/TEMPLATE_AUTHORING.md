@@ -303,17 +303,63 @@ the schema says `PostMessageId` silently succeeds and produces a column no
 `$ref` can reach. Renaming a column means renaming every write site; only
 reading a row back catches a miss.
 
-## 6. Using `agent.transform` safely
+## 6. Reading fields off an object input
 
 The DSL cannot reach sub-fields of an `object` input — `$inputs.payload.name`
 is statically unreachable, because an input declaration has no way to describe
 an object's properties. To read fields off a webhook payload you must first
-obtain a **typed** shape, and the sanctioned way is an activity with a
-caller-declared output schema (`agent.transform`'s `output_schema`,
-`email.extract`'s `schema`).
+obtain a **typed** shape, and the only mechanism is an activity that declares
+its output schema at the call site.
 
-That makes an LLM step load-bearing in most ingest flows. Three rules, each
-paid for in a live failure:
+Two of those exist. **Reach for the deterministic one first.**
+
+### `foundation.fields.extract` — when the fields are simply there
+
+Names fields by path. No model, no prompt, and an absent path is an error
+rather than a guess:
+
+```yaml
+  - id: fields
+    activity: foundation.fields.extract
+    args:
+      data: $inputs.payload
+      mapping:
+        alarm: AlarmName
+        service: Trigger.Dimensions.1.value    # dots for nesting AND indices
+      defaults:
+        note: ""                               # only for genuinely optional fields
+      output_schema:
+        type: object
+        required: [alarm, service]
+        properties:
+          alarm: { type: string }
+          service: { type: string }
+```
+
+`$steps.fields.output.alarm` then resolves statically, so `flow validate`
+checks it. Three behaviours worth knowing:
+
+- **An unresolvable path fails the step** (`ExtractPathNotFound`), listing
+  every bad path at once. That is the point — it is how a flow *requires* a
+  field to be present rather than accepting something invented in its place.
+- **`null` is a value, not an absence.** A stored null passes through; only a
+  genuinely missing path errors.
+- **The result is validated against `output_schema`** (`ExtractSchemaViolation`),
+  so a value contradicting the type you declared fails here rather than in
+  whichever later step consumes it.
+
+### `foundation.agent.transform` — when the answer must be derived
+
+Still the right tool when the payload does not *state* what you need — one
+flow normalising several unrelated producers, a severity no field carries, a
+human-readable title, prose. Judgement, not lookup.
+
+The dividing line is worth applying literally, because it decides your risk:
+extraction reads what is there, derivation invents what is not. A CloudWatch
+alarm body has no `severity` and no `env` key at all, so those must be derived;
+its `AlarmName` and `NewStateValue` are right there and should not be.
+
+When you do need it, three rules, each paid for in a live failure:
 
 **1. A required output schema is a formatting contract, not a validation
 gate.** Given junk, the model *invents* a plausible object to satisfy
@@ -407,7 +453,9 @@ Watch for these when reading results:
 
 ## 8. Gotchas, condensed
 
-1. `$inputs.<object>.field` is statically unreachable — get a typed shape first.
+1. `$inputs.<object>.field` is statically unreachable — get a typed shape
+   first, with `fields.extract` when the fields are there and
+   `agent.transform` when the answer must be derived.
 2. `workspace_id` is never an input; it rides the auth context.
 3. `scalars` UPSERT every install, `schedules` REPLACE wholesale,
    `default_scalars` write once. Runtime state belongs in none of them.

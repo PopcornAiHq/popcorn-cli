@@ -73,8 +73,14 @@ non-empty is what removes a row from the nudge set.
   from `foundation.workflow.offset`. Note the offsets are configured NEGATIVE
   (`nudge_offset_minutes: -30`): the activity takes signed durations and the
   DSL cannot negate a reference. See `GOTCHAS.md` #21.
-- **Ingest costs one LLM call per alert.** That is what buys source-agnostic
-  normalization. At ops alert volume it is not a meaningful cost.
+- **Ingest costs one LLM call per alert** — a deliberate trade, not a
+  limitation. `foundation.fields.extract` reads fields deterministically and
+  would be the better tool for a single known producer, but this bundle runs
+  CloudWatch, Alertmanager, GitHub and hand-raised alerts through one flow,
+  and two of the fields it needs (`severity`, `env`) are absent from a
+  CloudWatch body entirely — so they have to be derived, not read. Pinning a
+  bundle to one producer would flip that call. At ops alert volume the cost is
+  not meaningful either way.
 - **No SNS subscription handshake.** Pointing a raw SNS topic at the webhook
   will not self-confirm; the fixtures are notification *bodies*, not SNS
   envelopes.
