@@ -1,6 +1,6 @@
 [project]
 name = "popcorn-cli"
-version = "0.17.0"
+version = "0.18.0"
 description = "CLI for the Popcorn API"
 readme = "README.md"
 license = "MIT"
@@ -20,6 +20,7 @@ dependencies = [
     "packaging>=21.0",
     "pathspec>=0.11",
     "pyjwt>=2.0",
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -48,6 +49,7 @@ dev = [
     "pytest-cov>=6.0",
     "pre-commit>=4.0",
     "respx>=0.22",
+    "types-PyYAML>=6.0",
 ]
 
 # ── Ruff ─────────────────────────────────────────────────────────────

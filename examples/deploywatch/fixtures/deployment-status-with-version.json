@@ -1,0 +1,78 @@
+{
+  "action": "created",
+  "deployment_status": {
+    "url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend/deployments/145988962/statuses/473present",
+    "id": 473988962,
+    "node_id": "MDE2OkRlcGxveW1lbnRTdGF0dXM0NzM5ODg5NjI=",
+    "state": "success",
+    "creator": {
+      "login": "octocat",
+      "id": 1,
+      "node_id": "MDQ6VXNlcjE=",
+      "type": "User",
+      "html_url": "https://github.com/octocat",
+      "site_admin": false
+    },
+    "description": "",
+    "environment": "production",
+    "target_url": "https://github.com/PopcornAiHq/popcorn-backend/actions/runs/9912",
+    "log_url": "https://github.com/PopcornAiHq/popcorn-backend/actions/runs/9912",
+    "environment_url": "",
+    "deployment_url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend/deployments/145988962",
+    "repository_url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend",
+    "created_at": "2026-08-13T14:02:11Z",
+    "updated_at": "2026-08-13T14:02:11Z"
+  },
+  "deployment": {
+    "url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend/deployments/145988962",
+    "id": 145988962,
+    "node_id": "MDEwOkRlcGxveW1lbnQxNDU5ODkwMDA=",
+    "sha": "6dcb09b5b57875f334f61aebed695e2e4193db5e",
+    "ref": "main",
+    "task": "deploy",
+    "payload": {
+      "version": "2026.08.13-a1b2c3d",
+      "channel": "canary"
+    },
+    "original_environment": "production",
+    "environment": "production",
+    "description": null,
+    "creator": {
+      "login": "octocat",
+      "id": 1,
+      "node_id": "MDQ6VXNlcjE=",
+      "type": "User",
+      "html_url": "https://github.com/octocat",
+      "site_admin": false
+    },
+    "created_at": "2026-08-13T14:02:11Z",
+    "updated_at": "2026-08-13T14:02:11Z",
+    "statuses_url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend/deployments/145988962/statuses",
+    "repository_url": "https://api.github.com/repos/PopcornAiHq/popcorn-backend"
+  },
+  "repository": {
+    "id": 1296269,
+    "node_id": "MDEwOlJlcG9zaXRvcnkxMjk2MjY5",
+    "name": "popcorn-backend",
+    "full_name": "PopcornAiHq/popcorn-backend",
+    "private": true,
+    "owner": {
+      "login": "PopcornAiHq",
+      "id": 1,
+      "node_id": "MDQ6VXNlcjE=",
+      "type": "User",
+      "html_url": "https://github.com/PopcornAiHq",
+      "site_admin": false
+    },
+    "html_url": "https://github.com/PopcornAiHq/popcorn-backend",
+    "default_branch": "main"
+  },
+  "sender": {
+    "login": "octocat",
+    "id": 1,
+    "node_id": "MDQ6VXNlcjE=",
+    "type": "User",
+    "html_url": "https://github.com/octocat",
+    "site_admin": false
+  }
+}

@@ -1,0 +1,97 @@
+# Deploy Watch — GitHub deployment tracking, one known producer.
+#
+# The counterpart to examples/alerttracker/. That bundle takes four unrelated
+# producers and must DERIVE fields no payload states, so it spends an LLM call
+# per delivery. This one takes a single producer that states every field it
+# needs, so it EXTRACTS them and makes no model call at all.
+#
+# Untyped bundle: no `app_type:`, so installing it CLEARS any existing
+# app_type on the channel. Only install into a dedicated channel.
+display_name: Deploy Watch
+description: Tracks GitHub deployments, one row per deployment, with no LLM call.
+
+channel_parameters:
+  # How long a deployment may sit in_progress before deploy_sweep nudges once.
+  # A plain positive number: deploy_sweep passes it to foundation.math.offset
+  # with `direction: subtract`, so nothing here has to carry a sign.
+  stuck_after_minutes: 45
+
+tables:
+  deployments:
+    columns:
+      # GitHub's `deployment.node_id` verbatim — a stable, opaque string that
+      # every status delivery for the same deployment repeats. That is what
+      # makes this bundle deterministic: identity is READ from the payload,
+      # not composed. alerttracker cannot do this, which is precisely why it
+      # needs a model to build `source:resource:env`.
+      #
+      # unique:true both enforces one row per deployment AND satisfies
+      # merge_key's "must be indexed" requirement. String-typed because the
+      # merge-key OR-probe only queries the text index.
+      - { name: DeploymentId, type: string, unique: true }
+      - { name: Repo, type: string }
+      # Stated by the producer. Contrast alerttracker, where `Env` has to be
+      # inferred because a CloudWatch alarm body carries no environment key.
+      - { name: Environment, type: string,
+          display: "status:production,staging,dev" }
+      - { name: State, type: string,
+          display: "status:pending,queued,in_progress,success,failure,error;warn=failure" }
+      - { name: Ref, type: string }
+      - { name: Sha, type: string }
+      - { name: Task, type: string }
+      - { name: Creator, type: string }
+      # Genuinely optional: only set by deployers that put it in
+      # `deployment.payload`. This is what `defaults:` in fields.extract is
+      # for — an absent path would otherwise be an ExtractPathNotFound error.
+      - { name: Version, type: string }
+      - { name: TargetUrl, type: string }
+      - { name: First Seen, type: datetime }
+      - { name: Last Seen, type: datetime }
+      # NOT a counter — the DSL has no arithmetic. One state appended per
+      # delivery, so the row carries its own transition history
+      # (pending → in_progress → success). merge:concat requires type:string.
+      - { name: State History, type: string, merge: concat }
+      - { name: Nudged At, type: string, merge: concat, internal: true }
+      # SPACE-FREE ON PURPOSE, like DeploymentId/Repo/TargetUrl above: these
+      # are DEREFERENCED as `$row.<name>` in deploy_sweep, and the reference
+      # grammar is [A-Za-z_][A-Za-z0-9_.]* — a space makes it unparseable.
+      # `First Seen` and `State History` keep their spaces because flows only
+      # ever write them (YAML keys) or filter on them (JSON keys).
+      - { name: PostMessageId, type: string, internal: true }
+      - { name: Raw, type: json, internal: true }
+    merge_key:
+      any_of: [DeploymentId]
+      on_conflict: merge
+
+scalars:
+  # UPSERT on EVERY install — install-time configuration only. Anything a flow
+  # writes at runtime would be reset on each re-import, so nothing here is
+  # flow-written.
+  agent_runnable_flows: '["seed_test_deploy"]'
+  agent_summary: |
+    This channel tracks GitHub deployments in the `deployments` table, one row
+    per deployment keyed by DeploymentId (GitHub's `deployment.node_id`).
+
+    Rows are written only by the `deploy_webhook` flow, straight from the
+    delivery — no field is inferred. `State History` accumulates one entry per
+    status delivery, so the row shows how the deployment progressed.
+
+    There is no triage flow here: a deployment's state is GitHub's to report,
+    not ours to set. Read the table, don't write it.
+
+schedules:
+  # REPLACE semantics: this list wholesale replaces the channel's schedules on
+  # every install. <channel-conversation-id> is substituted at install time.
+  - flow: deploy_sweep
+    slug: deploy-sweep
+    interval: 300
+    overlap: skip
+    jitter: 30
+    inputs:
+      conversation_id: <channel-conversation-id>
+
+webhooks:
+  # create-if-missing: never updated, never deleted by a re-import.
+  - name: GitHub deployments
+    description: Point a GitHub `deployment_status` webhook here.
+    flow: deploy_webhook

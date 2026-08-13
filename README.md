@@ -106,6 +106,8 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |
 | `popcorn flow runs list --channel <conv> [--status S] [--limit N] [--page-token T]` | List flow runs |
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail |
+| **Templates** | |
+| `popcorn template check <dir> [--strict]` | Check a template bundle's structure offline — no channel, no server (exit 1 on errors; `--strict` also on warnings) |
 | **Tables** (channel data-store) | |
 | `popcorn table list --channel <conv>` | List tables in a channel |
 | `popcorn table schema <name> --channel <conv>` | Show a table's columns |
