@@ -215,9 +215,8 @@ The only in-repo precedent, `app.delivery.pool.prune`, does its age cutoff
 inside a bespoke Python activity — an `app`-tier activity a portable bundle
 cannot call (gotcha 10).
 
-**CLOSED 2026-08-10** by `foundation.workflow.offset` (popcorn-backend
-PR #1701), which takes a signed duration and returns `workflow.now`'s
-`{unix, unix_str, iso}` shape.
+**CLOSED** by `foundation.math.offset` (popcorn-backend PR #1714, which
+superseded the shorter-lived `foundation.workflow.offset` from PR #1701).
 
 Before it existed, `alert_tick` spent one `agent.transform` per run turning
 `{now, nudge_after_minutes, auto_resolve_hours}` into two ISO cutoff strings,
@@ -226,23 +225,35 @@ is now fully deterministic:
 
 ```yaml
   - id: resolve_cutoff
-    activity: foundation.workflow.offset
+    activity: foundation.math.offset
     args:
       iso: $steps.now.output.iso
-      hours: $channel.auto_resolve_offset_hours     # NEGATIVE, see below
+      direction: subtract
+      hours: $channel.auto_resolve_hours
 ```
 
-**The offsets must be negative in the parameter itself.** `workflow.offset`
-takes signed durations and the DSL cannot negate a reference — confirmed live:
+### The negation finding, which still holds generally
+
+`workflow.offset` took a SIGNED duration, and the DSL **cannot negate a
+reference** — confirmed live against the validator:
 
 ```
 steps[0](cut).args.minutes: literal does not match schema:
   '-$channel.nudge_after_minutes' is not of type 'integer'
 ```
 
-A bare `$channel.x` *does* validate in an integer arg; it is only the minus
-sign that fails. Hence `nudge_offset_minutes: -30` rather than a
-`nudge_after_minutes: 30` that no step could negate.
+A bare `$channel.x` *does* validate in an integer arg; only the minus sign
+fails. So the sign had to be baked into the configured value, and this bundle
+carried `nudge_offset_minutes: -30` for exactly as long as that activity was
+the only option.
+
+`math.offset` takes `direction: subtract` with a non-negative duration, which
+dissolves the problem — the parameters are back to plain
+`nudge_after_minutes: 30`.
+
+**The general rule survives the specific fix:** a sign cannot be applied by a
+step, so any activity taking a signed value forces that sign into your
+configuration. Prefer one that names the direction.
 
 ## 22. A declared-but-not-required `output_schema` property is genuinely optional
 
