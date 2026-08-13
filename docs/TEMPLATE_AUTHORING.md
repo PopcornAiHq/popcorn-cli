@@ -206,22 +206,24 @@ validation. Consequences:
 
 - **Never design a counter column.** Accumulate with a `merge: concat` string
   column and let readers count entries.
-- **A signed value must carry its sign in the data.** If an activity takes a
-  signed duration, configure the parameter negative
-  (`nudge_offset_minutes: -30`) — no step can flip it for you. Name the
-  parameter so the sign reads as intentional rather than as a typo.
+- **A sign cannot be applied by a step.** If an activity takes a *signed*
+  value, the sign must be baked into the configured data — no step can flip
+  it. Prefer an activity that names the direction as its own argument, which
+  is why `math.offset` takes `direction: subtract` rather than a negative
+  duration.
 
 **Time windows are the exception, and they have a real activity.**
-`foundation.workflow.offset` shifts a timestamp by a signed duration and
-returns `workflow.now`'s `{unix, unix_str, iso}` shape, so its output drops
-straight into a filter:
+`foundation.math.offset` shifts a timestamp by a duration and returns
+`workflow.now`'s `{unix, unix_str, iso}` shape, so its output drops straight
+into a filter:
 
 ```yaml
   - id: cutoff
-    activity: foundation.workflow.offset
+    activity: foundation.math.offset
     args:
       iso: $steps.now.output.iso     # omit to shift from now
-      hours: -6
+      direction: subtract            # durations stay non-negative
+      hours: 6
 
   - id: stale
     activity: foundation.store.list_rows
@@ -471,8 +473,7 @@ Watch for these when reading results:
     `tier: foundation|feature`, `status: release`.
 11. Scalars are strings on the wire; `channel_parameters` keep their types.
 12. **No arithmetic anywhere**, and no negating a reference. Never design a
-    counter; use `foundation.workflow.offset` for time windows and put the
-    sign in the configured value.
+    counter; use `foundation.math.offset` for time windows.
 13. **An untyped bundle CLEARS `app_type`.**
 14. A `.yaml` anywhere in the zip becomes a flow. Fixtures are `.json`.
 15. Permissive output schemas validate any path.

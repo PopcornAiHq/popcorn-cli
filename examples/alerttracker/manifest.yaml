@@ -7,19 +7,11 @@ display_name: Alert Tracker
 description: Ingests ops alerts, dedups them by fingerprint, tracks triage.
 
 channel_parameters:
-  # NEGATIVE on purpose, and named for it. These are passed straight to
-  # foundation.workflow.offset, which takes SIGNED durations, and the DSL
-  # cannot negate a reference — `-$channel.x` is parsed as a literal string
-  # and fails the integer check. So the sign has to live in the value, and the
-  # name says so rather than leaving a `nudge_after_minutes: -30` that reads
-  # like a mistake.
-  #
-  # nudge_offset_minutes: how far back the "unacked for long enough" window
-  #   reaches. -30 = nudge an alert still firing 30 minutes after it appeared.
-  # auto_resolve_offset_hours: how long an alert may go unseen before the tick
-  #   resolves it. -6 = resolve anything not seen in the last 6 hours.
-  nudge_offset_minutes: -30
-  auto_resolve_offset_hours: -6
+  # Plain positive durations. alert_tick passes them to
+  # foundation.math.offset with `direction: subtract`, so the flow names the
+  # direction and the value stays readable.
+  nudge_after_minutes: 30
+  auto_resolve_hours: 6
 
 tables:
   alerts:

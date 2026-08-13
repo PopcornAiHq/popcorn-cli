@@ -16,9 +16,9 @@ description: >
 
   It used to spend one `agent.transform` per run — 288 LLM calls a day — purely
   to subtract two durations from `now`, because nothing in the DSL could do
-  date arithmetic. `foundation.workflow.offset` (popcorn-backend PR #1701)
-  closed that gap, and the two `*_cutoff` steps below replaced the LLM call and
-  the recognition guard that had to police it.
+  date arithmetic. `foundation.math.offset` (popcorn-backend PR #1714) closed
+  that gap, and the two `*_cutoff` steps below replaced the LLM call and the
+  recognition guard that had to police it.
 
 inputs:
   conversation_id: { type: string }
@@ -31,21 +31,26 @@ steps:
   # clock read above, so every timestamp in this tick derives from the same
   # instant rather than three separate reads.
   #
-  # The offsets are NEGATIVE because workflow.offset takes signed durations
-  # and the DSL cannot negate a reference — `-$channel.x` is parsed as a
-  # literal string and fails the integer check. That is why the parameters are
-  # named `*_offset_*`: the sign is part of the value's meaning.
+  # `direction: subtract` with a POSITIVE duration, which is why the channel
+  # parameters read as plain "30 minutes" / "6 hours". The predecessor
+  # (foundation.workflow.offset, now deprecated) took a SIGNED duration, and
+  # since the DSL cannot negate a reference — `-$channel.x` parses as a literal
+  # string and fails the integer check — the sign had to be baked into the
+  # configured value as `nudge_offset_minutes: -30`. Naming the direction
+  # instead removes that wart entirely.
   - id: resolve_cutoff
-    activity: foundation.workflow.offset
+    activity: foundation.math.offset
     args:
       iso: $steps.now.output.iso
-      hours: $channel.auto_resolve_offset_hours
+      direction: subtract
+      hours: $channel.auto_resolve_hours
 
   - id: nudge_cutoff
-    activity: foundation.workflow.offset
+    activity: foundation.math.offset
     args:
       iso: $steps.now.output.iso
-      minutes: $channel.nudge_offset_minutes
+      direction: subtract
+      minutes: $channel.nudge_after_minutes
 
   # ---- auto-resolve -------------------------------------------------------
   # Anything still `firing` whose last sighting predates the resolve cutoff.
