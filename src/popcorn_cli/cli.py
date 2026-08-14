@@ -3235,6 +3235,9 @@ Channels:
 Flows:
   flow            Flow commands (activities, validate, import, list, get, run, runs list, runs get)
 
+Templates:
+  template        Channel-template commands (check)
+
 Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)
 

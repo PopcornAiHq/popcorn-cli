@@ -12,14 +12,28 @@ would rot here:
 popcorn flow activities --tier foundation      # what can I call?
 popcorn flow activities --json                 # full arg + result schemas
 popcorn flow validate my_flow.yaml             # is this reference real?
+popcorn template check ./mytemplate            # does the bundle hold together?
 ```
 
-`flow validate` is the authority. When this guide and the validator disagree,
-the validator is right and this guide has a bug.
+`flow validate` is the authority on a reference. When this guide and the
+validator disagree, the validator is right and this guide has a bug.
 
-A complete, live-verified template is checked in at
-[`examples/alerttracker/`](../examples/alerttracker/). Its `GOTCHAS.md` is the
-raw evidence log behind most of the rules below.
+`template check` answers a different question, offline and with no channel:
+will the importer install what you think, and do the files agree with each
+other? Everything it reports passes `flow validate` cleanly — a fixture named
+`.yaml`, a write to an undeclared column, a schedule naming a flow that is not
+there. Run both; neither subsumes the other.
+
+Two complete, live-verified templates are checked in:
+
+| Bundle | Producers | Per-delivery cost |
+|---|---|---|
+| [`examples/alerttracker/`](../examples/alerttracker/) | four, unrelated | one LLM call — it must *derive* severity and env |
+| [`examples/deploywatch/`](../examples/deploywatch/) | one (GitHub) | none — it *extracts* fields the payload states |
+
+The gap between them is §6, and it is the single most consequential choice in
+a webhook-backed template. `alerttracker`'s `GOTCHAS.md` is the raw evidence
+log behind most of the rules below.
 
 ---
 
@@ -339,11 +353,27 @@ rather than a guess:
 ```
 
 `$steps.fields.output.alarm` then resolves statically, so `flow validate`
-checks it. Three behaviours worth knowing:
+checks it. [`examples/deploywatch/`](../examples/deploywatch/) is a whole
+bundle built this way — a single producer, every field read by path, and not
+one model call in it.
+
+Three behaviours worth knowing:
 
 - **An unresolvable path fails the step** (`ExtractPathNotFound`), listing
   every bad path at once. That is the point — it is how a flow *requires* a
   field to be present rather than accepting something invented in its place.
+  Posting a GitHub ping at `deploywatch`'s intake webhook returns exactly
+  this, and writes nothing:
+
+  ```
+  ExtractPathNotFound: fields.extract could not resolve:
+    creator <- deployment_status.creator.login;
+    deployment_id <- deployment.node_id;
+    environment <- deployment_status.environment; …
+  ```
+
+  Compare `agent.transform` given the same junk: it fabricates a row. The
+  guard is structural here rather than a step you must remember to write.
 - **`null` is a value, not an absence.** A stored null passes through; only a
   genuinely missing path errors.
 - **The result is validated against `output_schema`** (`ExtractSchemaViolation`),
@@ -360,6 +390,21 @@ The dividing line is worth applying literally, because it decides your risk:
 extraction reads what is there, derivation invents what is not. A CloudWatch
 alarm body has no `severity` and no `env` key at all, so those must be derived;
 its `AlarmName` and `NewStateValue` are right there and should not be.
+
+The two shipped examples are the same decision answered both ways, and the
+input decides it, not taste:
+
+| | `deploywatch` | `alerttracker` |
+|---|---|---|
+| producers | one | four, unrelated |
+| identity | `deployment.node_id`, stated | `source:resource:env`, composed |
+| environment | `deployment_status.environment`, stated | absent from a CloudWatch body — derived |
+| tool | `fields.extract` | `agent.transform` |
+| cost | none | one LLM call per delivery |
+| junk input | fails, names every missing path | invents a plausible alert unless a `recognized` guard stops it |
+
+Narrowing a bundle to one producer is therefore not just a scope decision —
+it is what makes the deterministic tool available at all.
 
 When you do need it, three rules, each paid for in a live failure:
 
@@ -392,6 +437,7 @@ because nothing downstream parses it.
 ## 7. The authoring loop
 
 ```bash
+popcorn template check .                             # offline: no channel, no server
 popcorn channel create '#chan'                       # note the UUID — see below
 popcorn flow activities --tier foundation            # what can I call?
 popcorn flow validate my_flow.yaml --channel <id>    # per file, fast
@@ -426,15 +472,32 @@ popcorn flow run alert_apply --channel <id> \
   --inputs '{"action":"ack","fingerprints":["..."]}' --wait
 ```
 
-### Validation will not save you
+### Checks will not save you
 
 Every defect found while building the example bundle passed `flow validate`
 cleanly, because they were runtime semantics rather than bad references: a
 merge policy overwriting a first-seen timestamp, an LLM inventing a row, an
 optional schema property going missing, a write to an undeclared column.
 
-**Install it and run it.** `seed_test_alert.yaml` in the example exists purely
-so a bundle can be exercised without a real producer.
+`template check` was written from that list and now catches the last two —
+plus the whole class of cross-file mistakes a per-file validator cannot see:
+
+```bash
+popcorn template check .            # errors exit non-zero
+popcorn template check . --strict   # warnings do too — this is the CI form
+```
+
+It cannot catch the first two. A merge policy is only wrong relative to what
+you meant, and no offline tool knows an LLM is about to invent a row.
+
+**So install it and run it.** `seed_test_alert.yaml` and
+`seed_test_deploy.yaml` exist purely so a bundle can be exercised without a
+real producer.
+
+And exercise the **boundary**, not the happy path. A sweep that resolves
+everything Completes just as cheerfully as a correct one; the only proof a
+cutoff works is that a row just inside it moves and a row just outside it does
+not. Both example bundles were verified that way.
 
 Watch for these when reading results:
 

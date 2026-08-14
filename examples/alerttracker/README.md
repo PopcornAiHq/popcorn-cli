@@ -77,6 +77,11 @@ non-empty is what removes a row from the nudge set.
   CloudWatch body entirely — so they have to be derived, not read. Pinning a
   bundle to one producer would flip that call. At ops alert volume the cost is
   not meaningful either way.
+
+  [`../deploywatch/`](../deploywatch/) is that same decision answered the
+  other way: one producer, every field stated in the payload, no model call
+  anywhere in the bundle. Read the two together — the input decides which one
+  you are writing.
 - **No SNS subscription handshake.** Pointing a raw SNS topic at the webhook
   will not self-confirm; the fixtures are notification *bodies*, not SNS
   envelopes.

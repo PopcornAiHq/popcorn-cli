@@ -1,0 +1,87 @@
+name: deploy_sweep
+version: 1
+description: >
+  Periodic sweep: nudge once about any deployment that has been `in_progress`
+  longer than the channel allows. Driven by the `deploy-sweep` schedule
+  (300s, overlap: skip).
+
+  Fully deterministic — no LLM call, like every flow in this bundle.
+
+  A deployment going quiet is not something we can resolve on GitHub's behalf,
+  so unlike alert_tick this sweep never writes `State`. It only nudges. The
+  state column belongs to the producer.
+
+inputs:
+  conversation_id: { type: string }
+
+steps:
+  - id: now
+    activity: foundation.workflow.now
+
+  # `direction: subtract` with a POSITIVE duration, which is why the channel
+  # parameter reads as a plain "45 minutes". The DSL cannot negate a reference
+  # — `-$channel.x` parses as a literal string and fails the integer check —
+  # so an activity that names its direction is the only way to keep the
+  # configured value readable.
+  - id: cutoff
+    activity: foundation.math.offset
+    args:
+      iso: $steps.now.output.iso
+      direction: subtract
+      minutes: $channel.stuck_after_minutes
+
+  # Every predicate lives in the filter, none in a `when:`.
+  #
+  # `when:` is one `==`/`!=` comparison — no `<`, no `&&` — so "older than the
+  # cutoff AND never nudged" is not expressible as a gate. The agent-store
+  # filter DSL does support it, and orders ISO-8601 correctly because the
+  # comparison is lexicographic. The database does the selection exactly.
+  #
+  # `Nudged At: {$exists: false}` is what makes this exactly-once per
+  # deployment: it is a concat column, so once it holds anything the row drops
+  # out of this query and a later tick nudges nothing.
+  #
+  # "Last Seen" and "Nudged At" keep their spaces — filter keys are JSON, not
+  # references.
+  - id: stuck
+    activity: foundation.store.list_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: deployments
+      filter:
+        State: in_progress
+        Last Seen: { $lt: $steps.cutoff.output.iso }
+        Nudged At: { $exists: false }
+      drop_columns: [Raw]
+
+  - id: nudge
+    activity: foundation.channel.post
+    foreach: $steps.stuck.output.rows
+    as: row
+    max_parallel: 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      # Both columns are written on every delivery, so both are guaranteed
+      # present. A column that might be ABSENT must never be dereferenced —
+      # a missing key is a hard ReferenceError that fails the run, and
+      # `on_error` cannot rescue it because resolution precedes invocation.
+      # Where presence is not guaranteed by the write path, guarantee it in
+      # the query with `$exists: true`.
+      text: $row.Repo
+
+  - id: mark_nudged
+    activity: foundation.store.patch_row
+    foreach: $steps.stuck.output.rows
+    as: row
+    max_parallel: 1
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: deployments
+      record_id: $row._record_id
+      patch:
+        # concat column: one ISO stamp appended per nudge, never a counter.
+        Nudged At: $steps.now.output.iso
+
+outputs:
+  nudged: $steps.stuck.output.rows

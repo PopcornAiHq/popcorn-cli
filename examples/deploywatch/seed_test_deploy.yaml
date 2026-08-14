@@ -1,0 +1,61 @@
+name: seed_test_deploy
+version: 1
+description: >
+  Fire a canned `deployment_status` payload through `deploy_webhook` without
+  touching the webhook URL or GitHub. This is the loop for exercising the
+  tracker in a fresh channel.
+
+  `start_flow` launches a SIBLING flow installed in the same conversation, so
+  the seeded payload travels the identical ingest path as a real delivery —
+  extract, upsert, post, stamp. Nothing here shortcuts into the table.
+
+  Run it twice with the same `deployment_id` and a different `state` to watch
+  the merge behave: one row, `State` replaced, `State History` accumulating.
+  Note that the real webhook layer dedupes byte-identical deliveries, so
+  varying the state is also how you test merges through the HTTP path.
+
+  Every input has a default, so `flow run seed_test_deploy` with no inputs is
+  a valid smoke test.
+
+inputs:
+  conversation_id: { type: string }
+  deployment_id: { type: string, required: false, default: MDEwOkRlcGxveW1lbnQx }
+  repo: { type: string, required: false, default: PopcornAiHq/popcorn-backend }
+  environment: { type: string, required: false, default: dev }
+  state: { type: string, required: false, default: in_progress }
+  ref: { type: string, required: false, default: main }
+
+steps:
+  # Shaped exactly like a GitHub deployment_status delivery body, because
+  # deploy_webhook reads it by path and a differently-shaped payload would
+  # fail with ExtractPathNotFound rather than silently producing a junk row.
+  - id: fire
+    activity: foundation.workflow.start_flow
+    args:
+      conversation_id: $inputs.conversation_id
+      flow_name: deploy_webhook
+      inputs:
+        conversation_id: $inputs.conversation_id
+        payload:
+          action: created
+          deployment:
+            node_id: $inputs.deployment_id
+            ref: $inputs.ref
+            sha: 6dcb09b5b57875f334f61aebed695e2e4193db5e
+            task: deploy
+            environment: $inputs.environment
+            # Left empty on purpose: `version` is absent here, so this seed
+            # exercises the `defaults:` branch of the extraction. Set a value
+            # to exercise the other one.
+            payload: {}
+          deployment_status:
+            state: $inputs.state
+            environment: $inputs.environment
+            target_url: https://github.com/PopcornAiHq/popcorn-backend/actions
+            creator:
+              login: seed-bot
+          repository:
+            full_name: $inputs.repo
+
+outputs:
+  workflow_id: $steps.fire.output.workflow_id

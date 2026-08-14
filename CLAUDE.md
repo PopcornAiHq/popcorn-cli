@@ -55,13 +55,38 @@ Families still living in `cli.py` are mid-migration; see
 ## Channel templates
 
 `docs/TEMPLATE_AUTHORING.md` is the guide for authoring a channel-template
-bundle with this CLI, and `examples/alerttracker/` is a complete, live-verified
-bundle it refers to. Both were written from a real authoring run; the evidence
-log is `examples/alerttracker/GOTCHAS.md`.
+bundle with this CLI. Two complete, live-verified bundles back it:
+
+| Bundle | Point |
+|---|---|
+| `examples/alerttracker/` | four producers; must *derive* severity/env, so one LLM call per delivery. `GOTCHAS.md` is the evidence log behind most of the guide |
+| `examples/deploywatch/` | one producer (GitHub `deployment_status`); *extracts* every field by path, zero LLM calls. The worked `fields.extract` example |
+
+The contrast between them is the guide's §6 and is deliberate — don't collapse
+them into one bundle or make either multi-producer.
 
 The guide deliberately does **not** restate activity names, arguments, or
 result schemas — those are served by `flow activities` and enforced by `flow
 validate`, and duplicating them here would rot. Keep it that way when editing.
+
+### `popcorn template check`
+
+`src/popcorn_core/template_check.py` is an **offline** structural checker
+(`popcorn template check <dir>`); the command lives in
+`src/popcorn_cli/commands/template.py`. It exists because nothing in CI parsed
+the shipped examples, and a broken `alert_tick` lived in one for a day.
+
+It is scoped to what a server cannot tell you or will accept in silence:
+cross-file agreement, the importer's flattening contract, undeclared column
+writes, `output_schema` properties that are dereferenced but not `required`.
+**It is not a second validator** — never teach it activity names or argument
+schemas, which are the server's to own and would rot here exactly as the guide
+says.
+
+Finding `code` values are a stable contract (CI and agents branch on them);
+renaming one is a minor version bump. `tests/test_example_bundles.py` runs the
+checker over every `examples/*/` directory, so a new example is gated the
+moment it is added.
 
 ## Auth
 

@@ -1,0 +1,155 @@
+name: deploy_webhook
+version: 1
+description: >
+  Ingest ONE GitHub `deployment_status` delivery.
+
+  The delivery handler starts this flow with inputs
+  `{conversation_id, payload, headers, source_hint, delivery_id, webhook_id}`;
+  we declare only what we read. workspace_id is NOT an input — it rides the
+  auth context.
+
+  The DSL cannot reach sub-fields of an `object` input, so `$inputs.payload.x`
+  is statically unreachable and the payload has to be turned into a typed shape
+  first. This flow does that with `foundation.fields.extract`, which names
+  fields by path and makes no model call — so the whole ingest path is
+  deterministic and costs nothing per delivery.
+
+  That choice is available here only because ONE producer sends every delivery
+  and it states every field we need. `examples/alerttracker/` faces four
+  producers and needs two fields (severity, env) that no CloudWatch body
+  carries, so it must derive them with `foundation.agent.transform`. The rule:
+  extraction reads what is there, derivation invents what is not.
+
+inputs:
+  conversation_id: { type: string }
+  payload: { type: object }
+
+steps:
+  - id: now
+    activity: foundation.workflow.now
+
+  # `retry: 0` because retrying is pointless, not because the step is unsafe.
+  # Extraction is deterministic: a path that is absent on the first attempt is
+  # absent on the fourth. Without an `on_error` block this would burn four
+  # attempts to fail the same way — see TEMPLATE_AUTHORING.md §4.
+  - id: fields
+    activity: foundation.fields.extract
+    on_error: { policy: fail, retry: 0 }
+    args:
+      data: $inputs.payload
+      # Dots walk nesting AND array indices. Every path below is a field
+      # GitHub states outright, which is the whole premise of this bundle.
+      mapping:
+        deployment_id: deployment.node_id
+        repo: repository.full_name
+        environment: deployment_status.environment
+        state: deployment_status.state
+        ref: deployment.ref
+        sha: deployment.sha
+        task: deployment.task
+        creator: deployment_status.creator.login
+        target_url: deployment_status.target_url
+        # Not a GitHub field — a convention some deployers set in the free-form
+        # `deployment.payload` object. Genuinely optional, so it gets a default.
+        version: deployment.payload.version
+      defaults:
+        # ONLY for genuinely optional fields. A default on a field you actually
+        # require converts a loud ExtractPathNotFound into a silent empty
+        # string, which is the failure mode this activity exists to prevent.
+        version: ""
+      output_schema:
+        type: object
+        # Every property any later step dereferences must be listed here.
+        # `required` is enforced for real by fields.extract — unlike
+        # agent.transform, where required is a formatting contract the model
+        # satisfies by inventing a value.
+        required:
+          [deployment_id, repo, environment, state, ref, sha, task, creator,
+           target_url, version]
+        properties:
+          deployment_id: { type: string }
+          repo: { type: string }
+          environment: { type: string }
+          # Deliberately NOT an enum. GitHub has added states before
+          # (`in_progress`, `queued`), and an enum here would fail the whole
+          # delivery on a state we simply have not seen yet. The column's
+          # `display:` lists the states we render; an unrecognized one stores
+          # fine and renders plain.
+          state: { type: string }
+          ref: { type: string }
+          sha: { type: string }
+          task: { type: string }
+          creator: { type: string }
+          target_url: { type: string }
+          version: { type: string }
+
+  # No recognition guard, and its absence is the point.
+  #
+  # alert_webhook needs one because a model given junk INVENTS a plausible
+  # alert to satisfy `required`. fields.extract cannot invent: a payload that
+  # is not a deployment_status delivery has no `deployment.node_id`, so the
+  # step above fails with ExtractPathNotFound and names every missing path.
+  # The guard is structural rather than a step.
+
+  - id: upsert
+    activity: foundation.store.upsert_rows
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: deployments
+      merge_on: [DeploymentId]
+      on_conflict: merge
+      rows:
+        - DeploymentId: $steps.fields.output.deployment_id
+          Repo: $steps.fields.output.repo
+          Environment: $steps.fields.output.environment
+          State: $steps.fields.output.state
+          Ref: $steps.fields.output.ref
+          Sha: $steps.fields.output.sha
+          Task: $steps.fields.output.task
+          Creator: $steps.fields.output.creator
+          Version: $steps.fields.output.version
+          TargetUrl: $steps.fields.output.target_url
+          # `First Seen` is deliberately NOT written here. Every column
+          # defaults to merge:replace and the only other mode is concat, so
+          # there is no "keep the original" policy — writing it on every
+          # delivery would advance it in lockstep with Last Seen. It is set
+          # once by `stamp`, gated on created == 1.
+          Last Seen: $steps.now.output.iso
+          # One entry per delivery: the row accumulates its own transition
+          # history rather than only its latest state.
+          State History: $steps.fields.output.state
+          Raw: $inputs.payload
+
+  # `created` is 1 only for a genuinely new DeploymentId, so this posts once
+  # per deployment rather than once per status delivery. upsert_rows has a
+  # permissive result schema, so `.created` and `.ids` are NOT checked by
+  # static validation — they match the runtime response
+  # (RecordsInsertResponse: {ids, created, updated, schema_version_id}).
+  - id: post
+    activity: foundation.channel.post
+    when: $steps.upsert.output.created == 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      channel_id: $inputs.conversation_id
+      text: $steps.fields.output.repo
+
+  - id: stamp
+    activity: foundation.store.patch_row
+    when: $steps.upsert.output.created == 1
+    on_error: { policy: skip, retry: 1 }
+    args:
+      conversation_id: $inputs.conversation_id
+      table_name: deployments
+      # Arrays index with DOTS, never brackets: `ids[0]` is rejected as a
+      # malformed reference and treated as a literal string.
+      record_id: $steps.upsert.output.ids.0
+      patch:
+        First Seen: $steps.now.output.iso
+        # channel.post returns a BARE STRING (the message id), not an object —
+        # `.message_id` is not a field.
+        PostMessageId: $steps.post.output
+
+outputs:
+  deployment_id: $steps.fields.output.deployment_id
+  state: $steps.fields.output.state
+  created: $steps.upsert.output.created
