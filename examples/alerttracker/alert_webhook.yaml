@@ -145,7 +145,7 @@ steps:
         # channel.post returns a BARE STRING (the message id), not an object
         # — `.message_id` is not a field. Its catalog description says so.
         #
-        # Space-free because alert_tick/alert_apply DEREFERENCE it as
+        # Space-free because alert_tick DEREFERENCES it as
         # `$row.PostMessageId` to edit the original post. The store accepts
         # any key, declared or not, so writing "Post Message Id" here would
         # silently produce a column the schema doesn't have and the refs

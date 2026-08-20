@@ -1,9 +1,15 @@
 name: alert_tick
 version: 1
 description: >
-  Periodic sweep: nudge alerts nobody has acked, auto-resolve alerts that have
-  gone quiet, and refresh the channel summary. Driven by the `alert-tick`
-  schedule (300s, overlap: skip).
+  Periodic sweep: nudge alerts nobody has acked, and auto-resolve alerts that
+  have gone quiet. Driven by the `alert-tick` schedule (300s, overlap: skip).
+
+  Auto-resolve is a HEURISTIC, and worth naming as one. A producer that stops
+  sending is indistinguishable from a condition that cleared, so silence past
+  the cutoff is treated as recovery. That is the right default for a tracker
+  whose only writer is a webhook — a lost or never-sent "resolved" delivery
+  would otherwise leave a row firing forever — but it does mean a genuinely
+  stuck alert can be closed while the underlying problem persists.
 
   This flow is fully deterministic — no LLM call — and the shape it takes is
   dictated by one platform limit.
@@ -156,27 +162,6 @@ steps:
       patch:
         # concat column: one ISO stamp appended per nudge, never a counter.
         Nudged At: $steps.now.output.iso
-
-  # ---- summary ------------------------------------------------------------
-  # Runtime state, so it is deliberately NOT declared under the manifest's
-  # `scalars:` — those UPSERT on every install and would reset a live channel.
-  - id: firing_now
-    activity: foundation.store.list_rows
-    args:
-      conversation_id: $inputs.conversation_id
-      table_name: alerts
-      filter:
-        Status: firing
-      drop_columns: [Raw]
-
-  - id: summary
-    activity: foundation.store.set_scalar
-    args:
-      conversation_id: $inputs.conversation_id
-      key: alerts_summary
-      # Scalars are strings on the wire. unix_str exists precisely so a
-      # timestamp can be fed straight into set_scalar without coercion.
-      value: $steps.now.output.unix_str
 
 outputs:
   resolved: $steps.stale.output.rows
