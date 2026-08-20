@@ -83,10 +83,35 @@ writes, `output_schema` properties that are dereferenced but not `required`.
 schemas, which are the server's to own and would rot here exactly as the guide
 says.
 
+The line is *catalog vs grammar*. It must know the DSL's shape — a step is one
+of `activity`/`sleep_seconds`/`await_approval`/`steps`, a block's inner ids are
+private, `$trigger` has seven keys, `collect:` publishes a second name — because
+without that it cannot tell a reference from a typo. It must not know what
+`foundation.store.upsert_rows` takes.
+
+**Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
+guide's §4). Mirroring that offline means reimplementing the predicate parser,
+so the checker validates the references inside a `when:` and asserts nothing
+about its grammar. A near-miss reimplementation is worse than no check: the
+"exactly one comparison" rule it used to enforce rejected 55 valid clauses.
+
 Finding `code` values are a stable contract (CI and agents branch on them);
-renaming one is a minor version bump. `tests/test_example_bundles.py` runs the
-checker over every `examples/*/` directory, so a new example is gated the
-moment it is added.
+renaming one is a minor version bump.
+
+Three test layers, and the gap at the bottom is deliberate:
+
+| | Runs | Guards |
+|---|---|---|
+| `tests/test_example_bundles.py` | CI | every `examples/*/`, so a new example is gated the moment it is added |
+| `tests/test_template_check.py` | CI | one grammar feature per test, derived from what real templates do |
+| `tests/test_backend_templates.py` | **local only** | the five shipped `popcorn-backend` templates, read from the real checkout |
+
+The last one skips without a backend checkout (`POPCORN_BACKEND_FLOWS`, or
+`~/popcorn/backend/lib/temporal/flows`), so **it does not run in CI** — vendoring
+copies would rot within a release. It exists because the checker shipped with
+~180 false positives against those templates while passing everything in this
+repo: `examples/` uses no block, no `collect:`, no expression-rail `when:`, no
+`$trigger`, no `.md.j2` prompt. Run it after touching the checker.
 
 ## Auth
 

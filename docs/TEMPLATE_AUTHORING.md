@@ -199,8 +199,22 @@ outputs:
 
 ### Reference roots
 
-`$inputs.*` · `$steps.<id>.output.*` · `$channel.*` · plus whatever `as:`
-names inside a `foreach`.
+| Root | Reads |
+|---|---|
+| `$inputs.*` | the run's declared inputs |
+| `$steps.<id>.output.*` | a prior step's result |
+| `$steps.<id>.<collect>` | a `foreach` step's collected list, under the name `collect:` gave it |
+| `$channel.*` | channel config — parameters, scalars, and the seeded `integrations` / `integration_list` |
+| `$trigger.*` | what triggered the run |
+| `as:` name | the current item inside a `foreach` |
+
+`$trigger` carries exactly `thread_id`, `message_id`, `conversation_id`,
+`thread_root`, `contact_id`, `workflow_id`, `run_id` — a closed set, so a typo
+in it is caught offline. `$channel` is not: its keys come from a per-channel
+config the bundle cannot see, which is why an unrecognized one is a warning.
+
+**A `foreach` alias shadows every global root.** The interpreter resolves
+aliases first, deliberately, so `as: channel` or `as: trigger` keeps working.
 
 **Index arrays with dots, never brackets**: `$steps.x.output.ids.0`. Brackets
 are rejected as malformed and would be treated as a literal string.
@@ -208,20 +222,39 @@ are rejected as malformed and would be treated as a literal string.
 **A reference path is `[A-Za-z_][A-Za-z0-9_.]*` — no spaces.** This matters
 more than it sounds; see §5.
 
-### `when:` is one equality comparison
+### `when:` has four rails, and the seam between two of them bites
 
-The entire grammar is `$ref == value` or `$ref != value`. There is:
+Routing is **legacy-first**: a string the legacy parser accepts stays legacy
+forever, even if it contains new-syntax tokens.
 
-- no `<`, `>`, `<=`, `>=`
-- no `&&` or `||`
-- no second comparison
+| Form | Rail | Semantics |
+|---|---|---|
+| `$ref` | legacy | truth-tested |
+| `$ref == value`, `$ref != value` | legacy | **lenient** equality; a skipped step is `None` and compares unequal |
+| anything with `&&` `\|\|` `<` `<=` `>` `>=` `!` `(` `)`, or a second comparison | expression | **strict, typed** |
+| a plain literal | legacy | truthy as-is |
 
-RHS may be a quoted string, `true`/`false`/`null`, a number, a bareword, or
-another `$ref`. Comparison is strict — a skipped upstream step resolves to
-`None` and simply compares unequal.
+The expression grammar is `!`, `&&`, `||`, `==`, `!=`, `<`, `<=`, `>`, `>=`,
+parentheses; operands are `$ref`s, numbers, `true`/`false`, and quoted strings.
+Precedence is parens → `!` → comparisons → `&&` → `||`. Bounds: depth ≤ 8, ≤ 32
+conditions, ≤ 8 terms per chain, literals ≤ 1024 chars. No functions, no
+arithmetic, no `${}` interpolation.
 
-**When you need a real predicate, push it into a query, not a gate.** The
-agent-store filter DSL is far more capable than `when:`:
+> **The seam.** A standalone `$a == 1` is *lenient* legacy equality; the same
+> comparison inside `$a == 1 && $b != ''` is *strict and typed* on the
+> expression rail. Adding a second condition can therefore change how the first
+> one compares. And a string that routes to the expression rail but fails to
+> parse is an **error** — never a fallback to literal truthiness.
+
+`template check` does not police any of this: mirroring the routing rule
+offline means reimplementing the predicate parser, and a near-miss
+reimplementation reports valid clauses as broken (the earlier "one comparison
+only" rule rejected 55 valid clauses across the shipped backend templates). It
+checks the references inside a `when:` and leaves the grammar to `flow
+validate`, which calls the real parser.
+
+**Even so, prefer a query filter to a gate when you are selecting rows.** The
+agent-store filter DSL runs in the database rather than after the fact:
 
 ```yaml
 filter:
@@ -231,7 +264,9 @@ filter:
 ```
 
 Ordering comparisons on ISO-8601 strings are correct because they are
-lexicographic. The database does the selection exactly; `when:` never could.
+lexicographic — in a filter *or* on the expression rail. The difference is
+where the work happens: a filter selects rows in the database, while a `when:`
+gate can only skip a step you already decided to run.
 
 ### `foreach`
 
@@ -239,6 +274,43 @@ lexicographic. The database does the selection exactly; `when:` never could.
 list, `max_parallel:` bounds concurrency. A step-level `when:` on a `foreach`
 step is **re-evaluated per item** in that item's scope, so `when: $row.Status
 == 'firing'` filters items rather than skipping the whole step.
+
+### A step is exactly one of four things
+
+`activity:`, `sleep_seconds:`, `await_approval:`, or a nested `steps:` block.
+Exactly one — the model rejects a step with two, or none.
+
+```yaml
+  - id: maybe                     # a BLOCK: `when:` gates the whole group
+    when: $steps.check.output.ok
+    steps:
+      - id: inner
+        activity: foundation.channel.post
+        args: { ... }
+    outputs:
+      posted: $steps.inner.output   # the ONLY thing outside can read
+```
+
+A block's scoping is the part worth internalizing:
+
+```
+outer step  ──▶ sees $steps.maybe.output.posted        ✅ (a declared output)
+            ──▶ sees $steps.maybe.output.anything_else ❌
+            ──▶ sees $steps.inner.*                    ❌ (private to the block)
+
+inner step  ──▶ sees $inputs, $channel, $trigger, and every
+                enclosing step at every level           ✅
+```
+
+Inner ids are private, so two blocks may reuse the same id. `outputs:` is
+evaluated in the block's inner scope after its steps ran, and is legal only
+alongside `steps:`. Omit it and the block publishes nothing — the same as a
+skipped step.
+
+`sleep_seconds:` is a durable timer (survives worker restarts, holds no worker
+capacity) and cannot be combined with `foreach`. Neither can `await_approval:`,
+which is a single blocking per-workflow gate — fanning it out would key every
+iteration to the same signal.
 
 ### Errors and retries
 
