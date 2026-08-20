@@ -151,6 +151,22 @@ def write_bundle(
     return root
 
 
+def bare_manifest(**extra: Any) -> dict[str, Any]:
+    """The clean manifest minus anything that names a flow.
+
+    Single-flow fixtures below would otherwise trip `schedule-unknown-flow` on
+    the clean manifest's `sweep` schedule — a real check firing for a reason
+    that has nothing to do with what the test is about.
+    """
+    return {
+        "display_name": "Widgets",
+        "app_type": "custom",
+        "channel_parameters": {"stale_hours": 6},
+        "tables": json.loads(json.dumps(CLEAN_MANIFEST["tables"])),
+        **extra,
+    }
+
+
 def codes(root: Path) -> set[str]:
     return {f.code for f in check_bundle(root).findings}
 
@@ -381,21 +397,56 @@ def test_permissive_activity_output_is_not_checked(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "expr,expected",
+    "expr",
     [
-        (
-            "$steps.upsert.output.created == 1 && $steps.now.output.iso != ''",
-            "when-unsupported-operator",
-        ),
-        ("$steps.upsert.output.created > 0", "when-unsupported-operator"),
-        ("$steps.upsert.output.created >= 1", "when-unsupported-operator"),
-        ("$steps.upsert.output.created", "when-not-a-comparison"),
+        # The expression rail: compounds and ordering comparisons. The checker
+        # used to reject all of these. 55 clauses across the five shipped
+        # backend templates use them.
+        "$steps.upsert.output.created == 1 && $steps.now.output.iso != ''",
+        "$steps.upsert.output.created > 0",
+        "$steps.upsert.output.created >= 1",
+        "!$steps.upsert.output.created",
+        "($steps.upsert.output.created == 1) || ($steps.now.output.iso != '')",
+        # A bare ref is truth-tested — the second-most-common form in the
+        # shipped templates, and previously reported as "not a comparison".
+        "$steps.upsert.output.created",
+        # Legacy standalone equality, which is its own rail (lenient) and
+        # always worked.
+        "$steps.upsert.output.created == 1",
+        # A plain literal is truthy as-is.
+        "yes",
     ],
 )
-def test_when_grammar_violations(tmp_path, expr, expected):
+def test_real_when_grammar_is_accepted(tmp_path, expr):
+    """`when:` has four rails, not one.
+
+    The old rule here — exactly one `==`/`!=`, no boolean operators, no
+    ordering — described a grammar the engine has not had. Mirroring the real
+    routing offline means reimplementing the predicate parser, so the checker
+    checks the references and leaves the grammar to `flow validate`.
+    """
     flow = mutate(CLEAN_INTAKE, "post", when=expr)
     root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
-    assert expected in codes(root)
+    assert check_bundle(root).findings == []
+
+
+def test_when_still_validates_refs_inside_an_expression(tmp_path):
+    """Dropping the grammar rule must not drop the reference check with it —
+    a compound is exactly where a typo'd path is easiest to miss."""
+    flow = mutate(
+        CLEAN_INTAKE,
+        "post",
+        when="$steps.upsert.output.created == 1 && $steps.nosuch.output.x != ''",
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-step-reference" in codes(root)
+
+
+def test_a_ref_inside_a_quoted_literal_is_not_a_ref(tmp_path):
+    """`$literal` on the right of a comparison is a string, not a path."""
+    flow = mutate(CLEAN_INTAKE, "post", when="$steps.upsert.output.created == '$nope.x'")
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert check_bundle(root).findings == []
 
 
 def test_when_validates_its_own_references(tmp_path):
@@ -537,3 +588,359 @@ def test_report_serializes_for_json_output(tmp_path):
     assert payload["ok"] is True
     assert payload["error_count"] == 0
     assert sorted(f["name"] for f in payload["flows"]) == ["intake", "sweep"]
+
+
+# ── blocks, and the other step shapes ─────────────────────────────────
+#
+# A step is exactly one of `activity`, `sleep_seconds`, `await_approval` or a
+# nested `steps:` block. Demanding `activity:` made 22 steps across the shipped
+# backend templates false errors — and, worse, meant nothing inside a block was
+# ever checked at all.
+
+
+def _block_flow(*, outputs=None, inner=None, reader=None) -> dict[str, Any]:
+    """A flow whose second step is a `when:`-gated block."""
+    block: dict[str, Any] = {
+        "id": "maybe",
+        "when": "$inputs.go",
+        "steps": inner
+        or [
+            {
+                "id": "inside",
+                "activity": "foundation.channel.post",
+                "args": {"channel_id": "$inputs.conversation_id", "text": "hi"},
+            }
+        ],
+    }
+    if outputs is not None:
+        block["outputs"] = outputs
+    steps: list[dict[str, Any]] = [
+        {"id": "now", "activity": "foundation.workflow.now"},
+        block,
+    ]
+    if reader is not None:
+        steps.append(
+            {
+                "id": "after",
+                "activity": "foundation.channel.post",
+                "args": {"channel_id": "$inputs.conversation_id", "text": reader},
+            }
+        )
+    return {
+        "name": "blocky",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}, "go": {"type": "boolean"}},
+        "steps": steps,
+    }
+
+
+def test_a_block_is_a_legal_step(tmp_path):
+    root = write_bundle(tmp_path / "b", flows={"blocky": _block_flow()}, manifest=bare_manifest())
+    assert check_bundle(root).findings == []
+
+
+@pytest.mark.parametrize(
+    "step",
+    [
+        {"id": "wait", "sleep_seconds": 30},
+        {"id": "ask", "await_approval": {"prompt": "ok?", "contact_id": "$inputs.conversation_id"}},
+    ],
+)
+def test_the_other_actionless_step_shapes_are_legal(tmp_path, step):
+    flow = {
+        "name": "waity",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}},
+        "steps": [step],
+    }
+    root = write_bundle(tmp_path / "b", flows={"waity": flow}, manifest=bare_manifest())
+    assert check_bundle(root).findings == []
+
+
+def test_a_step_with_no_action_at_all_is_still_an_error(tmp_path):
+    flow = {
+        "name": "empty",
+        "version": 1,
+        "inputs": {},
+        "steps": [{"id": "nothing", "when": "yes"}],
+    }
+    root = write_bundle(tmp_path / "b", flows={"empty": flow}, manifest=bare_manifest())
+    assert "step-without-action" in codes(root)
+
+
+def test_refs_inside_a_block_are_checked(tmp_path):
+    """The old checker stopped at the block, so a broken ref inside one was
+    invisible — the expensive kind of false negative."""
+    inner = [
+        {
+            "id": "inside",
+            "activity": "foundation.channel.post",
+            "args": {"channel_id": "$inputs.conversation_id", "text": "$inputs.nosuch"},
+        }
+    ]
+    root = write_bundle(
+        tmp_path / "b", flows={"blocky": _block_flow(inner=inner)}, manifest=bare_manifest()
+    )
+    assert "undeclared-input" in codes(root)
+
+
+def test_a_block_sees_the_enclosing_scope(tmp_path):
+    inner = [
+        {
+            "id": "inside",
+            "activity": "foundation.channel.post",
+            "args": {"channel_id": "$inputs.conversation_id", "text": "$steps.now.output.iso"},
+        }
+    ]
+    root = write_bundle(
+        tmp_path / "b", flows={"blocky": _block_flow(inner=inner)}, manifest=bare_manifest()
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_blocks_inner_ids_are_private_to_it(tmp_path):
+    root = write_bundle(
+        tmp_path / "b",
+        flows={"blocky": _block_flow(reader="$steps.inside.output.message_id")},
+        manifest=bare_manifest(),
+    )
+    assert "unknown-step-reference" in codes(root)
+
+
+def test_a_block_publishes_only_its_declared_outputs(tmp_path):
+    flow = _block_flow(
+        outputs={"posted": "$steps.inside.output"},
+        reader="$steps.maybe.output.posted",
+    )
+    root = write_bundle(tmp_path / "b", flows={"blocky": flow}, manifest=bare_manifest())
+    assert check_bundle(root).findings == []
+
+
+def test_reading_an_undeclared_block_output_is_an_error(tmp_path):
+    flow = _block_flow(
+        outputs={"posted": "$steps.inside.output"},
+        reader="$steps.maybe.output.something_else",
+    )
+    root = write_bundle(tmp_path / "b", flows={"blocky": flow}, manifest=bare_manifest())
+    assert "unknown-block-output" in codes(root)
+
+
+def test_a_blocks_outputs_resolve_in_its_inner_scope(tmp_path):
+    """`outputs:` is evaluated after the inner steps ran, so it may name them —
+    and only them."""
+    flow = _block_flow(outputs={"posted": "$steps.nosuch.output"})
+    root = write_bundle(tmp_path / "b", flows={"blocky": flow}, manifest=bare_manifest())
+    assert "unknown-step-reference" in codes(root)
+
+
+# ── collect, indexes, foreach ─────────────────────────────────────────
+
+
+def _foreach_flow(*, ref: str, when: str | None = None) -> dict[str, Any]:
+    step: dict[str, Any] = {
+        "id": "fan",
+        "activity": "foundation.channel.post",
+        "foreach": "$steps.rows.output.rows",
+        "as": "row",
+        "collect": "posted",
+        "args": {"channel_id": "$inputs.conversation_id", "text": "$row.Title"},
+    }
+    if when is not None:
+        step["when"] = when
+    return {
+        "name": "fanout",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}},
+        "steps": [
+            {
+                "id": "rows",
+                "activity": "foundation.store.list_rows",
+                "args": {"conversation_id": "$inputs.conversation_id", "table_name": "widgets"},
+            },
+            step,
+            {
+                "id": "report",
+                "activity": "foundation.channel.post",
+                "args": {"channel_id": "$inputs.conversation_id", "text": ref},
+            },
+        ],
+    }
+
+
+def test_a_collected_list_is_readable_by_its_declared_name(tmp_path):
+    """`collect: posted` publishes `$steps.fan.posted` alongside `.output` —
+    19 refs across the shipped templates use this and were all errors."""
+    root = write_bundle(
+        tmp_path / "b",
+        manifest=bare_manifest(),
+        flows={"fanout": _foreach_flow(ref="$steps.fan.posted")},
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_name_that_is_neither_output_nor_the_collect_name_is_an_error(tmp_path):
+    root = write_bundle(
+        tmp_path / "b",
+        manifest=bare_manifest(),
+        flows={"fanout": _foreach_flow(ref="$steps.fan.gathered")},
+    )
+    assert "step-ref-needs-output" in codes(root)
+
+
+def test_a_foreach_when_is_a_per_item_gate(tmp_path):
+    """On a foreach step `when:` runs once per item with the alias bound, so
+    naming the alias there is the idiom for skipping individual items."""
+    root = write_bundle(
+        tmp_path / "b",
+        manifest=bare_manifest(),
+        flows={"fanout": _foreach_flow(ref="$steps.fan.posted", when="$row.Status == 'firing'")},
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_non_foreach_when_has_no_item_alias(tmp_path):
+    flow = mutate(CLEAN_INTAKE, "post", when="$row.Status == 'firing'")
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-reference-root" in codes(root)
+
+
+def test_a_numeric_segment_is_an_array_index(tmp_path):
+    """`$steps.fields.output.0.title` indexes a list. `properties` describes an
+    object, so there is nothing to match '0' against — the old code reported it
+    as an undeclared property."""
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$steps.fields.output.0.title"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert check_bundle(root).findings == []
+
+
+def test_a_named_property_is_still_checked(tmp_path):
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$steps.fields.output.nope"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-output-property" in codes(root)
+
+
+# ── $trigger ──────────────────────────────────────────────────────────
+
+
+def test_trigger_is_a_reference_root(tmp_path):
+    """70 refs across the shipped templates read `$trigger`; every one was an
+    unknown-reference-root error."""
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$trigger.thread_root"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert check_bundle(root).findings == []
+
+
+def test_an_unknown_trigger_key_is_an_error(tmp_path):
+    """The trigger scope is a closed set, unlike $channel — so a typo in it is
+    one of the few things the checker can be strict about."""
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$trigger.thread"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-trigger-key" in codes(root)
+
+
+def test_a_foreach_alias_shadows_a_global_root(tmp_path):
+    """The interpreter resolves aliases before `channel` and `trigger`
+    precisely so `as: trigger` keeps working."""
+    flow = _foreach_flow(ref="$steps.fan.posted")
+    for step in flow["steps"]:
+        if step["id"] == "fan":
+            step["as"] = "trigger"
+            step["args"]["text"] = "$trigger.Title"
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"fanout": flow})
+    assert check_bundle(root).findings == []
+
+
+# ── integrations ──────────────────────────────────────────────────────
+
+
+def _integration_flow(name: str = "gcal", *, declared: bool = True) -> dict[str, Any]:
+    flow: dict[str, Any] = {
+        "name": "booker",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}},
+        "steps": [
+            {
+                "id": "book",
+                "activity": "foundation.channel.post",
+                "args": {
+                    "channel_id": "$inputs.conversation_id",
+                    "integration_id": f"$channel.integrations.{name}.id",
+                },
+            }
+        ],
+    }
+    if declared:
+        flow["required_integrations"] = {name: {"description": "cal", "provider": "google"}}
+    return flow
+
+
+def test_required_integrations_declares_a_channel_integration(tmp_path):
+    root = write_bundle(
+        tmp_path / "b", manifest=bare_manifest(), flows={"booker": _integration_flow()}
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_manifest_connection_config_name_also_declares_it(tmp_path):
+    """claimcoordinator declares `leads_inbox` in the manifest and
+    deliberately in no flow — stating it there is what lets the client bind
+    the name on the first connect click."""
+    manifest = bare_manifest(connections=[{"id": "gmail", "config_name": "leads_inbox", "min": 1}])
+    root = write_bundle(
+        tmp_path / "b",
+        manifest=manifest,
+        flows={"booker": _integration_flow("leads_inbox", declared=False)},
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_an_integration_declared_nowhere_warns(tmp_path):
+    root = write_bundle(
+        tmp_path / "b",
+        manifest=bare_manifest(),
+        flows={"booker": _integration_flow("ghost", declared=False)},
+    )
+    report = check_bundle(root)
+    assert [f.code for f in report.warnings] == ["undeclared-integration"]
+    assert report.ok, "an undeclared integration can still resolve at runtime"
+
+
+def test_integration_list_needs_no_declaration(tmp_path):
+    """The interpreter seeds it itself, as an array to fan out over."""
+    flow = _integration_flow(declared=False)
+    flow["steps"][0]["args"]["integration_id"] = "$channel.integration_list"
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"booker": flow})
+    assert check_bundle(root).findings == []
+
+
+# ── prompts and templates ─────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [
+        "compose.md.j2",
+        "compose.md.jinja",
+        "compose.j2",
+        "compose.jinja",
+        "compose.md",
+        "compose.txt",
+    ],
+)
+def test_a_prompt_is_found_under_every_real_suffix(tmp_path, filename):
+    """`Path.stem` strips ONE suffix, so `compose.md.j2` was read as
+    `compose.md` and never matched `$channel.prompts.compose`. Every shipped
+    template's prompts use `.md.j2`."""
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$channel.prompts.compose"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    (root / "prompts").mkdir()
+    (root / "prompts" / filename).write_text("hello")
+    assert check_bundle(root).findings == []
+
+
+def test_a_missing_prompt_is_still_an_error(tmp_path):
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": "$channel.prompts.absent"})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    (root / "prompts").mkdir()
+    (root / "prompts" / "compose.md.j2").write_text("hello")
+    assert "unknown-prompt" in codes(root)
