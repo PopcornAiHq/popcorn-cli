@@ -2,7 +2,7 @@
 #
 # Untyped bundle: no `app_type:`, which means installing it CLEARS any
 # existing app_type on the channel. Only install into a dedicated ops channel.
-# `popcorn flow import --dry-run` warns about this before you commit.
+# `popcorn template check` warns about this offline, before you commit.
 display_name: Alert Tracker
 description: Ingests ops alerts, dedups them by fingerprint, tracks triage.
 

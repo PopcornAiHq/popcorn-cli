@@ -240,11 +240,20 @@ def create_conversation(
     name: str,
     conv_type: str = "public_channel",
     member_ids: list[str] | None = None,
+    template: str | None = None,
 ) -> dict[str, Any]:
-    """Create a new conversation (channel or DM)."""
+    """Create a new conversation (channel or DM), optionally from a template.
+
+    `template` names a registry template (what `channel templates` lists) and
+    is the ONLY way to install one -- the install runs server-side, in the
+    worker, after the channel exists. An unknown name is rejected up front with
+    a 400 rather than creating a channel whose install silently no-ops.
+    """
     body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
     if member_ids:
         body["member_ids"] = member_ids
+    if template:
+        body["template"] = template
     return client.post("/api/conversations/create", data=body)
 
 
@@ -768,45 +777,52 @@ def pack_template_dir(path: str) -> bytes:
     return buf.getvalue()
 
 
+# Why `flow import` no longer exists. Kept as a module constant so the library
+# raise and the CLI subcommand cannot drift apart on the one thing an author
+# needs from this error: where installs actually happen now.
+TEMPLATE_INSTALL_REMOVED = """\
+Installing a bundle from a local directory is no longer supported.
+
+The backend's `app-bundles!` change removed the zip-install route, so
+POST /api/customer-flows/import is 404 on dev and prod. There is no
+client-reachable replacement: installable templates are a fixed set checked
+into the backend repo and published to the bundle registry from inside the VPC.
+
+To install a bundle:
+  1. add it to popcorn-backend under lib/temporal/flows/<name>/ and register
+     the name in `lib/temporal/flows/templates.py` -- CHANNEL_TEMPLATES
+  2. deploy the backend, THEN publish the version from the intranet
+     /app-bundles page. Publish AFTER the deploy: a bundle whose flows call a
+     new activity must not become installable before the workers that can run
+     it exist.
+  3. install it by creating a channel with that template:
+       popcorn channel templates                       # is it published yet?
+       popcorn channel create '#chan' --template <name>
+
+Authoring locally still works with no server and no channel:
+  popcorn template check <dir>"""
+
+
 def import_template(
     client: APIClient,
     conversation: str,
     dir_path: str,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    """Install (or preflight) a template directory into a channel.
+    """Fenced: raises. There is no endpoint left to install a bundle through.
 
-    Zips locally *first* — an invalid bundle must not leave a stray upload in
-    the channel — then uploads the zip to the target channel (the import
-    endpoint resolves the file against the active conversation) and imports it
-    by key.
+    Raises BEFORE packing or uploading, which is the point. The old body zipped
+    the directory and uploaded it to the target channel, then posted the file
+    key to a route that now 404s -- so every attempt left a stray zip in the
+    channel and reported nothing an author could act on. Failing here names the
+    real publish path instead; see :data:`TEMPLATE_INSTALL_REMOVED`.
 
-    On a ``dry_run`` the response's ``summary`` is a different shape from a
-    real install's; see ``popcorn_cli.commands.flow`` for the two renderings.
+    The signature is unchanged so a caller reaches the explanation rather than
+    an AttributeError. :func:`pack_template_dir` is deliberately kept: the
+    server-side zip parser (``read_zip``) was retained for a future upload
+    transport, and the packing rules are the checked half of that contract.
     """
-    import tempfile
-
-    conv_id = resolve_conversation(client, conversation)
-    data = pack_template_dir(dir_path)
-
-    with tempfile.TemporaryDirectory() as tmp:
-        zip_path = Path(tmp) / f"{Path(dir_path).resolve().name}.zip"
-        zip_path.write_bytes(data)
-        uploaded = upload_file(client, conv_id, str(zip_path))
-
-    # upload_file returns a media content part: the key is under `url`.
-    file_key = uploaded.get("url") or uploaded.get("file_key")
-    if not file_key:
-        raise APIError(f"Upload returned no file key: {uploaded}")
-
-    body: dict[str, Any] = {"conversation_id": conv_id, "zip_file_key": file_key}
-    if dry_run:
-        body["dry_run"] = True
-    return client.post(
-        "/api/customer-flows/import",
-        data=body,
-        params={"conversation_id": conv_id},
-    )
+    raise PopcornError(TEMPLATE_INSTALL_REMOVED, error_code="validation")
 
 
 def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> dict[str, Any]:

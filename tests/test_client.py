@@ -48,7 +48,7 @@ class TestStructuredIssueLists:
     """A 400 whose detail carries an `issues` list must not collapse to its
     error slug.
 
-    `flow import --dry-run` answers
+    The flow endpoints answer
     `400 {"detail": {"ok": false, "error": "flow_validation_failed",
     "issues": [...]}}`. The issue list IS the diagnostic — an author who sees
     only "flow_validation_failed" has nothing to act on.
@@ -73,7 +73,7 @@ class TestStructuredIssueLists:
             ),
         )
         with pytest.raises(APIError) as exc:
-            client.post("/api/customer-flows/import", data={})
+            client.post("/api/customer-flows/run", data={})
         msg = str(exc.value)
         assert "flow_validation_failed" in msg
         assert "missing required arg" in msg, "the issue list was swallowed"
@@ -89,7 +89,7 @@ class TestStructuredIssueLists:
             ),
         )
         with pytest.raises(APIError) as exc:
-            client.post("/api/customer-flows/import", data={})
+            client.post("/api/customer-flows/run", data={})
         assert "boom" in exc.value.to_dict()["error"]
 
     def test_a_detail_dict_without_issues_is_unchanged(self, monkeypatch, client):

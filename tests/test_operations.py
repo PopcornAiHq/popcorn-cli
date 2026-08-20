@@ -138,6 +138,20 @@ class TestConversations:
         assert call_data["conversation_type"] == "private_channel"
         assert call_data["member_ids"] == ["u1", "u2"]
 
+    def test_create_conversation_installs_a_template(self, mock_client):
+        """`--template` on create is the ONLY install path left: the bundle
+        registry has no client-reachable install endpoint of its own."""
+        mock_client.post.return_value = {"id": "c1"}
+        operations.create_conversation(mock_client, "#ops", template="chat")
+        assert mock_client.post.call_args[1]["data"]["template"] == "chat"
+
+    def test_create_conversation_omits_template_when_absent(self, mock_client):
+        """A present-but-null key is not the same as an absent one on a create
+        body — send nothing rather than an explicit no-template."""
+        mock_client.post.return_value = {"id": "c1"}
+        operations.create_conversation(mock_client, "#ops")
+        assert "template" not in mock_client.post.call_args[1]["data"]
+
     def test_join_conversation(self, mock_client):
         mock_client.post.return_value = {"ok": True}
         operations.join_conversation(mock_client, "conv-id")
@@ -672,49 +686,61 @@ class TestTemplatePacking:
             operations.pack_template_dir(str(f))
 
 
-class TestTemplateImport:
+class TestTemplateImportIsFenced:
+    """`import_template` raises before it touches the network.
+
+    Ordering is the whole point. The old body zipped the directory, uploaded
+    the zip to the target channel, and only then posted the file key to a route
+    that now 404s — so every failed attempt left a stray zip behind in the
+    channel. The fence has to come first.
+    """
+
     def _bundle(self, tmp_path):
         (tmp_path / "manifest.yaml").write_text("display_name: X\n")
         return str(tmp_path)
 
-    def test_import_uploads_then_posts_the_file_key(self, mock_client, monkeypatch, tmp_path):
-        # upload_file returns a media *content part* — the key lives under
-        # `url`, not `file_key`.
+    def test_it_raises(self, mock_client, tmp_path):
+        with pytest.raises(PopcornError):
+            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
+
+    def test_it_uploads_nothing_and_posts_nothing(self, mock_client, monkeypatch, tmp_path):
+        uploaded = []
         monkeypatch.setattr(
             operations,
             "upload_file",
-            lambda c, conv, path: {"type": "media", "url": "fk-123", "filename": "b.zip"},
+            lambda c, conv, path: uploaded.append(path) or {"url": "k"},
         )
-        mock_client.post.return_value = {"ok": True, "summary": {}, "dry_run": False}
-        operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
-        mock_client.post.assert_called_once_with(
-            "/api/customer-flows/import",
-            data={"conversation_id": "conv-uuid", "zip_file_key": "fk-123"},
-            params={"conversation_id": "conv-uuid"},
-        )
-
-    def test_import_sends_dry_run_when_asked(self, mock_client, monkeypatch, tmp_path):
-        monkeypatch.setattr(operations, "upload_file", lambda c, conv, path: {"url": "fk-1"})
-        mock_client.post.return_value = {"ok": True, "summary": {}, "dry_run": True}
-        operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path), dry_run=True)
-        assert mock_client.post.call_args.kwargs["data"]["dry_run"] is True
-
-    def test_import_fails_loudly_when_upload_returns_no_key(
-        self, mock_client, monkeypatch, tmp_path
-    ):
-        monkeypatch.setattr(operations, "upload_file", lambda c, conv, path: {"type": "media"})
-        with pytest.raises(APIError, match="no file key"):
-            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
-
-    def test_import_does_not_upload_an_invalid_bundle(self, mock_client, monkeypatch, tmp_path):
-        """Packing must fail before anything is uploaded — a missing manifest
-        should not leave a stray zip in the channel."""
-        uploaded = []
-        monkeypatch.setattr(
-            operations, "upload_file", lambda c, conv, path: uploaded.append(path) or {"url": "k"}
-        )
-        (tmp_path / "no_manifest.yaml").write_text("name: x\n")
         with pytest.raises(PopcornError):
-            operations.import_template(mock_client, "conv-uuid", str(tmp_path))
-        assert uploaded == []
+            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
+        assert uploaded == [], "a fenced install still uploaded a zip"
         mock_client.post.assert_not_called()
+
+    def test_it_does_not_even_resolve_the_channel(self, mock_client, tmp_path):
+        """Resolution is a GET against the workspace. Nothing about a removed
+        command should need the network — or a valid channel."""
+        with pytest.raises(PopcornError):
+            operations.import_template(mock_client, "#no-such-channel", self._bundle(tmp_path))
+        mock_client.get.assert_not_called()
+
+    def test_dry_run_is_fenced_too(self, mock_client, tmp_path):
+        with pytest.raises(PopcornError):
+            operations.import_template(
+                mock_client, "conv-uuid", self._bundle(tmp_path), dry_run=True
+            )
+
+    def test_it_raises_for_a_bundle_that_would_not_even_pack(self, mock_client, tmp_path):
+        """The fence outranks the packing checks: "this endpoint is gone" is
+        more useful than "your bundle has no manifest" when neither bundle can
+        be installed."""
+        (tmp_path / "no_manifest.yaml").write_text("name: x\n")
+        with pytest.raises(PopcornError) as exc:
+            operations.import_template(mock_client, "conv-uuid", str(tmp_path))
+        assert "/app-bundles" in str(exc.value)
+
+    def test_the_message_carries_the_replacement_path(self, mock_client, tmp_path):
+        with pytest.raises(PopcornError) as exc:
+            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
+        msg = str(exc.value)
+        assert "CHANNEL_TEMPLATES" in msg
+        assert "/app-bundles" in msg
+        assert "template check" in msg

@@ -9,16 +9,20 @@ alerts all normalize through the same ingest flow with no per-source parser.
 
 ## Install
 
+**Not installable as it stands.** These bundles are reference material, not
+registry entries — `popcorn flow import` is gone and nothing installs a local
+directory (see `docs/TEMPLATE_AUTHORING.md` §2). To run it, land it in
+popcorn-backend under `lib/temporal/flows/`, register it in `CHANNEL_TEMPLATES`,
+deploy, publish from the intranet `/app-bundles` page, then:
+
 ```bash
-popcorn channel create '#alerts'
-popcorn flow import . --channel '#alerts' --dry-run   # preflight
-popcorn flow import . --channel '#alerts'
-popcorn webhook list '#alerts'                        # copy the URL
+popcorn channel create '#alerts' --template alerttracker
+popcorn webhook list '#alerts'                      # copy the URL
 ```
 
-**This is an untyped bundle** — it declares no `app_type`, so installing it
-*clears* any app_type already on the channel. Install it into a dedicated ops
-channel, never into a channel running a real app. `--dry-run` warns you.
+**It is an untyped bundle** — it declares no `app_type`, so installing it
+*clears* any app_type already on the channel. Use a dedicated channel, never
+one running a real app. `template check` warns about this offline.
 
 ## Try it without a producer
 

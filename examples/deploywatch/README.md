@@ -32,17 +32,20 @@ comes back. That is the whole decision.
 
 ## Install
 
+**Not installable as it stands.** These bundles are reference material, not
+registry entries — `popcorn flow import` is gone and nothing installs a local
+directory (see `docs/TEMPLATE_AUTHORING.md` §2). To run it, land it in
+popcorn-backend under `lib/temporal/flows/`, register it in `CHANNEL_TEMPLATES`,
+deploy, publish from the intranet `/app-bundles` page, then:
+
 ```bash
-popcorn channel create '#deploys'
-popcorn template check .                              # offline, no channel needed
-popcorn flow import . --channel '#deploys' --dry-run  # preflight
-popcorn flow import . --channel '#deploys'
-popcorn webhook list '#deploys'                       # copy the URL
+popcorn channel create '#deploys' --template deploywatch
+popcorn webhook list '#deploys'                      # copy the URL
 ```
 
-**This is an untyped bundle** — it declares no `app_type`, so installing it
-*clears* any app_type already on the channel. Install it into a dedicated
-channel, never into one running a real app. `--dry-run` warns you.
+**It is an untyped bundle** — it declares no `app_type`, so installing it
+*clears* any app_type already on the channel. Use a dedicated channel, never
+one running a real app. `template check` warns about this offline.
 
 Then point a GitHub webhook at the URL with the **Deployment statuses** event
 selected (repo → Settings → Webhooks).
