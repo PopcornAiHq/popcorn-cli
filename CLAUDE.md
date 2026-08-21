@@ -1,6 +1,6 @@
 # CLAUDE.md — popcorn-cli
 
-CLI for the Popcorn API. Published to PyPI as `popcorn-cli`, installs the `popcorn` command.
+CLI for the Popcorn API, installing the `popcorn` command. **Not published to PyPI** — it is installed and upgraded straight from this GitHub repo.
 
 ## Structure
 
@@ -164,11 +164,28 @@ A pre-commit hook (`scripts/check-version-bump.sh`) warns if `src/` files are st
 
 ## Publishing
 
+**Not on PyPI, and there is no `uv publish` step.** Distribution is the repo
+itself — users install and upgrade from
+`git+https://github.com/PopcornAiHq/popcorn-cli.git` (see README), and the
+CLI's own self-upgrade hardcodes that URL (`cli.py — _GITHUB_URL`). So there is
+no artifact to push anywhere; a release is just a tag.
+
 ```bash
-make bump             # or: make bump v=X.Y.Z
-uv build
-uv publish
+make bump             # or: make bump v=X.Y.Z — bumps, commits, AND tags
+git push && git push --tags
 ```
+
+Pushing a `v*` tag fires `.github/workflows/release.yml`, which builds notes
+from the commits since the previous tag (dropping `chore:` lines) and creates
+the GitHub release on its own. `make release` does the same thing by hand and
+is only for when the workflow did not run — running both against one tag makes
+the second fail, since the release already exists.
+
+Because `make bump` tags as well as commits, run it on `main` after a merge,
+never on a feature branch: a tag on a branch points at a commit that is about
+to be squashed away. If a PR already carried the version bump, tag the merge
+commit directly (`git tag vX.Y.Z && git push --tags`) rather than bumping
+again.
 
 ## API Alignment
 
