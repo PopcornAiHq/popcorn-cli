@@ -3239,6 +3239,9 @@ Flows:
 Templates:
   template        Channel-template commands (check)
 
+Apps:
+  app             App-bundle commands (list, checkout)
+
 Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)
 

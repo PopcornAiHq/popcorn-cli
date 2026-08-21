@@ -37,6 +37,22 @@ class Argument:
     action: str | None = None
     choices: list[str] | None = None
     positional: bool = False
+    # argparse `nargs`. The case this exists for is `nargs="?"` — an OPTIONAL
+    # positional, which argparse cannot express otherwise (a bare positional
+    # is always required). `is_required` below accounts for it, so the
+    # commands --json schema does not claim such an argument is mandatory.
+    nargs: str | None = None
+
+    @property
+    def is_required(self) -> bool:
+        """Whether a caller must supply this, for schema consumers.
+
+        argparse makes positionals required regardless of the flag — except
+        under `nargs="?"`, which is exactly what this distinguishes.
+        """
+        if self.positional:
+            return self.nargs != "?"
+        return self.required
 
     def add_to(self, parser: argparse.ArgumentParser) -> None:
         kwargs: dict[str, Any] = {"help": self.help}
@@ -47,6 +63,8 @@ class Argument:
                 kwargs["type"] = self.type
             if self.choices:
                 kwargs["choices"] = self.choices
+        if self.nargs:
+            kwargs["nargs"] = self.nargs
         if self.positional:
             parser.add_argument(self.name, **kwargs)
         else:
@@ -149,8 +167,7 @@ def _sub_schema(sub: Subcommand) -> dict[str, Any]:
             {
                 "name": a.name,
                 "help": a.help,
-                # argparse makes positionals required regardless of the flag.
-                "required": a.required or a.positional,
+                "required": a.is_required,
                 "positional": a.positional,
             }
             for a in sub.arguments
