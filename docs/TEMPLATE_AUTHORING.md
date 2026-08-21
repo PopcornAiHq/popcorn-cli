@@ -109,9 +109,11 @@ the channel alone; a present-but-empty key means "replace with nothing."**
 
 ### Runtime state must not appear under `scalars:`
 
-`scalars:` upserts on *every* install. If a flow writes `alerts_summary` and
-the manifest also declares it, every re-import resets it. Declare only
+`scalars:` upserts on *every* install. If a flow writes a `last_swept_at` key
+and the manifest also declares it, every re-import resets it. Declare only
 install-time configuration; let flows create their own runtime keys.
+`template check` warns (`runtime-state-in-scalars`) when it sees a flow write
+a scalar the manifest declares.
 
 ### Schedules address their own channel
 
@@ -468,8 +470,8 @@ Pass `--inputs` for a flow's own arguments; an explicit `conversation_id`
 there always wins, so a flow can still target another conversation.
 
 ```bash
-popcorn flow run alert_apply --channel <id> \
-  --inputs '{"action":"ack","fingerprints":["..."]}' --wait
+popcorn flow run seed_test_alert --channel <id> \
+  --inputs '{"severity":"critical","env":"prod"}' --wait
 ```
 
 ### Checks will not save you

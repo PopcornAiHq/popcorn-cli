@@ -30,17 +30,18 @@ tables:
           display: "status:critical,warning,info;warn=critical" }
       - { name: Env, type: string, display: "status:dev,prod,tools" }
       - { name: Resource, type: string }
+      # `acked` has no flow that writes it — it is set by hand in the UI, and
+      # it works because the nudge query filters on `Status: firing`. Flipping
+      # a row to acked is therefore the "stop nudging me" escape hatch, and
+      # the only state transition a human owns.
       - { name: Status, type: string,
-          display: "status:firing,acked,snoozed,resolved;warn=firing" }
+          display: "status:firing,acked,resolved;warn=firing" }
       - { name: First Seen, type: datetime }
       - { name: Last Seen, type: datetime }
       # NOT a counter: the DSL has no arithmetic. One ISO timestamp appended
       # per fire, via the only merge mode that exists. merge:concat requires
       # type:string, so this is a string and not a datetime.
       - { name: Seen At, type: string, merge: concat }
-      - { name: Acked By, type: string }
-      - { name: Acked At, type: datetime }
-      - { name: Snooze Until, type: datetime }
       - { name: Resolved At, type: datetime }
       - { name: Details, type: string }
       - { name: Nudged At, type: string, merge: concat, internal: true }
@@ -58,18 +59,19 @@ tables:
 
 scalars:
   # UPSERT on EVERY install. Only put install-time configuration here —
-  # anything a flow writes at runtime (alerts_summary, alerts_digest) would be
-  # reset on each re-import, so those are deliberately absent.
-  agent_runnable_flows: '["alert_apply", "alert_tick", "alert_digest", "seed_test_alert"]'
+  # anything a flow writes at runtime would be reset on each re-import.
+  agent_runnable_flows: '["alert_tick", "seed_test_alert"]'
   agent_summary: |
     This channel tracks ops alerts in the `alerts` table, one row per incident
-    keyed by Fingerprint. Status is one of firing/acked/snoozed/resolved.
+    keyed by Fingerprint. Status is one of firing/acked/resolved.
 
-    To triage on the user's behalf, run the `alert_apply` flow with
-    {action: ack|snooze|resolve, fingerprints: [...]}. Snoozing also needs
-    `snooze_until` as an ISO-8601 timestamp — compute it yourself, the flow
-    cannot do date arithmetic. Never edit rows directly; alert_apply keeps the
-    original channel post in sync.
+    The table has exactly two writers: the `alert_webhook` flow on delivery,
+    and the `alert_tick` sweep every 5 minutes. There is no triage flow — this
+    is a read-mostly tracker.
+
+    Answer questions with filtered reads. Do not create rows: alerts come from
+    the webhook, and a hand-made row has no Raw payload and will never dedupe
+    against the real one.
 
 schedules:
   # REPLACE semantics: this list wholesale replaces the channel's schedules on
@@ -80,12 +82,6 @@ schedules:
     interval: 300
     overlap: skip
     jitter: 30
-    inputs:
-      conversation_id: <channel-conversation-id>
-  - flow: alert_digest
-    slug: alert-digest
-    cron: "0 8 * * *"
-    timezone: America/New_York
     inputs:
       conversation_id: <channel-conversation-id>
 

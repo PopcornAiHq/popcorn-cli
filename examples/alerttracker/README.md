@@ -1,11 +1,15 @@
 # Alert Tracker
 
 A Popcorn channel template that ingests ops alerts, dedupes them into one row
-per incident, tracks acknowledgement, nudges on silence, and posts a daily
-rollup.
+per incident, nudges on silence, and auto-resolves alerts that go quiet.
 
 Producer-agnostic: CloudWatch, Alertmanager, GitHub Actions and hand-raised
 alerts all normalize through the same ingest flow with no per-source parser.
+
+**Read-mostly by design.** The webhook is the only thing that creates rows and
+the sweep is the only thing that closes them. There is no triage flow —
+acking is a manual `Status` change in the UI, which works because the nudge
+query filters on `Status: firing`.
 
 ## Install
 
@@ -38,11 +42,9 @@ curl -X POST <webhook-url> -H 'Content-Type: application/json' \
 
 | File | Role |
 |---|---|
-| `manifest.yaml` | the `alerts` table, two schedules, the intake webhook, channel parameters |
+| `manifest.yaml` | the `alerts` table, the sweep schedule, the intake webhook, channel parameters |
 | `alert_webhook.yaml` | ingest: normalize → guard → dedup-upsert → post if new |
-| `alert_tick.yaml` | every 5 min: nudge unacked, auto-resolve quiet alerts, refresh summary |
-| `alert_apply.yaml` | ack / snooze / resolve — agent-runnable and CLI-runnable |
-| `alert_digest.yaml` | daily rollup post |
+| `alert_tick.yaml` | every 5 min: nudge unacked, auto-resolve quiet alerts |
 | `seed_test_alert.yaml` | fire a canned alert through the real ingest path |
 | `fixtures/*.json` | captured payloads, including a deliberately malformed one |
 
@@ -63,9 +65,15 @@ non-empty is what removes a row from the nudge set.
 
 ## Known limits
 
-- **Snoozing needs a caller-supplied timestamp.** `alert_apply` takes
-  `snooze_until` as ISO-8601 rather than "minutes", because the flow DSL has
-  no arithmetic. The agent or CLI computes it.
+- **Auto-resolve is a silence heuristic, not a recovery signal.** A producer
+  that stops sending is indistinguishable from a condition that cleared, so
+  `resolved` means "nothing heard for `auto_resolve_hours`". That is the right
+  default when a webhook is the only writer — a lost or never-sent "resolved"
+  delivery would otherwise leave a row firing forever — but a genuinely stuck
+  alert can be closed while the problem persists.
+- **There is no triage flow.** Acking is a manual `Status` change in the UI.
+  It works because the nudge query filters on `Status: firing`, so flipping a
+  row to `acked` is what stops the reminders.
 - **The tick is fully deterministic** — no LLM call. Its sweep cutoffs come
   from `foundation.math.offset`, which names the direction (`subtract`) so the
   durations above stay plain positive numbers. See `GOTCHAS.md` #21.
