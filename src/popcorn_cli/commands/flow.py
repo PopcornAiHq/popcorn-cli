@@ -65,87 +65,26 @@ def _poll_until_closed(
         time.sleep(_POLL_SECONDS)
 
 
-# Bundle files that are not flows. A manifest is checked by `flow import
-# --dry-run`, not here; config/strings are template data.
+# Bundle files that are not flows. The manifest is `template check`'s job,
+# not this validator's; config/strings are template data. Mirrors the
+# backend's own reserved set -- `strings.yaml` is a fourth reserved name
+# alongside manifest/AGENT/README, and every shipped template has one.
 _NOT_A_FLOW = {"manifest.yaml", "config.yaml", "strings.yaml"}
 
 
-def _fmt_list(values: list[Any]) -> str:
-    return ", ".join(str(v) for v in values) if values else "-"
-
-
-def _dry_run_lines(summary: dict[str, Any]) -> list[str]:
-    """Render the preflight summary.
-
-    `flows` arrives nested as create/update/**delete** — install prunes flows
-    the bundle does not cover, so the deletions are the line the author most
-    needs to see. Dumping the dict would bury them.
-    """
-    flows = summary.get("flows") or {}
-    lines = [
-        f"  flows to create:  {_fmt_list(flows.get('create') or [])}",
-        f"  flows to update:  {_fmt_list(flows.get('update') or [])}",
-        f"  flows to DELETE:  {_fmt_list(flows.get('delete') or [])}",
-        f"  tables:           {_fmt_list(summary.get('tables') or [])}",
-        f"  scalars:          {_fmt_list(summary.get('scalars') or [])}",
-        f"  webhooks:         {summary.get('webhooks', 0)}",
-    ]
-    schedules = summary.get("schedules", 0)
-    if summary.get("schedules_replace_existing"):
-        lines.append(
-            f"  schedules:        {schedules} (replaces the channel's existing schedules wholesale)"
-        )
-    else:
-        lines.append(f"  schedules:        {schedules}")
-    lines.append(f"  app_type:         {summary.get('app_type') or '(none)'}")
-    return lines
-
-
-def _install_lines(summary: dict[str, Any]) -> list[str]:
-    """Render a real install's InstallSummary — flat snake_case lists.
-
-    Only non-empty sections; a full InstallSummary is ~18 keys and most are
-    empty on any given install.
-    """
-    lines = []
-    template = summary.get("template")
-    if template:
-        lines.append(f"  template: {template}")
-    for key in sorted(summary):
-        if key == "template":
-            continue
-        value = summary[key]
-        if not value:
-            continue
-        rendered = _fmt_list(value) if isinstance(value, list) else str(value)
-        lines.append(f"  {key}: {rendered}")
-    return lines
-
-
 def _flow_import(args: argparse.Namespace) -> None:
-    from ..cli import _get_client, _output, _status
+    """Fenced: always raises with the real publish path.
 
-    client = _get_client(args)
-    dry = getattr(args, "dry_run", False)
-    _status(f"{'Validating' if dry else 'Installing'} {args.directory}...")
-    resp = operations.import_template(client, args.channel, args.directory, dry_run=dry)
-    summary = resp.get("summary") or {}
+    Registered so `flow import` explains itself rather than dying as an unknown
+    subcommand, and so `--channel`/`--dry-run` still parse -- an author who
+    typed the old command gets the message, not an argparse error about it.
 
-    if dry:
-        header = f"Would install into {args.channel}:"
-        lines = _dry_run_lines(summary)
-        # An untyped bundle CLEARS the channel's app_type — the one surprise
-        # in the install that is not obviously reversible.
-        if not summary.get("app_type"):
-            _status(
-                "Warning: this bundle declares no app_type, so installing it "
-                "would CLEAR the channel's app_type."
-            )
-    else:
-        header = f"Installed into {args.channel}:"
-        lines = _install_lines(summary)
+    No client is built and no auth is required: the endpoint is gone for
+    everyone, so needing a login to be told so would be its own dead end.
+    """
+    from popcorn_core.errors import PopcornError
 
-    _output(args, resp, "\n".join([header, *lines]))
+    raise PopcornError(operations.TEMPLATE_INSTALL_REMOVED, error_code="validation")
 
 
 def _flow_validate(args: argparse.Namespace) -> None:
@@ -414,14 +353,14 @@ register(
             ),
             Subcommand(
                 "import",
-                "Install a template directory into a channel",
+                "Removed — prints where bundles install from now",
                 _flow_import,
                 [
                     Argument("directory", "Template bundle directory", positional=True),
                     _CHANNEL,
                     Argument(
                         "dry-run",
-                        "Validate the bundle and report the plan; install nothing",
+                        "Accepted and ignored; the command is removed",
                         action="store_true",
                     ),
                 ],

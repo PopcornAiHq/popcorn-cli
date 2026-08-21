@@ -158,6 +158,7 @@ class _Checker:
     def run(self) -> BundleReport:
         files = self._collect_files()
         self._check_collisions(files)
+        self._check_nesting(files)
         self._load_manifest()
         self._load_flows(files)
         self._check_manifest_references()
@@ -205,6 +206,32 @@ class _Checker:
         if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
             return f"{rel.parts[0]}/{path.name}"
         return path.name
+
+    def _check_nesting(self, files: list[Path]) -> None:
+        """A flow in a subdirectory means two different things, silently.
+
+        The two readers disagree, and neither says so. The registry reads a
+        template off disk and descends `prompts/` and `templates/` ONLY, so
+        `flows/a.yaml` is not read at all — the flow just is not there. The zip
+        reader flattens it to `a.yaml` and installs it. So the same bundle
+        either has the flow or does not, depending on how it got in.
+
+        Warning rather than error: a flat bundle is the only layout with one
+        meaning, but nesting is legal and works under the zip reader.
+        """
+        for path in files:
+            rel = path.relative_to(self.dir)
+            if len(rel.parts) == 1 or path.suffix not in (".yaml", ".yml"):
+                continue
+            if rel.parts[0] in PRESERVED_DIRS:
+                continue
+            self.warn(
+                "nested-flow-file",
+                str(rel),
+                f"'{rel}' is in a subdirectory. The registry reader descends only "
+                f"{'/, '.join(sorted(PRESERVED_DIRS))}/ and would not see this flow at all; "
+                f"the zip reader would flatten it to '{path.name}'. Move it to the bundle root.",
+            )
 
     def _check_collisions(self, files: list[Path]) -> None:
         """Two entries flattening to one name: the later silently wins."""

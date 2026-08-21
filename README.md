@@ -87,7 +87,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms]` | List channels or DMs |
-| `popcorn channel create <name> [--type TYPE] [--members IDS] [--if-not-exists]` | Create a channel |
+| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel; `--template` installs a registry template into it (the only way to install one) |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |
 | `popcorn channel leave <conv>` | Leave a channel |
@@ -96,11 +96,10 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn channel edit <conv> [--name N] [--description D]` | Update channel name or description |
 | `popcorn channel archive <conv> [--undo]` | Archive/unarchive a channel |
 | `popcorn channel delete <conv>` | Delete a channel |
-| `popcorn channel templates` | List available channel templates |
+| `popcorn channel templates` | List the channel templates the registry can install |
 | **Flows** | |
 | `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
 | `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
-| `popcorn flow import <dir> --channel <conv> [--dry-run]` | Install a template bundle; `--dry-run` reports the plan (including flows it would delete) and installs nothing |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |

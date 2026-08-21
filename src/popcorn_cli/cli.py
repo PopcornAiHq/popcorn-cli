@@ -29,7 +29,7 @@ Usage:
     popcorn message send <conversation> "message" [--thread ID] [--file PATH]
     popcorn message threads <conversation> [--limit] [--offset]
     popcorn channel archive <conversation> [--undo]
-    popcorn channel create <name> [--type] [--members] [--if-not-exists]
+    popcorn channel create <name> [--type] [--members] [--template T] [--if-not-exists]
     popcorn channel delete <conversation>
     popcorn channel edit <conversation> [--name] [--description]
     popcorn channel info <conversation>
@@ -38,9 +38,9 @@ Usage:
     popcorn channel kick <conversation> <user_id>
     popcorn channel leave <conversation>
     popcorn channel list [query] [--dms]
+    popcorn channel templates
     popcorn flow activities [--tier T] [--status S] [--category C]
     popcorn flow validate <file|dir> --channel <conv>
-    popcorn flow import <dir> --channel <conv> [--dry-run]
     popcorn flow list --channel <conv>
     popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]
     popcorn flow runs list --channel <conv>
@@ -1192,6 +1192,7 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
             name=args.name,
             conv_type=getattr(args, "type", "public_channel") or "public_channel",
             member_ids=member_ids,
+            template=getattr(args, "template", None),
         )
     except APIError as e:
         # Handle race: channel created between our search and create (--if-not-exists)
@@ -3525,6 +3526,11 @@ Other:
         help="Conversation type",
     )
     ch_create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
+    ch_create_p.add_argument(
+        "--template",
+        type=str,
+        help="Install a channel template (see `popcorn channel templates`)",
+    )
     ch_create_p.add_argument(
         "--if-not-exists",
         action="store_true",

@@ -2,7 +2,14 @@
 
 A **channel template** is a directory of YAML that turns an empty Popcorn
 channel into an application: tables to hold state, flows to do work, schedules
-and webhooks to invoke them. You install one with `popcorn flow import`.
+and webhooks to invoke them.
+
+> **You cannot install a bundle from your working copy.** Installable
+> templates are a fixed set checked into the backend repo and published to the
+> bundle registry from inside the VPC — see §2. `popcorn flow import` is gone.
+> Everything else in this guide still applies: the grammar, the manifest
+> semantics, and `popcorn template check` are all about the bundle itself, not
+> about how it gets installed.
 
 This guide is what you need that the API cannot tell you. It deliberately does
 **not** list activities or their arguments — those come from the server and
@@ -51,34 +58,62 @@ mytemplate/
 Only `manifest.yaml` is meaningful on its own; everything else is optional. A
 bundle with one flow and no manifest is a legal template.
 
-## 2. The importer's contract
+## 2. How a bundle gets installed
 
-`popcorn flow import <dir>` zips the directory and posts it. The server's
-`read_zip` then:
+**Installation is a backend deploy, not a CLI call.** A bundle becomes
+installable in three steps, and only the first is yours to write:
 
-- **Flattens every entry to its basename.** `flows/a.yaml` and `old/a.yaml`
-  are the same file; the second wins. Two exceptions: path segments named
-  `prompts/` and `templates/` are preserved and seed `$channel.prompts.<stem>`
-  and `$channel.templates.<stem>`.
-- **Reserves three names**: `manifest.yaml`, `AGENT.md`, `README.md`.
-- **Treats every other `.yaml` / `.yml` as a flow.** This is why fixtures must
-  be `.json` — a sample payload named `.yaml` gets installed as a flow.
-- **Silently skips everything else** (before the size check), and skips
-  dotfiles and `__MACOSX`.
-- **Rejects entries over 1 MiB.**
-
-**Flow identity is the `name:` inside the YAML, not the filename.** Re-import
-upserts by name. Renaming `name:` creates a second flow and leaves the first
-one installed.
-
-Always preflight:
-
-```bash
-popcorn flow import . --channel '#chan' --dry-run
+```
+your bundle dir                                    (author here)
+      │
+      ├─▶ popcorn-backend  lib/temporal/flows/<name>/
+      │   + register the name in templates.py — CHANNEL_TEMPLATES
+      │
+      ├─▶ deploy the backend                       (workers must exist first)
+      │
+      ├─▶ intranet /app-bundles → Publish          (runs inside the VPC)
+      │
+      └─▶ popcorn channel create '#chan' --template <name>
 ```
 
-It prints what would be created, updated, and **deleted** — install prunes
-flows the bundle no longer covers, and that is the line worth reading twice.
+Publish **after** the deploy. A bundle whose flows call a new activity must not
+become installable before the workers that can run it exist; nothing enforces
+that ordering for you.
+
+`popcorn channel templates` lists what the registry can install today, and
+`--template` on `channel create` is the only client-side install path — there
+is no endpoint that takes a bundle you have locally.
+
+### What the reader does with your files
+
+Two readers, one classification path: the registry reads your directory off
+disk, and `read_zip` reads an uploaded archive (retained for a future upload
+transport). Both then:
+
+- **Reserves four names**: `manifest.yaml`, `AGENT.md`, `README.md`, and
+  `strings.yaml` (client copy — `config.yaml` is a legacy manifest alias).
+  Every template the backend ships has a `strings.yaml`.
+- **Treats every other `.yaml` / `.yml` as a flow.** This is why fixtures must
+  be `.json` — a sample payload named `.yaml` can be installed as a flow.
+- **Descends `prompts/` and `templates/` only**, one level, seeding
+  `$channel.prompts.<stem>` and `$channel.templates.<stem>`.
+- **Silently skips everything else**, including dotfiles and `__MACOSX`.
+
+Where they diverge — **keep the bundle flat and it never matters:**
+
+| | registry (on-disk) | `read_zip` (archive) |
+|---|---|---|
+| `flows/a.yaml` | **ignored** — the dir is not descended | flattened to `a.yaml` |
+| two files, same basename | both kept (different paths) | second one wins |
+| entry over 1 MiB | no limit | rejected |
+
+A nested flow is silently *dropped* by one reader and silently *flattened* by
+the other. Neither tells you. `template check` flags the nesting.
+
+**Flow identity is the `name:` inside the YAML, not the filename.** Install
+upserts by name. Renaming `name:` creates a second flow and leaves the first
+one installed — and install **prunes** flows the bundle no longer covers, so a
+rename that you meant as a rename reads as one delete plus one create.
 
 ## 3. Manifest keys
 
@@ -88,7 +123,7 @@ wrong is how you wipe a live channel's state.
 | Key | Semantics | Notes |
 |---|---|---|
 | `display_name`, `description` | catalog copy | for the template picker |
-| `version` | bundle semver | optional for zip import, required to publish; shape-validated when present |
+| `version` | bundle semver | **required to publish**; shape-validated when present |
 | `app_type` | sets the channel's app | **see the warning below** |
 | `tables` | **additive reconcile** | columns are added and attributes fixed, never dropped or renamed |
 | `channel_parameters` | upsert, **types preserved** | read as `$channel.<name>` |
@@ -438,13 +473,26 @@ because nothing downstream parses it.
 
 ## 7. The authoring loop
 
+Two loops, because installing is a deploy. The **inner** loop is offline and
+runs as often as you like:
+
 ```bash
-popcorn template check .                             # offline: no channel, no server
-popcorn channel create '#chan'                       # note the UUID — see below
+popcorn template check .                             # no channel, no server
 popcorn flow activities --tier foundation            # what can I call?
 popcorn flow validate my_flow.yaml --channel <id>    # per file, fast
-popcorn flow import . --channel <id> --dry-run       # whole-bundle preflight
-popcorn flow import . --channel <id>
+```
+
+`flow validate` needs a channel only as an auth/context handle — any channel
+you can reach will do; it never writes.
+
+The **outer** loop costs a backend deploy plus a publish (§2), so get the inner
+one clean first:
+
+```bash
+# ... land the bundle in popcorn-backend, deploy, publish from /app-bundles
+
+popcorn channel templates                            # is my version installable?
+popcorn channel create '#chan' --template mytemplate # note the UUID — see below
 
 popcorn webhook list <id>                            # copyable URL
 curl -X POST <url> -d @fixtures/sample.json
@@ -454,6 +502,11 @@ popcorn flow runs get <workflow-id> --channel <id> --include-errors
 popcorn table rows alerts --channel <id>
 popcorn table schema alerts --channel <id>
 ```
+
+Because the outer loop is expensive, a bundle that installs but is wrong costs
+a whole deploy cycle to correct — which is the argument for `template check`
+and `flow validate` being pedantic, and for exercising boundaries (below) the
+first time you get a real channel rather than the third.
 
 A freshly created channel is **not resolvable by `#name` for ~5 minutes**
 (negative resolution caching). Use the conversation UUID immediately after

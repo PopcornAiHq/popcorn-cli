@@ -3,6 +3,13 @@
 Everything here was observed against **dev** on 2026-08-07 while building the
 ingest slice. Feeds the Step 5 authoring guide.
 
+> **Historical record — read it as such.** `flow import` referenced below was
+> the install transport at the time and has since been removed; bundles now
+> install from the backend registry (`docs/TEMPLATE_AUTHORING.md` §2). Every
+> *finding* here still holds — they are about the DSL and the store, not the
+> transport. Left unedited on purpose: this is the evidence, and rewriting
+> evidence to match today's tooling is how a log stops being one.
+
 The whole slice was authored, validated, installed and debugged **without the
 `popcorn api` escape hatch** — `flow activities`, `flow validate`,
 `flow import --dry-run`, `flow runs list/get`, `table rows/row/scalar` covered
