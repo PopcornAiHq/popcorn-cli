@@ -1151,3 +1151,46 @@ def list_store_audit(
     if cursor:
         params["cursor"] = cursor
     return client.get(f"{_store_base(client, conversation)}/audit", params)
+
+
+# ---------------------------------------------------------------------------
+# App bundles (read)
+# ---------------------------------------------------------------------------
+#
+# The user-JWT mirror of the agent surface's /apps reads (popcorn-backend
+# #1801). `conversation_id` is required on every one of them and is what
+# authorizes the call — the human surface never reads
+# X-Active-Conversation-ID — so these look like every other channel-scoped
+# operation here and need nothing special from APIClient.
+
+
+def list_channel_apps(client: APIClient, conversation: str) -> dict[str, Any]:
+    """Each app's lineage heads, plus this channel's current binding.
+
+    One "product" entry per app and one "fork" entry per fork line the
+    workspace owns. `channel` is null when the channel runs no bundle.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/apps/list", {"conversation_id": conv_id})
+
+
+def get_channel_app_tree(client: APIClient, conversation: str) -> dict[str, Any]:
+    """Every file path in the channel's bound version (`paths`)."""
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/apps/tree", {"conversation_id": conv_id})
+
+
+def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dict[str, Any]:
+    """One file's text from the channel's bound version."""
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/apps/file", {"conversation_id": conv_id, "path": path})
+
+
+def get_channel_app_files(client: APIClient, conversation: str) -> dict[str, Any]:
+    """The bound version's complete tree in one round trip.
+
+    The checkout read. Bundle trees are tens of files and tens of KB, so this
+    is one request rather than a tree listing plus N file reads.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/apps/files", {"conversation_id": conv_id})
