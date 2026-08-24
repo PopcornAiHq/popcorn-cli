@@ -3241,6 +3241,7 @@ Templates:
 
 Apps:
   app             App-bundle commands (list, checkout, fork, publish, apply, status)
+  channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)
