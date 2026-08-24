@@ -1,9 +1,10 @@
 """Materialize an app bundle onto disk, and the baseline that tracks it.
 
 `popcorn app checkout` writes the channel's bound version as files plus a
-`.popcorn-app.json` baseline. The baseline is what `app publish` will diff
-against in Phase 5: it names the version the working copy came from, so a
-publish can be refused when the channel has moved underneath it.
+`.popcorn-app.json` baseline. The baseline is what `app publish` diffs
+against: it names the version the working copy came from, so a publish can be
+refused when the channel has moved underneath it, and it names the channel so
+`publish`/`apply`/`status` need no `--channel`.
 
 The baseline lives INSIDE the checkout directory but is not bundle content.
 It is a dotfile so `template check`'s globs skip it, and publish must exclude
@@ -21,7 +22,10 @@ from typing import Any
 from .errors import PopcornError
 
 BASELINE_FILE = ".popcorn-app.json"
-_VERSION = 1
+# 2 added `conversation_id`. A v1 baseline still parses — every field is read
+# with a default — and its commands fall back to an explicit --channel rather
+# than being rewritten underneath the user.
+_VERSION = 2
 
 
 @dataclass
@@ -40,7 +44,14 @@ class Baseline:
     base_version_id: int
     tree_digest: str
     kind: str = "product"
+    # The line name is only ever displayed, and /apps/files does not carry it
+    # (AppFilesResponse is app/kind/version_id/semver/files), so a checkout
+    # leaves this None. `app list` is where the real value lives.
     fork_name: str | None = None
+    # Resolved UUID, not the "#name" that was typed: resolve_conversation
+    # accepts either and a UUID survives a channel rename. None in a v1
+    # baseline.
+    conversation_id: str | None = None
     version: int = _VERSION
 
     def to_dict(self) -> dict[str, Any]:
@@ -54,6 +65,8 @@ class Baseline:
         }
         if self.fork_name:
             d["fork_name"] = self.fork_name
+        if self.conversation_id:
+            d["conversation_id"] = self.conversation_id
         return d
 
 
@@ -156,16 +169,21 @@ def read_baseline(directory: Path) -> Baseline | None:
         tree_digest=data.get("tree_digest", ""),
         kind=data.get("kind", "product"),
         fork_name=data.get("fork_name"),
-        version=data.get("version", _VERSION),
+        conversation_id=data.get("conversation_id"),
+        version=data.get("version", 1),
     )
 
 
-def baseline_from_response(resp: dict[str, Any], files: dict[str, str]) -> Baseline:
+def baseline_from_response(
+    resp: dict[str, Any],
+    files: dict[str, str],
+    conversation_id: str | None = None,
+) -> Baseline:
     return Baseline(
         app=resp.get("app", ""),
         kind=resp.get("kind", "product"),
         semver=resp.get("semver", ""),
         base_version_id=resp.get("version_id", 0),
-        fork_name=resp.get("fork_name"),
+        conversation_id=conversation_id,
         tree_digest=tree_digest(files),
     )

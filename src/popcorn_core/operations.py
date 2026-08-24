@@ -1194,3 +1194,53 @@ def get_channel_app_files(client: APIClient, conversation: str) -> dict[str, Any
     """
     conv_id = resolve_conversation(client, conversation)
     return client.get("/api/apps/files", {"conversation_id": conv_id})
+
+
+# ---------------------------------------------------------------------------
+# App bundles (write)
+# ---------------------------------------------------------------------------
+#
+# The user-JWT mirror of the agent surface's writes (popcorn-backend #1803).
+# Same `conversation_id`-authorizes-the-call shape as the reads, so these are
+# three-liners too. One asymmetry worth knowing at the call site: `publish` is
+# workspace-ADMIN only while fork and apply also accept a channel member, so a
+# member gets a 403 on publish alone.
+
+
+def fork_channel_app(
+    client: APIClient, conversation: str, fork_name: str | None = None
+) -> dict[str, Any]:
+    """Give this workspace its own fork line of the channel's app.
+
+    `status` is "created" (line minted, channel re-bound), "already_fork" (a
+    no-op) or "adopting" (the workspace's existing line is being applied by
+    the install workflow, asynchronously).
+    """
+    conv_id = resolve_conversation(client, conversation)
+    body = {"fork_name": fork_name} if fork_name else {}
+    return client.post("/api/apps/fork", body, {"conversation_id": conv_id})
+
+
+def publish_channel_app(
+    client: APIClient, conversation: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Publish edits as the next version on the channel's fork line.
+
+    `payload` is `{base_version_id, files, deletes, changelog?}` — see
+    `app_publish.publish_payload`. Publishing also starts the install that
+    moves this channel onto the new version; other channels on the line catch
+    up on their own auto-update tick.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.post("/api/apps/publish", payload, {"conversation_id": conv_id})
+
+
+def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
+    """Bring this channel up to its lineage head. Publishes nothing.
+
+    `status` is "started", "already_current", or
+    "blocked_install_in_progress" — the last is another install holding the
+    channel's lock, and the retry is this same command.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.post("/api/apps/apply", {}, {"conversation_id": conv_id})
