@@ -3240,7 +3240,7 @@ Templates:
   template        Channel-template commands (check)
 
 Apps:
-  app             App-bundle commands (list, checkout)
+  app             App-bundle commands (list, checkout, fork, publish, apply, status)
 
 Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)

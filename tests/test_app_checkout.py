@@ -245,6 +245,7 @@ class TestCheckoutCommand:
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output"),
+            patch.object(mod, "resolve_conversation", return_value=_CONV),
             patch.object(operations, "get_channel_app_files", return_value=resp),
         ):
             mod._app_checkout(args)
@@ -338,6 +339,7 @@ def test_a_real_bundle_round_trips_and_still_passes_template_check(tmp_path, nam
     with (
         patch("popcorn_cli.cli._get_client", return_value=object()),
         patch("popcorn_cli.cli._output"),
+        patch.object(mod, "resolve_conversation", return_value=_CONV),
         patch.object(
             operations,
             "get_channel_app_files",
