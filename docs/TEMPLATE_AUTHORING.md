@@ -4,11 +4,15 @@ A **channel template** is a directory of YAML that turns an empty Popcorn
 channel into an application: tables to hold state, flows to do work, schedules
 and webhooks to invoke them.
 
-> **You cannot install a bundle from your working copy.** Installable
-> templates are a fixed set checked into the backend repo and published to the
-> bundle registry from inside the VPC — see §2. `popcorn flow import` is gone.
-> Everything else in this guide still applies: the grammar, the manifest
-> semantics, and `popcorn template check` are all about the bundle itself, not
+> **Which path you are on decides how fast you can iterate.** A *new* app type
+> is still a backend PR: installable templates are a fixed set checked into the
+> backend repo and published to the registry from inside the VPC. But *editing*
+> an app that already exists is now a pure CLI loop — `popcorn app fork`,
+> `checkout`, `publish` — with no deploy in it. Both paths are §2.
+> `popcorn flow import` is gone and neither path replaces it.
+>
+> Everything else in this guide applies to both: the grammar, the manifest
+> semantics, and `popcorn template check` are about the bundle itself, not
 > about how it gets installed.
 
 This guide is what you need that the API cannot tell you. It deliberately does
@@ -60,8 +64,13 @@ bundle with one flow and no manifest is a legal template.
 
 ## 2. How a bundle gets installed
 
-**Installation is a backend deploy, not a CLI call.** A bundle becomes
-installable in three steps, and only the first is yours to write:
+**Two paths, and which one you are on depends on whether the app already
+exists.** Creating a new app type is still a backend deploy. *Changing* one is
+now entirely a CLI loop.
+
+### 2a. A new app type — backend deploy
+
+Only the first step is yours to write:
 
 ```
 your bundle dir                                    (author here)
@@ -80,9 +89,56 @@ Publish **after** the deploy. A bundle whose flows call a new activity must not
 become installable before the workers that can run it exist; nothing enforces
 that ordering for you.
 
-`popcorn channel templates` lists what the registry can install today, and
-`--template` on `channel create` is the only client-side install path — there
-is no endpoint that takes a bundle you have locally.
+There is still no endpoint that takes a *new* app you have locally:
+`publish_registry_template` reads from disk and `channel create --template`
+resolves against the hardcoded `CHANNEL_TEMPLATES`, so a genuinely new
+`app_type` needs the PR.
+
+### 2b. Changing an app that exists — `popcorn app`
+
+A channel already running a bundle can be edited from the CLI, with no deploy
+and no intranet visit:
+
+```bash
+popcorn app fork --channel '#chan'      # this workspace's own fork line
+popcorn app checkout --channel '#chan'  # the bound version, as files
+# ... edit, then bump version: in manifest.yaml
+popcorn template check ./<app>
+popcorn app publish ./<app> --changelog "what changed"
+popcorn app status ./<app>              # has the install landed?
+```
+
+`fork` comes first and is not optional: a publish lands on a fork line **this
+workspace owns**, so publishing from a channel still bound to the shared
+product version is refused. `app publish` also starts the install that moves
+your channel onto the new version.
+
+Three things about this loop that are easy to get wrong:
+
+- **`version:` in `manifest.yaml` must advance every publish.** Bundle versions
+  only ever move forward; the CLI refuses a reused or lower number locally
+  rather than letting the registry 409 at you.
+- **A publish is not scoped to the channel you tested on.** Every other channel
+  on the same fork line catches up on its own nightly auto-update tick.
+- **One fork line per (workspace, app).** There is no parallel-experiment path
+  without naming a second line (`app fork --name`).
+
+`popcorn app list --channel '#chan'` shows the product line, any fork line this
+workspace owns, and what the channel currently runs.
+
+### The app list is filtered by your release track
+
+`popcorn app list` and `popcorn channel templates` show what **your workspace's
+release track** can see — alpha, beta or stable, per-workspace and defaulting
+to stable. An app released only to alpha is invisible and uninstallable for a
+workspace enrolled on stable.
+
+**The API says nothing about why**, deliberately: enrollment is internal, and a
+test enforces that it does not leak. So `channel create --template X` returns a
+neutral 400 for an app your track cannot see, indistinguishable from a typo.
+The CLI cannot diagnose this and does not try. If an app you know shipped is
+missing from the list, that is the first thing to suspect — ask rather than
+debug.
 
 ### What the reader does with your files
 
@@ -545,8 +601,8 @@ because nothing downstream parses it.
 
 ## 7. The authoring loop
 
-Two loops, because installing is a deploy. The **inner** loop is offline and
-runs as often as you like:
+Three loops now, and picking the right one is most of the speed. The **inner**
+loop is offline and runs as often as you like:
 
 ```bash
 popcorn template check .                             # no channel, no server
@@ -557,8 +613,26 @@ popcorn flow validate my_flow.yaml --channel <id>    # per file, fast
 `flow validate` needs a channel only as an auth/context handle — any channel
 you can reach will do; it never writes.
 
-The **outer** loop costs a backend deploy plus a publish (§2), so get the inner
-one clean first:
+The **middle** loop is the fork loop from §2b, and it is the one to reach for
+whenever the app already exists. No deploy, no intranet, seconds per turn:
+
+```bash
+popcorn app publish ./<app> --changelog "..."        # mint the next version
+popcorn app status ./<app>                           # has the install landed?
+popcorn channel-config show --channel <id> --strict  # is the channel wired up?
+popcorn flow runs list --channel <id>
+```
+
+`channel-config show` is worth running the first time a bundle installs: it
+diffs every `$channel.*` reference your flows make against what the channel
+actually has, and `--strict` exits non-zero on the three findings that make a
+run fail — a referenced parameter that is not set, a declared integration that
+is not connected, and a connected account whose provider contradicts a
+declaration. The two `unused_*` findings are informational; a shared config
+legitimately carries keys one flow does not read.
+
+The **outer** loop is only for a NEW app type, and costs a backend deploy plus
+a publish (§2a), so get the inner one clean first:
 
 ```bash
 # ... land the bundle in popcorn-backend, deploy, publish from /app-bundles
@@ -579,6 +653,11 @@ Because the outer loop is expensive, a bundle that installs but is wrong costs
 a whole deploy cycle to correct — which is the argument for `template check`
 and `flow validate` being pedantic, and for exercising boundaries (below) the
 first time you get a real channel rather than the third.
+
+That argument is weaker than it was: once the app exists, a wrong bundle costs
+a `app publish` rather than a deploy. It is not gone, though — the *first*
+version of a new app still has to be right, and a fork publish still moves
+every other channel on the line.
 
 A freshly created channel is **not resolvable by `#name` for ~5 minutes**
 (negative resolution caching). Use the conversation UUID immediately after

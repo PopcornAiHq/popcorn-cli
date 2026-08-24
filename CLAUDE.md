@@ -55,7 +55,12 @@ Families still living in `cli.py` are mid-migration; see
 ## Channel templates
 
 `docs/TEMPLATE_AUTHORING.md` is the guide for authoring a channel-template
-bundle with this CLI. Two complete, live-verified bundles back it:
+bundle with this CLI. Its §2 is the thing to keep straight: a **new** app type
+is a backend PR into `CHANNEL_TEMPLATES` plus a deploy, but **editing** one is
+a pure CLI loop (`app fork` → `checkout` → `publish`) with no deploy in it.
+`popcorn flow import` is gone and neither path replaces it.
+
+Two complete, live-verified bundles back the guide:
 
 | Bundle | Point |
 |---|---|
