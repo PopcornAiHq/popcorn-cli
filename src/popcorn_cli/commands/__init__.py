@@ -2,6 +2,6 @@
 
 from __future__ import annotations
 
-from . import app, flow, table, template
+from . import app, channel_config, flow, table, template
 
-__all__ = ["app", "flow", "table", "template"]
+__all__ = ["app", "channel_config", "flow", "table", "template"]

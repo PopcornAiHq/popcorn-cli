@@ -1244,3 +1244,75 @@ def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
     """
     conv_id = resolve_conversation(client, conversation)
     return client.post("/api/apps/apply", {}, {"conversation_id": conv_id})
+
+
+# ---------------------------------------------------------------------------
+# Channel config
+# ---------------------------------------------------------------------------
+#
+# Five endpoints that predate any CLI coverage. The one shape to keep in mind:
+# `PUT .../parameters` REPLACES the whole `channel_parameters` section, so
+# per-key editing is a read-modify-write in the caller (see
+# `channel_config.merge_parameters`) — not something this layer hides.
+
+
+def inspect_channel_config(client: APIClient, conversation: str) -> dict[str, Any]:
+    """The channel's config, its flows' `$channel.*` usage, and the diff.
+
+    `comparison` is computed server-side (`compare_channel_usage`); the CLI
+    renders it and must never recompute it.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/customer-flows/channel-config", {"conversation_id": conv_id})
+
+
+def replace_channel_parameters(
+    client: APIClient, conversation: str, parameters: dict[str, Any]
+) -> dict[str, Any]:
+    """Replace the ENTIRE `channel_parameters` section.
+
+    Named `replace_` rather than `update_` because that is what it does: any
+    key absent from `parameters` is gone after this call.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.put(
+        "/api/customer-flows/channel-config/parameters",
+        {"parameters": parameters},
+        {"conversation_id": conv_id},
+    )
+
+
+def set_channel_integration(
+    client: APIClient, conversation: str, name: str, integration_id: str
+) -> dict[str, Any]:
+    """Bind `$channel.integrations.<name>` to one of the CALLER's accounts.
+
+    A foreign or unknown `integration_id` is the same 404 — existence is
+    deliberately undisclosed. A 409 means the channel's flows declare a
+    `provider:` this account does not match.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.post(
+        "/api/customer-flows/channel-config/integrations/set",
+        {"name": name, "integration_id": integration_id},
+        {"conversation_id": conv_id},
+    )
+
+
+def unset_channel_integration(client: APIClient, conversation: str, name: str) -> dict[str, Any]:
+    """Remove a named integration binding. Leaves the OAuth grant in place."""
+    conv_id = resolve_conversation(client, conversation)
+    return client.post(
+        "/api/customer-flows/channel-config/integrations/unset",
+        {"name": name},
+        {"conversation_id": conv_id},
+    )
+
+
+def list_own_integrations(client: APIClient) -> dict[str, Any]:
+    """The calling user's connected accounts — the ids `set` needs.
+
+    Not workspace-wide and not channel-scoped: the set endpoint requires the
+    caller's OWN account, so this is the only list that can feed it.
+    """
+    return client.get("/api/integrations/list")
