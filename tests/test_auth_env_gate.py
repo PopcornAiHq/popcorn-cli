@@ -250,14 +250,26 @@ def _two_profile_config() -> Config:
     return cfg
 
 
+def _status_field(out: str, label: str) -> str:
+    """Return one `auth status` field's value.
+
+    Exact-match on the extracted value rather than `"<url>" in out`: a
+    substring test against a URL is the shape of a weak host check, which
+    CodeQL flags (py/incomplete-url-substring-sanitization), and it is the
+    looser assertion anyway -- it would pass on a URL that merely contains
+    the expected one.
+    """
+    line = next(ln for ln in out.splitlines() if ln.startswith(f"{label}:"))
+    return line.split(":", 1)[1].strip()
+
+
 def test_auth_status_honors_env_flag(capsys):
     cfg = _two_profile_config()
     with patch("popcorn_cli.cli.load_config", return_value=cfg):
         cmd_auth_status(argparse.Namespace(env="dev"))
     out = capsys.readouterr().out
-    assert "Profile:   dev" in out
-    assert "https://api.dev.popcorn.ai" in out
-    assert "https://api.popcorn.ai\n" not in out
+    assert _status_field(out, "Profile") == "dev"
+    assert _status_field(out, "API") == "https://api.dev.popcorn.ai"
 
 
 def test_auth_status_without_env_flag_uses_default(capsys):
@@ -265,8 +277,8 @@ def test_auth_status_without_env_flag_uses_default(capsys):
     with patch("popcorn_cli.cli.load_config", return_value=cfg):
         cmd_auth_status(argparse.Namespace(env=None))
     out = capsys.readouterr().out
-    assert "Profile:   prod" in out
-    assert "https://api.popcorn.ai" in out
+    assert _status_field(out, "Profile") == "prod"
+    assert _status_field(out, "API") == "https://api.popcorn.ai"
 
 
 def test_auth_logout_clears_the_named_profile_not_the_default():
