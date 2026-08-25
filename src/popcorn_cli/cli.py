@@ -597,8 +597,28 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
     print(f"\nLogged in as {tokens['email']} in workspace {profile.workspace_name}")
 
 
-def cmd_auth_status(args: argparse.Namespace) -> None:
+def _config_for(args: argparse.Namespace):
+    """Load config with ``-e/--env`` applied to the profile selection.
+
+    ``-e`` picks the profile a command acts on, so it has to be applied before
+    ``active_profile()`` reads it. Commands that called ``load_config()``
+    directly silently used ``default_profile`` instead: ``auth status``
+    reported the wrong environment — the one question it exists to answer —
+    and ``auth logout`` cleared a different profile's tokens than the one
+    named on the command line.
+
+    ``cmd_env`` deliberately does NOT use this: it shows and switches the
+    default profile, so ``default_profile`` is its subject, not its context.
+    """
     cfg = load_config()
+    env = getattr(args, "env", None)
+    if env:
+        cfg.default_profile = env
+    return cfg
+
+
+def cmd_auth_status(args: argparse.Namespace) -> None:
+    cfg = _config_for(args)
     profile = cfg.active_profile()
 
     if not profile.email:
@@ -624,7 +644,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
     from popcorn_core.config import CONFIG_FILE
 
-    cfg = load_config()
+    cfg = _config_for(args)
     profile = cfg.active_profile()
     now = int(time.time())
 
@@ -745,7 +765,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
 
 
 def cmd_auth_token(args: argparse.Namespace) -> None:
-    cfg = load_config()
+    cfg = _config_for(args)
     profile = cfg.active_profile()
     if not profile.id_token:
         raise AuthError("Not logged in. Run: popcorn auth login")
@@ -757,7 +777,7 @@ def cmd_auth_token(args: argparse.Namespace) -> None:
 def cmd_auth_logout(args: argparse.Namespace) -> None:
     from popcorn_core.config import _KEYRING_FIELDS, _has_keyring, _keyring_delete
 
-    cfg = load_config()
+    cfg = _config_for(args)
     profile_name = cfg.default_profile
     profile = cfg.active_profile()
     profile.access_token = ""
@@ -781,7 +801,7 @@ def cmd_auth_logout(args: argparse.Namespace) -> None:
 
 
 def cmd_workspace_list(args: argparse.Namespace) -> None:
-    cfg = load_config()
+    cfg = _config_for(args)
     profile = cfg.active_profile()
     if not profile.id_token:
         raise AuthError("Not logged in. Run: popcorn auth login")
@@ -801,7 +821,7 @@ def cmd_workspace_list(args: argparse.Namespace) -> None:
 
 
 def cmd_workspace_switch(args: argparse.Namespace) -> None:
-    cfg = load_config()
+    cfg = _config_for(args)
     profile = cfg.active_profile()
     if not profile.id_token:
         raise AuthError("Not logged in. Run: popcorn auth login")
@@ -1283,6 +1303,12 @@ def cmd_webhook(args: argparse.Namespace) -> None:
     client = _get_client(args)
 
     if sub == "create":
+        flow_id = getattr(args, "trigger_flow_id", None)
+        flow_name = getattr(args, "trigger_flow_name", None)
+        if getattr(args, "action_mode", None) == "trigger_workflow" and not (flow_id or flow_name):
+            e = PopcornError("--action-mode=trigger_workflow needs the flow to start")
+            e.hint = "pass --trigger-flow-name <name> (see `popcorn flow list`)"
+            raise e
         resp = operations.create_webhook(
             client,
             args.conversation,
@@ -1291,6 +1317,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
             avatar_url=getattr(args, "avatar_url", None),
             action_mode=getattr(args, "action_mode", None),
             trigger_flow_id=getattr(args, "trigger_flow_id", None),
+            trigger_flow_name=getattr(args, "trigger_flow_name", None),
         )
         _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
     elif sub == "event-types":
@@ -3587,10 +3614,20 @@ Other:
         choices=["silent", "as_is", "ai_enhanced", "trigger_workflow"],
         help="How deliveries are processed",
     )
-    wh_create.add_argument(
+    # One flow, two ways to name it, never both. `popcorn flow list` reports a
+    # flow's NAME in its `id` field, so for a bundle flow the id you are handed
+    # ("alert_webhook") is not a UUID and --trigger-flow-id would 422 on it.
+    wh_flow = wh_create.add_mutually_exclusive_group()
+    wh_flow.add_argument(
         "--trigger-flow-id",
         type=str,
-        help="Flow ID to start (required when --action-mode=trigger_workflow)",
+        help="Flow UUID to start (with --action-mode=trigger_workflow)",
+    )
+    wh_flow.add_argument(
+        "--trigger-flow-name",
+        type=str,
+        help="Flow NAME to start, as shown by `popcorn flow list` "
+        "(with --action-mode=trigger_workflow)",
     )
     wh_sub.add_parser("event-types", help="List valid webhook sources and action modes")
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
