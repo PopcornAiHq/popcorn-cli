@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from unittest.mock import patch
 
 import pytest
 
-from popcorn_cli.cli import build_parser
+from popcorn_cli.cli import build_parser, cmd_webhook
+from popcorn_core.errors import PopcornError
 
 
 @pytest.fixture()
@@ -601,6 +603,61 @@ class TestWebhook:
         assert args.name == "my-hook"
         assert args.description == "A test hook"
         assert args.action_mode == "silent"
+
+    def test_webhook_create_trigger_flow_name(self, parser):
+        args = parser.parse_args(
+            [
+                "webhook",
+                "create",
+                "#general",
+                "my-hook",
+                "--action-mode",
+                "trigger_workflow",
+                "--trigger-flow-name",
+                "alert_webhook",
+            ]
+        )
+        assert args.trigger_flow_name == "alert_webhook"
+        assert args.trigger_flow_id is None
+
+    def test_webhook_create_flow_id_and_name_are_exclusive(self, parser, capsys):
+        """The API rejects both; fail in the parser rather than at the server.
+
+        Asserts on the mutual-exclusion message specifically. A bare
+        `raises(SystemExit)` would also pass when the flag does not exist at
+        all — argparse exits on an unrecognized argument too — so it could
+        not tell the fix from its absence.
+        """
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                [
+                    "webhook",
+                    "create",
+                    "#general",
+                    "my-hook",
+                    "--trigger-flow-id",
+                    "0a3d046c-1c50-40ba-b6c5-b138a439af98",
+                    "--trigger-flow-name",
+                    "alert_webhook",
+                ]
+            )
+        assert "not allowed with argument" in capsys.readouterr().err
+
+    def test_trigger_workflow_without_a_flow_is_refused_locally(self, parser):
+        """Fail with an actionable hint instead of a server 422."""
+        args = parser.parse_args(
+            [
+                "webhook",
+                "create",
+                "#general",
+                "my-hook",
+                "--action-mode",
+                "trigger_workflow",
+            ]
+        )
+        with patch("popcorn_cli.cli._get_client"), pytest.raises(PopcornError) as exc:
+            cmd_webhook(args)
+        assert "trigger_workflow" in str(exc.value)
 
     def test_webhook_list(self, parser):
         args = parser.parse_args(["webhook", "list", "#general"])

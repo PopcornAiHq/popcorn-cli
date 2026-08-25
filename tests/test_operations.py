@@ -387,6 +387,25 @@ class TestWebhookCreate:
         operations.create_webhook(mock_client, "conv-1", "hook")
         assert "trigger_flow_id" not in mock_client.post.call_args.kwargs["data"]
 
+    def test_trigger_flow_name(self, mock_client):
+        """Bundle flows are named, not UUID'd — the name form must reach the API."""
+        mock_client.post.return_value = {"id": "wh-1"}
+        operations.create_webhook(
+            mock_client,
+            "conv-1",
+            "flow hook",
+            action_mode="trigger_workflow",
+            trigger_flow_name="alert_webhook",
+        )
+        body = mock_client.post.call_args.kwargs["data"]
+        assert body["trigger_flow_name"] == "alert_webhook"
+        assert "trigger_flow_id" not in body
+
+    def test_trigger_flow_name_omitted_when_none(self, mock_client):
+        mock_client.post.return_value = {"id": "wh-1"}
+        operations.create_webhook(mock_client, "conv-1", "hook")
+        assert "trigger_flow_name" not in mock_client.post.call_args.kwargs["data"]
+
     def test_event_types(self, mock_client):
         mock_client.get.return_value = {"sources": [], "action_modes": []}
         operations.webhook_event_types(mock_client)

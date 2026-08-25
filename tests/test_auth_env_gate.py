@@ -18,7 +18,7 @@ from unittest.mock import patch
 import jwt
 import pytest
 
-from popcorn_cli.cli import cmd_auth_login
+from popcorn_cli.cli import cmd_auth_login, cmd_auth_logout, cmd_auth_status
 from popcorn_core.auth import assert_token_env_match, decode_token_issuer
 from popcorn_core.client import APIClient
 from popcorn_core.config import Config, Profile
@@ -211,3 +211,72 @@ def test_login_with_token_rejects_cross_env_token(monkeypatch):
         stdin.isatty.return_value = True
         with pytest.raises(AuthError, match="mismatch"):
             cmd_auth_login(args)
+
+
+# ---------------------------------------------------------------------------
+# -e/--env profile selection
+#
+# `-e` picks the profile a command acts on. Several commands loaded the config
+# without applying it and silently used `default_profile` instead, so the
+# answer they gave described a different environment than the one named on the
+# command line. For `auth status` that is a wrong answer to its only question;
+# for `auth logout` it is the wrong profile's tokens cleared.
+# ---------------------------------------------------------------------------
+
+
+def _two_profile_config() -> Config:
+    cfg = Config()
+    cfg.default_profile = "prod"
+    cfg.profiles = {
+        "prod": Profile(
+            api_url="https://api.popcorn.ai",
+            clerk_issuer=PROD_ISS,
+            id_token=_jwt(PROD_ISS),
+            email="u@popcorn.ai",
+            expires_at=9999999999,
+            workspace_name="Prod WS",
+            workspace_id="ws-prod",
+        ),
+        "dev": Profile(
+            api_url="https://api.dev.popcorn.ai",
+            clerk_issuer=DEV_ISS,
+            id_token=_jwt(DEV_ISS),
+            email="u@popcorn.ai",
+            expires_at=9999999999,
+            workspace_name="Dev WS",
+            workspace_id="ws-dev",
+        ),
+    }
+    return cfg
+
+
+def test_auth_status_honors_env_flag(capsys):
+    cfg = _two_profile_config()
+    with patch("popcorn_cli.cli.load_config", return_value=cfg):
+        cmd_auth_status(argparse.Namespace(env="dev"))
+    out = capsys.readouterr().out
+    assert "Profile:   dev" in out
+    assert "https://api.dev.popcorn.ai" in out
+    assert "https://api.popcorn.ai\n" not in out
+
+
+def test_auth_status_without_env_flag_uses_default(capsys):
+    cfg = _two_profile_config()
+    with patch("popcorn_cli.cli.load_config", return_value=cfg):
+        cmd_auth_status(argparse.Namespace(env=None))
+    out = capsys.readouterr().out
+    assert "Profile:   prod" in out
+    assert "https://api.popcorn.ai" in out
+
+
+def test_auth_logout_clears_the_named_profile_not_the_default():
+    """`-e dev auth logout` must not clear prod's tokens."""
+    cfg = _two_profile_config()
+    with (
+        patch("popcorn_cli.cli.load_config", return_value=cfg),
+        patch("popcorn_cli.cli.save_config"),
+        patch("popcorn_core.config._has_keyring", return_value=False),
+    ):
+        cmd_auth_logout(argparse.Namespace(env="dev"))
+    assert cfg.profiles["dev"].id_token == ""
+    assert cfg.profiles["prod"].id_token != ""

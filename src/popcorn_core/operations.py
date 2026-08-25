@@ -546,11 +546,25 @@ def create_webhook(
     avatar_url: str | None = None,
     action_mode: str | None = None,
     trigger_flow_id: str | None = None,
+    trigger_flow_name: str | None = None,
 ) -> dict[str, Any]:
     """Create a webhook for a conversation.
 
-    ``trigger_flow_id`` is required by the API when ``action_mode`` is
-    ``trigger_workflow`` — it names the Temporal flow the webhook starts.
+    When ``action_mode`` is ``trigger_workflow`` the API needs to know which
+    flow to start, named either way:
+
+    - ``trigger_flow_id`` — the flow's UUID primary key.
+    - ``trigger_flow_name`` — its name on this conversation.
+
+    Both exist because the two are not interchangeable in practice. The flow
+    listing reports a flow's NAME in its ``id`` field, so the identifier the
+    CLI hands you for a bundle flow (``alert_webhook``) is not a UUID and the
+    id form rejects it. Name-bound creation is also get-or-create per
+    (conversation, flow): an already-bound webhook comes back instead of a
+    duplicate.
+
+    The API treats the two as mutually exclusive; the parser enforces that
+    before the request is built.
     """
     conv_id = resolve_conversation(client, conversation)
     body: dict[str, Any] = {"name": name}
@@ -562,6 +576,8 @@ def create_webhook(
         body["action_mode"] = action_mode
     if trigger_flow_id:
         body["trigger_flow_id"] = trigger_flow_id
+    if trigger_flow_name:
+        body["trigger_flow_name"] = trigger_flow_name
     return client.post("/api/webhooks/create", data=body, params={"conversation": conv_id})
 
 
