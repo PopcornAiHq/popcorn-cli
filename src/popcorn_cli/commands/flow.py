@@ -16,9 +16,16 @@ from popcorn_core import operations
 from ..registry import Argument, Command, Subcommand, register
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from popcorn_core.client import APIClient
 
 _CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
+# The same argument where an app checkout can supply it. `flow validate` needs
+# a channel only because the API authorizes against one — the parse and static
+# validation behind it are workspace-free — so making an author name a channel
+# they already checked out from is friction with nothing behind it.
+_CHANNEL_OPT = Argument("channel", "Channel name or UUID (default: the checkout's)")
 
 # Temporal execution statuses that mean the run is over. Anything else is
 # still in flight.
@@ -87,6 +94,34 @@ def _flow_import(args: argparse.Namespace) -> None:
     raise PopcornError(operations.TEMPLATE_INSTALL_REMOVED, error_code="validation")
 
 
+def _validate_channel(args: argparse.Namespace, target: Path) -> str:
+    """The channel to validate against: the flag, else the checkout's baseline.
+
+    `POST /customer-flows/validate` requires a `conversation_id` purely as
+    authorization — declaring the param is what makes a non-admin prove
+    channel membership — so the value is never read by the validation itself.
+    In the fork-and-revise loop the author always has a channel: they checked
+    the bundle out of one, and `app publish`/`apply`/`status` already read it
+    back out of the baseline. This makes validate consistent with them.
+    """
+    from popcorn_core.app_checkout import BASELINE_FILE, read_baseline
+    from popcorn_core.errors import PopcornError
+
+    if getattr(args, "channel", None):
+        return str(args.channel)
+
+    directory = target if target.is_dir() else target.parent
+    baseline = read_baseline(directory)
+    if baseline is not None and baseline.conversation_id:
+        return baseline.conversation_id
+
+    raise PopcornError(
+        f"no --channel given and no {BASELINE_FILE} in {directory}",
+        error_code="validation",
+        hint="pass --channel, or run this from an 'popcorn app checkout' directory",
+    )
+
+
 def _flow_validate(args: argparse.Namespace) -> None:
     from pathlib import Path
 
@@ -103,11 +138,13 @@ def _flow_validate(args: argparse.Namespace) -> None:
     if not files:
         raise PopcornError(f"No flow YAML found at {args.path}", error_code="validation")
 
+    channel = _validate_channel(args, target)
+
     results: list[dict[str, Any]] = []
     lines: list[str] = []
     bad = 0
     for path in files:
-        resp = operations.validate_flow_yaml(client, args.channel, path.read_text())
+        resp = operations.validate_flow_yaml(client, channel, path.read_text())
         results.append({"file": str(path), **resp})
         # An invalid flow is a 200 with valid:false — branch on the field.
         if resp.get("valid"):
@@ -125,17 +162,80 @@ def _flow_validate(args: argparse.Namespace) -> None:
         raise PopcornError(f"{bad} flow(s) failed validation", error_code="validation")
 
 
+def _schema_type(spec: dict[str, Any]) -> str:
+    """A one-word type for an argument, from its JSON Schema fragment.
+
+    `anyOf` is how pydantic renders an optional, so `str | None` arrives as a
+    two-branch union; showing "string" and letting `required` carry the
+    optionality reads better than "string|null".
+    """
+    if "type" in spec:
+        return str(spec["type"])
+    branches = [b.get("type") for b in spec.get("anyOf", []) if b.get("type") != "null"]
+    return str(branches[0]) if branches else "?"
+
+
+def _activity_detail(entry: dict[str, Any]) -> str:
+    """The long form for a single activity — what `--name` is for.
+
+    A one-line row answers "does this exist"; the question that sends someone
+    to the catalog is "what do I pass it", so this leads with the arguments.
+    The raw JSON Schema is one `--json` away for anything this elides.
+    """
+    args_schema = entry.get("args_schema") or {}
+    props = args_schema.get("properties") or {}
+    required = set(args_schema.get("required") or [])
+
+    lines = [
+        f"{entry.get('name', '?')}",
+        f"  {entry.get('tier', '?')}/{entry.get('category', '?')}  "
+        f"{entry.get('status', '?')}  v{entry.get('version', '?')}",
+    ]
+    if entry.get("description"):
+        # rstrip: a docstring's blank separator line would otherwise render
+        # as two spaces, and an argument with no description as a trailing run.
+        lines += ["", *(f"  {ln}".rstrip() for ln in entry["description"].splitlines())]
+
+    if props:
+        lines += ["", "  Arguments:"]
+        for key in sorted(props, key=lambda k: (k not in required, k)):
+            spec = props[key] or {}
+            flag = "required" if key in required else "optional"
+            desc = (spec.get("description") or "").splitlines()
+            lines.append(
+                f"    {key:<26} {_schema_type(spec):<9} {flag:<9} "
+                f"{desc[0][:60] if desc else ''}".rstrip()
+            )
+    elif args_schema:
+        lines += ["", "  Arguments: none"]
+
+    if entry.get("result_description"):
+        lines += ["", "  Returns:", f"    {entry['result_description']}"]
+    return "\n".join(lines)
+
+
 def _flow_activities(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.list_activity_catalog(_get_client(args))
+    # Filters go to the server, which owns the taxonomy and rejects an unknown
+    # value with a message naming the valid ones. Narrowing the response here
+    # would turn a typo back into zero rows reading as "no such activities".
+    resp = operations.list_activity_catalog(
+        _get_client(args),
+        name=getattr(args, "name", None),
+        tier=getattr(args, "tier", None),
+        status=getattr(args, "status", None),
+        category=getattr(args, "category", None),
+        view="summary" if getattr(args, "summary", False) else None,
+    )
     activities = resp.get("activities", [])
-    # The endpoint takes no filter params — narrow client-side.
-    for key in ("tier", "status", "category"):
-        want = getattr(args, key, None)
-        if want:
-            activities = [a for a in activities if a.get(key) == want]
-    resp = {**resp, "activities": activities}
+
+    if getattr(args, "name", None):
+        # An unregistered name is a 404 from the server, so reaching here with
+        # a name means exactly one row.
+        _output(args, resp, _activity_detail(activities[0]))
+        return
+
     lines = [f"Activities ({len(activities)}):"]
     for a in sorted(activities, key=lambda x: x.get("name", "")):
         summary = (a.get("description") or "").splitlines()
@@ -337,6 +437,22 @@ register(
                 _flow_activities,
                 [
                     Argument(
+                        "name",
+                        "Exact wire name — prints that activity's arguments",
+                        type=str,
+                    ),
+                    Argument(
+                        "summary",
+                        "Drop the JSON schemas (~500 KB to ~45 KB)",
+                        action="store_true",
+                    ),
+                    # tier and status keep their choices so a typo fails
+                    # offline; the server validates them again. `category`
+                    # deliberately has none — a domain exists exactly when an
+                    # activity is registered under it, so any list here would
+                    # be a stale copy. The server answers 400 naming the live
+                    # set instead.
+                    Argument(
                         "tier",
                         "Filter by tier (foundation, feature, app, system)",
                         type=str,
@@ -371,7 +487,7 @@ register(
                 _flow_validate,
                 [
                     Argument("path", "Flow YAML file, or a bundle directory", positional=True),
-                    _CHANNEL,
+                    _CHANNEL_OPT,
                 ],
             ),
             Subcommand(

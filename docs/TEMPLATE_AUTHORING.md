@@ -20,7 +20,8 @@ This guide is what you need that the API cannot tell you. It deliberately does
 would rot here:
 
 ```bash
-popcorn flow activities --tier foundation      # what can I call?
+popcorn flow activities --summary              # what can I call?
+popcorn flow activities --name <wire.name>     # what do I pass it?
 popcorn flow activities --json                 # full arg + result schemas
 popcorn flow validate my_flow.yaml             # is this reference real?
 popcorn template check ./mytemplate            # does the bundle hold together?
@@ -606,12 +607,14 @@ loop is offline and runs as often as you like:
 
 ```bash
 popcorn template check .                             # no channel, no server
-popcorn flow activities --tier foundation            # what can I call?
-popcorn flow validate my_flow.yaml --channel <id>    # per file, fast
+popcorn flow activities --name <wire.name>           # what do I pass it?
+popcorn flow validate my_flow.yaml                   # per file, fast
 ```
 
 `flow validate` needs a channel only as an auth/context handle — any channel
-you can reach will do; it never writes.
+you can reach will do; it never writes. Run from an `app checkout` and it
+takes the channel from the checkout's baseline, the same way `app publish`
+and `app status` do; pass `--channel <id>` anywhere else.
 
 The **middle** loop is the fork loop from §2b, and it is the one to reach for
 whenever the app already exists. No deploy, no intranet, seconds per turn:
