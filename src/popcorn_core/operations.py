@@ -856,15 +856,49 @@ def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> 
     )
 
 
-def list_activity_catalog(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
+def list_activity_catalog(
+    client: APIClient,
+    conversation: str | None = None,
+    *,
+    name: str | None = None,
+    tier: str | None = None,
+    status: str | None = None,
+    category: str | None = None,
+    view: str | None = None,
+) -> dict[str, Any]:
     """The global DSL activity catalog (identical for every workspace).
 
     Workspace-member gated with no conversation scope — the catalog is derived
     in-process from the activity registries, so `conversation` is accepted and
-    ignored for signature symmetry with the other flow operations. The endpoint
-    takes no filter params; callers filter the returned list themselves.
+    ignored for signature symmetry with the other flow operations.
+
+    Filtering is the SERVER's job (popcorn-backend#1848), not ours. Narrowing
+    here would mean shipping a copy of the taxonomy in this package, and
+    `category` cannot be validated offline at all — a domain exists exactly
+    when an activity is registered under it, so only the server knows the set.
+    An unknown value comes back as a 400 naming what would have matched, which
+    is why a typo must reach the API rather than quietly matching zero rows.
+
+    `name` is an exact wire name: a 404 if unregistered, and a 404 naming the
+    current name if it is a pre-retier alias. `view="summary"` drops the JSON
+    Schemas and keeps one line of each description — the whole catalog is
+    ~500 KB, and a browse does not need the schemas.
+
+    Omitted params are not sent, so against a backend predating #1848 this
+    call is byte-identical to what it was.
     """
-    return client.get("/api/customer-flows/activity-catalog")
+    params = {
+        k: v
+        for k, v in (
+            ("name", name),
+            ("tier", tier),
+            ("status", status),
+            ("category", category),
+            ("view", view),
+        )
+        if v is not None
+    }
+    return client.get("/api/customer-flows/activity-catalog", params=params)
 
 
 def list_channel_templates(client: APIClient) -> dict[str, Any]:

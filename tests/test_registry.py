@@ -204,44 +204,102 @@ class TestFlowActivities:
         with pytest.raises(SystemExit):
             parser.parse_args(["flow", "activities", "--tier", "bogus"])
 
-    def test_activities_reaches_its_handler_and_filters_client_side(self, monkeypatch, capsys):
-        """The endpoint takes no filter params, so filtering is ours to get right."""
+    def test_activities_sends_its_filters_to_the_server(self, monkeypatch, capsys):
+        """Filtering belongs to the server (popcorn-backend#1848).
+
+        Narrowing the response here would put a copy of the taxonomy in this
+        package and, worse, turn a typo back into zero rows reading as "no
+        such activities" — the failure the server's 400 exists to replace.
+        So the assertion is that the flags reach the wire and the rows come
+        back rendered, NOT that this process dropped any of them.
+        """
         from popcorn_core import operations
 
-        catalog = {
-            "activities": [
-                {
-                    "name": "foundation.store.upsert_rows",
-                    "tier": "foundation",
-                    "status": "release",
-                    "category": "store",
-                    "description": "Upsert rows",
-                },
-                {
-                    "name": "foundation.channel.post",
-                    "tier": "foundation",
-                    "status": "beta",
-                    "category": "channel",
-                    "description": "Post a message",
-                },
-                {
-                    "name": "app.alerts.tick",
-                    "tier": "app",
-                    "status": "release",
-                    "category": "alerts",
-                    "description": "Tick",
-                },
-            ]
-        }
-        monkeypatch.setattr(operations, "list_activity_catalog", lambda *a, **kw: catalog)
+        seen = {}
+
+        def fake(client, conversation=None, **kwargs):
+            seen.update(kwargs)
+            return {
+                "activities": [
+                    {
+                        "name": "foundation.store.upsert_rows",
+                        "tier": "foundation",
+                        "status": "release",
+                        "category": "store",
+                        "description": "Upsert rows",
+                    }
+                ]
+            }
+
+        monkeypatch.setattr(operations, "list_activity_catalog", fake)
         TestDispatchIsWired()._run(
             monkeypatch, ["flow", "activities", "--tier", "foundation", "--status", "release"]
         )
+
+        assert seen["tier"] == "foundation"
+        assert seen["status"] == "release"
+        assert seen["name"] is None and seen["category"] is None
+        assert seen["view"] is None, "no --summary given, so no projection asked for"
+
         out = capsys.readouterr().out
         assert "foundation.store.upsert_rows" in out
-        assert "foundation.channel.post" not in out  # wrong status
-        assert "app.alerts.tick" not in out  # wrong tier
         assert "Activities (1)" in out
+
+    def test_activities_summary_flag_asks_for_the_projection(self, monkeypatch, capsys):
+        from popcorn_core import operations
+
+        seen = {}
+
+        def fake(client, conversation=None, **kwargs):
+            seen.update(kwargs)
+            return {"activities": []}
+
+        monkeypatch.setattr(operations, "list_activity_catalog", fake)
+        TestDispatchIsWired()._run(monkeypatch, ["flow", "activities", "--summary"])
+        assert seen["view"] == "summary"
+
+    def test_activities_name_prints_the_arguments(self, monkeypatch, capsys):
+        """`--name` is the authoring inner loop: the question is "what do I
+        pass it", so the row form would answer the wrong question."""
+        from popcorn_core import operations
+
+        entry = {
+            "name": "foundation.store.upsert_rows",
+            "tier": "foundation",
+            "category": "store",
+            "status": "release",
+            "version": "1.0",
+            "description": "Upsert rows into a table.",
+            "args_schema": {
+                "type": "object",
+                "required": ["table_name"],
+                "properties": {
+                    "table_name": {"type": "string", "description": "Target table."},
+                    "dry_run": {
+                        "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                        "description": "Skip the write.",
+                    },
+                },
+            },
+            "result_description": "Rows written.",
+        }
+        monkeypatch.setattr(
+            operations, "list_activity_catalog", lambda *a, **kw: {"activities": [entry]}
+        )
+        TestDispatchIsWired()._run(
+            monkeypatch,
+            ["flow", "activities", "--name", "foundation.store.upsert_rows"],
+        )
+
+        out = capsys.readouterr().out
+        assert "Arguments:" in out
+        assert "table_name" in out and "required" in out
+        # anyOf is how pydantic renders an optional — show the real type, not
+        # "boolean|null", and let the required column carry optionality.
+        assert "boolean" in out and "optional" in out
+        assert "Rows written." in out
+        # The row form is for browsing; a single lookup must not use it.
+        assert "Activities (1)" not in out
 
 
 class TestTableFamily:
@@ -568,9 +626,93 @@ class TestFlowValidate:
         assert args.flow_command == "validate"
         assert args.path == "alert_webhook.yaml"
 
-    def test_validate_requires_channel(self, parser):
-        with pytest.raises(SystemExit):
-            parser.parse_args(["flow", "validate", "x.yaml"])
+    @staticmethod
+    def _checkout(directory, conversation_id="conv-uuid"):
+        """A directory that looks like an `app checkout`."""
+        from popcorn_core.app_checkout import Baseline, write_baseline
+
+        write_baseline(
+            directory,
+            Baseline(
+                app="alerttracker",
+                semver="1.0.0",
+                base_version_id=7,
+                tree_digest="deadbeef",
+                kind="fork",
+                conversation_id=conversation_id,
+            ),
+        )
+
+    def test_channel_defaults_to_the_checkouts_baseline(self, tmp_path):
+        import argparse as _argparse
+
+        from popcorn_cli.commands.flow import _validate_channel
+
+        self._checkout(tmp_path)
+        args = _argparse.Namespace(channel=None)
+        assert _validate_channel(args, tmp_path) == "conv-uuid"
+
+    def test_channel_baseline_is_found_from_a_single_file(self, tmp_path):
+        """`flow validate one.yaml` inside a checkout must resolve too — the
+        baseline sits beside the flow, not in it."""
+        import argparse as _argparse
+
+        from popcorn_cli.commands.flow import _validate_channel
+
+        self._checkout(tmp_path)
+        flow = tmp_path / "alert_webhook.yaml"
+        flow.write_text("name: x\n")
+        args = _argparse.Namespace(channel=None)
+        assert _validate_channel(args, flow) == "conv-uuid"
+
+    def test_explicit_channel_beats_the_baseline(self, tmp_path):
+        import argparse as _argparse
+
+        from popcorn_cli.commands.flow import _validate_channel
+
+        self._checkout(tmp_path)
+        args = _argparse.Namespace(channel="#ops")
+        assert _validate_channel(args, tmp_path) == "#ops"
+
+    def test_no_channel_and_no_checkout_names_both_ways_out(self, tmp_path):
+        """The error has to say what to do: neither "pass --channel" nor "run
+        checkout" alone is the whole answer, and which one applies depends on
+        where the author is."""
+        import argparse as _argparse
+
+        import pytest as _pytest
+
+        from popcorn_cli.commands.flow import _validate_channel
+        from popcorn_core.errors import PopcornError
+
+        args = _argparse.Namespace(channel=None)
+        with _pytest.raises(PopcornError) as excinfo:
+            _validate_channel(args, tmp_path)
+        assert ".popcorn-app.json" in str(excinfo.value)
+        assert "--channel" in (excinfo.value.hint or "")
+        assert "checkout" in (excinfo.value.hint or "")
+
+    def test_a_v1_baseline_without_a_channel_still_asks(self, tmp_path):
+        """popcorn-cli 0.19.0 wrote no conversation_id. Falling through to the
+        error is right — guessing would validate against the wrong channel."""
+        import argparse as _argparse
+
+        import pytest as _pytest
+
+        from popcorn_cli.commands.flow import _validate_channel
+        from popcorn_core.errors import PopcornError
+
+        self._checkout(tmp_path, conversation_id=None)
+        args = _argparse.Namespace(channel=None)
+        with _pytest.raises(PopcornError):
+            _validate_channel(args, tmp_path)
+
+    def test_validate_channel_is_optional(self, parser):
+        """It defaults to the app checkout's baseline — the API needs a
+        channel only to authorize against, and in the fork-and-revise loop
+        the author checked the bundle out of one."""
+        args = parser.parse_args(["flow", "validate", "x.yaml"])
+        assert args.channel is None
 
     def _stub(self, monkeypatch, by_name):
         """Stub the operation, keyed on a marker inside each file's text."""

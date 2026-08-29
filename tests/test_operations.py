@@ -613,13 +613,44 @@ class TestActivityCatalog:
     def test_list_activity_catalog_hits_the_human_surface(self, mock_client):
         mock_client.get.return_value = {"ok": True, "activities": []}
         operations.list_activity_catalog(mock_client)
-        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog")
+        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog", params={})
 
     def test_conversation_is_accepted_and_ignored(self, mock_client):
         """The catalog is global — no conversation scope reaches the wire."""
         mock_client.get.return_value = {"ok": True, "activities": []}
         operations.list_activity_catalog(mock_client, "#ops")
-        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog")
+        mock_client.get.assert_called_once_with("/api/customer-flows/activity-catalog", params={})
+
+    def test_omitted_filters_are_not_sent(self, mock_client):
+        """A backend predating the filter params must see the same request it
+        always saw — an unknown query param would be ignored there, so sending
+        `view=full` would be harmless but sending nothing is honest."""
+        mock_client.get.return_value = {"ok": True, "activities": []}
+        operations.list_activity_catalog(mock_client, tier="foundation")
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/activity-catalog", params={"tier": "foundation"}
+        )
+
+    def test_every_filter_reaches_the_wire(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "activities": []}
+        operations.list_activity_catalog(
+            mock_client,
+            name="foundation.store.upsert_rows",
+            tier="foundation",
+            status="release",
+            category="store",
+            view="summary",
+        )
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/activity-catalog",
+            params={
+                "name": "foundation.store.upsert_rows",
+                "tier": "foundation",
+                "status": "release",
+                "category": "store",
+                "view": "summary",
+            },
+        )
 
 
 class TestFlowValidation:
