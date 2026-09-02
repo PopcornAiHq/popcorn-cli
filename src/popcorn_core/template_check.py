@@ -14,8 +14,8 @@ or that every layer below accepts in silence:
 - a schedule or webhook naming a flow the bundle does not contain
 
 None of those are bad references, so none of them fail validation. All of them
-were live failures while the `examples/alerttracker/` bundle was written; see
-its `GOTCHAS.md`.
+were live failures while the alerttracker bundle was written; see
+`examples/alerttracker/GOTCHAS.md`.
 
 To answer any of that it has to model the DSL's SHAPE — which is not the same as
 modelling its catalog. It knows that a step is exactly one of `activity`,

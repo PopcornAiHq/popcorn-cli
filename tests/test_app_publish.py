@@ -7,8 +7,8 @@ message naming the fix.
 The mirror image matters just as much and has its own tests: a path the
 installer ignores must NOT be refused, because the server's own disk collector
 (`bundle_file_tree`) filters those silently — `claimcoordinator` ships an
-`evals/` directory that way — and refusing them would reject
-`examples/alerttracker`, the layout the CLI's docs teach.
+`evals/` directory that way — and refusing them would reject the ordinary
+bundle layout, of which `tests/fixtures/bundles/alerttracker` is an example.
 """
 
 from __future__ import annotations
