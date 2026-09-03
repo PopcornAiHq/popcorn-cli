@@ -36,16 +36,25 @@ other? Everything it reports passes `flow validate` cleanly — a fixture named
 `.yaml`, a write to an undeclared column, a schedule naming a flow that is not
 there. Run both; neither subsumes the other.
 
-Two complete, live-verified templates are checked in:
+Two bundles are referred to throughout, as the two ends of the choice §6 is
+about:
 
 | Bundle | Producers | Per-delivery cost |
 |---|---|---|
-| [`examples/alerttracker/`](../examples/alerttracker/) | four, unrelated | one LLM call — it must *derive* severity and env |
-| [`examples/deploywatch/`](../examples/deploywatch/) | one (GitHub) | none — it *extracts* fields the payload states |
+| `alerttracker` | four, unrelated | one LLM call — it must *derive* severity and env |
+| `deploywatch` | one (GitHub) | none — it *extracts* fields the payload states |
 
 The gap between them is §6, and it is the single most consequential choice in
-a webhook-backed template. `alerttracker`'s `GOTCHAS.md` is the raw evidence
-log behind most of the rules below.
+a webhook-backed template.
+[`examples/alerttracker/GOTCHAS.md`](../examples/alerttracker/GOTCHAS.md) is
+the raw evidence log behind most of the rules below, and is worth reading
+whole.
+
+> **Do not copy a bundle out of this repo.** Cut-down copies of both live under
+> `tests/fixtures/bundles/` and exist to exercise `template check`; neither
+> declares a `version:`, so neither can publish, and both have drifted from
+> what the platform actually ships. **Get bundle source from the server** — see
+> §2b, where `app checkout` hands you the deployed version of a real one.
 
 ---
 
@@ -113,6 +122,21 @@ popcorn app status ./<app>              # has the install landed?
 workspace owns**, so publishing from a channel still bound to the shared
 product version is refused. `app publish` also starts the install that moves
 your channel onto the new version.
+
+**This is also how you read a real bundle.** `app checkout` returns the whole
+tree — manifest, every flow, `AGENT.md`, `strings.yaml` — for the version the
+channel is actually bound to, so it is the one source that cannot be stale.
+When you want to study how a shipped app does something, spend a scratch
+channel on it rather than looking for a copy in a repo:
+
+```bash
+popcorn channel create '#scratch' --template alerttracker
+popcorn app fork --channel '#scratch'
+popcorn app checkout --channel '#scratch'
+```
+
+Note what that costs: a fork line is permanent and cannot be deleted, so do it
+in a workspace you do not mind accumulating one in.
 
 Three things about this loop that are easy to get wrong:
 
@@ -413,9 +437,8 @@ into a filter:
 ```
 
 Pass `iso` explicitly when several cutoffs must derive from the same instant.
-`examples/alerttracker/alert_tick.yaml` does exactly this, and is fully
-deterministic as a result — it previously spent an LLM call per run on the
-subtraction.
+`alerttracker`'s sweep flow does exactly this, and is fully deterministic as a
+result — it previously spent an LLM call per run on the subtraction.
 
 ## 5. Table schemas
 
@@ -519,9 +542,8 @@ rather than a guess:
 ```
 
 `$steps.fields.output.alarm` then resolves statically, so `flow validate`
-checks it. [`examples/deploywatch/`](../examples/deploywatch/) is a whole
-bundle built this way — a single producer, every field read by path, and not
-one model call in it.
+checks it. `deploywatch` is a whole bundle built this way — a single producer,
+every field read by path, and not one model call in it.
 
 Three behaviours worth knowing:
 

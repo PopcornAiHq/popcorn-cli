@@ -15,7 +15,7 @@ description: >
   deterministic and costs nothing per delivery.
 
   That choice is available here only because ONE producer sends every delivery
-  and it states every field we need. `examples/alerttracker/` faces four
+  and it states every field we need. The `alerttracker` bundle faces four
   producers and needs two fields (severity, env) that no CloudWatch body
   carries, so it must derive them with `foundation.agent.transform`. The rule:
   extraction reads what is there, derivation invents what is not.

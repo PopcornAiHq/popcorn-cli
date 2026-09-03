@@ -60,15 +60,23 @@ is a backend PR into `CHANNEL_TEMPLATES` plus a deploy, but **editing** one is
 a pure CLI loop (`app fork` → `checkout` → `publish`) with no deploy in it.
 `popcorn flow import` is gone and neither path replaces it.
 
-Two complete, live-verified bundles back the guide:
+Two bundles back the guide's §6 contrast. **They are checker fixtures, not
+reference templates** — they live under `tests/fixtures/bundles/` and are not
+offered to authors to copy, because neither declares a `version:` (so neither
+can publish) and both have drifted from what the platform ships. An author
+gets canonical source from `popcorn app checkout`, which cannot go stale.
 
 | Bundle | Point |
 |---|---|
-| `examples/alerttracker/` | four producers; must *derive* severity/env, so one LLM call per delivery. `GOTCHAS.md` is the evidence log behind most of the guide |
-| `examples/deploywatch/` | one producer (GitHub `deployment_status`); *extracts* every field by path, zero LLM calls. The worked `fields.extract` example |
+| `tests/fixtures/bundles/alerttracker/` | four producers; must *derive* severity/env, so one LLM call per delivery |
+| `tests/fixtures/bundles/deploywatch/` | one producer (GitHub `deployment_status`); *extracts* every field by path, zero LLM calls. The worked `fields.extract` example |
 
 The contrast between them is the guide's §6 and is deliberate — don't collapse
 them into one bundle or make either multi-producer.
+
+`examples/` keeps what is not bundle source and cannot be fetched from a
+server: `alerttracker/GOTCHAS.md`, the evidence log behind most of the guide,
+and the sample webhook payloads under each `fixtures/`.
 
 The guide deliberately does **not** restate activity names, arguments, or
 result schemas — those are served by `flow activities` and enforced by `flow
@@ -107,7 +115,7 @@ Three test layers, and the gap at the bottom is deliberate:
 
 | | Runs | Guards |
 |---|---|---|
-| `tests/test_example_bundles.py` | CI | every `examples/*/`, so a new example is gated the moment it is added |
+| `tests/test_fixture_bundles.py` | CI | every `tests/fixtures/bundles/*/`, so a new bundle is gated the moment it is added |
 | `tests/test_template_check.py` | CI | one grammar feature per test, derived from what real templates do |
 | `tests/test_backend_templates.py` | **local only** | the five shipped `popcorn-backend` templates, read from the real checkout |
 
@@ -115,8 +123,8 @@ The last one skips without a backend checkout (`POPCORN_BACKEND_FLOWS`, or
 `~/popcorn/backend/lib/temporal/flows`), so **it does not run in CI** — vendoring
 copies would rot within a release. It exists because the checker shipped with
 ~180 false positives against those templates while passing everything in this
-repo: `examples/` uses no block, no `collect:`, no expression-rail `when:`, no
-`$trigger`, no `.md.j2` prompt. Run it after touching the checker.
+repo: the fixture bundles use no block, no `collect:`, no expression-rail
+`when:`, no `$trigger`, no `.md.j2` prompt. Run it after touching the checker.
 
 ## Auth
 

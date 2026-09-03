@@ -1,9 +1,10 @@
 """Check the five shipped backend templates — opt-in, skipped without them.
 
 **These are the fixtures that matter, and they cannot live in this repo.** The
-checker was written against `examples/`, and the two example bundles happen to
-use none of: a nested `steps:` block, `collect:`, the `when:` expression rail,
-an array-index ref, `required_integrations:`, `$trigger`, or a `.md.j2` prompt.
+checker was written against the two bundles now under `tests/fixtures/bundles/`,
+and they happen to use none of: a nested `steps:` block, `collect:`, the `when:`
+expression rail, an array-index ref, `required_integrations:`, `$trigger`, or a
+`.md.j2` prompt.
 Every one of those was a false positive — roughly 180 findings across the five
 real templates, all of them wrong — and nothing in this repo could have caught
 that, because nothing in this repo had ever been run against a bundle somebody

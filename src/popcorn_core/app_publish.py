@@ -15,7 +15,7 @@ a better message, never to decide. Two of them are worth naming:
   auxiliary files are filtered here too, and reported so a misplaced
   `flows/alert.yaml` is visible rather than a mystery. Refusing them instead
   would make the CLI stricter than the server on identical input and would
-  reject `examples/alerttracker`, the layout the CLI's own docs teach.
+  reject the ordinary bundle layout the CLI's own docs teach.
   `unrecognized_tree_paths` — the server's refusal — applies to a tree
   already sent, which is never what this builds.
 - `parse_semver` is strict for a reason the YAML makes non-obvious: an

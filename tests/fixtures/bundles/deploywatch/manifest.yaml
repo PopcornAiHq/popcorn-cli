@@ -1,6 +1,6 @@
 # Deploy Watch — GitHub deployment tracking, one known producer.
 #
-# The counterpart to examples/alerttracker/. That bundle takes four unrelated
+# The counterpart to the alerttracker bundle. That one takes four unrelated
 # producers and must DERIVE fields no payload states, so it spends an LLM call
 # per delivery. This one takes a single producer that states every field it
 # needs, so it EXTRACTS them and makes no model call at all.
