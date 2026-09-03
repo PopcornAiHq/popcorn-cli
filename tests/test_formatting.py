@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from popcorn_cli.formatting import (
+    app_type,
     fmt_conversation,
     fmt_message,
     fmt_user,
@@ -120,3 +121,29 @@ class TestFmtUser:
     def test_without_email(self):
         result = fmt_user({"username": "alice", "id": "u1"})
         assert "alice" in result
+
+
+class TestAppType:
+    def test_reads_metadata_tag(self):
+        conv = {"metadata": {"app_type": "alerttracker"}}
+        assert app_type(conv) == "alerttracker"
+
+    def test_untagged_channel(self):
+        assert app_type({"metadata": {"template_hash": "abc"}}) == ""
+        assert app_type({}) == ""
+        assert app_type({"metadata": None}) == ""
+
+    def test_shown_in_channel_line(self):
+        set_color(False)
+        conv = {
+            "name": "alerts_main",
+            "type": "public_channel",
+            "id": "c1",
+            "metadata": {"app_type": "alerttracker"},
+        }
+        assert "[alerttracker]" in fmt_conversation(conv)
+
+    def test_absent_for_untagged_channel(self):
+        set_color(False)
+        conv = {"name": "general", "type": "public_channel", "id": "c1"}
+        assert "[" not in fmt_conversation(conv)

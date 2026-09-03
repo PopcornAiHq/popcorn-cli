@@ -155,6 +155,7 @@ from popcorn_core.validation import extract
 from . import commands as _registered_commands  # noqa: F401  — registers the families
 from . import registry
 from .formatting import (
+    app_type,
     fmt_activity,
     fmt_conversation,
     fmt_message,
@@ -1030,6 +1031,9 @@ def cmd_info(args: argparse.Namespace) -> None:
     desc = conv.get("description", "")
     if desc:
         lines.append(f"Description: {desc}")
+    app = app_type(conv)
+    if app:
+        lines.append(f"App:         {app}")
     lines.append(f"Created:     {format_timestamp(conv.get('created_at'))}")
     if conv.get("is_archived"):
         lines.append("Archived:    Yes")

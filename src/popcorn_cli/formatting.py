@@ -108,6 +108,22 @@ def fmt_message(msg: dict[str, Any]) -> str:
     return line
 
 
+def app_type(conv: dict[str, Any]) -> str:
+    """The channel's installed app type, or "" when it runs no app bundle.
+
+    Written at install time to the conversation's ``metadata['app_type']``, so a
+    channel that never had a bundle installed — and one whose bundle was
+    published without an ``app_type`` declared, which clears the tag — both read
+    as untagged here. `popcorn app list --channel <ch>` is the authoritative
+    answer for a single channel; this is the cheap one that comes back with
+    every channel in a list.
+    """
+    metadata = conv.get("metadata")
+    if not isinstance(metadata, dict):
+        return ""
+    return str(metadata.get("app_type") or "")
+
+
 def fmt_conversation(conv: dict[str, Any]) -> str:
     """Format a conversation for display."""
     name = conv.get("name") or "Unnamed"
@@ -123,6 +139,9 @@ def fmt_conversation(conv: dict[str, Any]) -> str:
     else:
         prefix = "#" if "channel" in conv_type else ""
         line = f"  {cyan(prefix + name)} {dim('(id: ' + cid + ')')}"
+        app = app_type(conv)
+        if app:
+            line += f" {yellow('[' + app + ']')}"
         if desc:
             line += f" \u2014 {desc[:80]}"
         return line
