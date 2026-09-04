@@ -1,4 +1,4 @@
-"""Check the five shipped backend templates — opt-in, skipped without them.
+"""Check the shipped backend templates — opt-in, skipped without them.
 
 **These are the fixtures that matter, and they cannot live in this repo.** The
 checker was written against the two bundles now under `tests/fixtures/bundles/`,
@@ -12,8 +12,14 @@ shipped.
 
 Vendoring copies here would fix that for exactly as long as it took the backend
 to change one, so this reads the real checkout instead: `popcorn-backend` at
-`lib/temporal/flows/`, or wherever `POPCORN_BACKEND_FLOWS` points. Absent, the
-module skips.
+`lib/apps/`, or wherever `POPCORN_BACKEND_FLOWS` points. Absent, the module
+skips.
+
+That pointer is load-bearing and fails silently when it rots: the bundles moved
+from `lib/temporal/flows/` to `lib/apps/` and this kept skipping, green and
+mute, because a skip on a missing checkout is indistinguishable from a skip on
+a moved one. If this file has not reported on a real bundle in a while, check
+the path before believing the silence.
 
 The consequence is real and worth stating plainly: **this does not run in CI.**
 CI's guard is the grammar-feature coverage in `test_template_check.py`, which is
@@ -32,7 +38,7 @@ import pytest
 from popcorn_core.template_check import check_bundle
 
 _ENV = "POPCORN_BACKEND_FLOWS"
-_DEFAULT = Path.home() / "popcorn" / "backend" / "lib" / "temporal" / "flows"
+_DEFAULT = Path.home() / "popcorn" / "backend" / "lib" / "apps"
 
 
 def _bundles() -> list[Path]:
@@ -67,7 +73,7 @@ def test_a_shipped_template_checks_clean(bundle: Path) -> None:
 def test_a_shipped_template_has_no_warnings_either(bundle: Path) -> None:
     """Separate from errors because the verdict differs.
 
-    All five are warning-clean today, so any new warning is news: either a real
+    They are warning-clean today, so any new warning is news: either a real
     defect in a template somebody shipped, or another gap in the checker's model
     of the DSL. Both want looking at; neither should be discovered by an author
     wading through noise.

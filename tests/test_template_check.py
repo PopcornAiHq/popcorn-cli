@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
-from popcorn_core.template_check import check_bundle
+from popcorn_core.template_check import TRIGGER_KEYS, check_bundle
 
 # ── a bundle that checks clean ────────────────────────────────────────
 
@@ -518,6 +518,34 @@ def test_schedule_without_a_trigger_can_never_fire(tmp_path):
     assert "schedule-no-trigger" in codes(write_bundle(tmp_path / "b", manifest=manifest))
 
 
+def test_schedule_declaring_both_cadences_is_rejected(tmp_path):
+    # The backend's resolve_schedule refuses a spec carrying both rather
+    # than silently dropping one, so a bundle declaring both cannot
+    # install. Without this check the author only found out during an
+    # install against a real channel (KEW-2155).
+    manifest = {
+        **CLEAN_MANIFEST,
+        "schedules": [{"flow": "sweep", "slug": "s", "interval": 300, "cron": "0 9 * * *"}],
+    }
+    found = codes(write_bundle(tmp_path / "b", manifest=manifest))
+    assert "schedule-two-triggers" in found
+    # The two cadence checks are independent: naming both must not also
+    # trip the "can never fire" one, which would read as contradictory
+    # advice in the same report.
+    assert "schedule-no-trigger" not in found
+
+
+def test_one_cadence_alone_trips_neither_cadence_check(tmp_path):
+    for i, cadence in enumerate(({"interval": 300}, {"cron": "0 9 * * *"})):
+        manifest = {
+            **CLEAN_MANIFEST,
+            "schedules": [{"flow": "sweep", "slug": "s", **cadence}],
+        }
+        found = codes(write_bundle(tmp_path / f"b{i}", manifest=manifest))
+        assert "schedule-two-triggers" not in found, cadence
+        assert "schedule-no-trigger" not in found, cadence
+
+
 def test_webhook_naming_an_unknown_flow(tmp_path):
     manifest = {**CLEAN_MANIFEST, "webhooks": [{"name": "In", "flow": "intak"}]}
     assert "webhook-unknown-flow" in codes(write_bundle(tmp_path / "b", manifest=manifest))
@@ -836,6 +864,40 @@ def test_an_unknown_trigger_key_is_an_error(tmp_path):
     flow = mutate(CLEAN_INTAKE, "post", args={"text": "$trigger.thread"})
     root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
     assert "unknown-trigger-key" in codes(root)
+
+
+def test_trigger_keys_match_what_the_interpreter_seeds(tmp_path):
+    """Guards the vendored TRIGGER_KEYS against backend drift.
+
+    `user_id` was missing here for long enough that three shipped bundles
+    reported `unknown-trigger-key` against a key the interpreter really
+    does seed — a false positive telling an author their correct flow was
+    broken. tests/test_backend_templates.py is what caught it, and that
+    file does not run in CI, so the closed set is pinned here too.
+
+    The expected set is written out rather than derived from
+    TRIGGER_KEYS: a test that loops over the set under test passes no
+    matter what is removed from it. Transcribed from the interpreter's
+    own `trigger={...}` dict; when that grows a key this fails until
+    someone copies it across. The durable fix is serving the shape
+    instead of vendoring it (KEW-2150).
+    """
+    assert {
+        "thread_id",
+        "message_id",
+        "user_id",
+        "conversation_id",
+        "thread_root",
+        "contact_id",
+        "workflow_id",
+        "run_id",
+    } == TRIGGER_KEYS
+    # And each one is actually accepted by the ref checker, not merely
+    # present in the constant.
+    for key in sorted(TRIGGER_KEYS):
+        flow = mutate(CLEAN_INTAKE, "post", args={"text": f"$trigger.{key}"})
+        root = write_bundle(tmp_path / f"b-{key}", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+        assert "unknown-trigger-key" not in codes(root), key
 
 
 def test_a_foreach_alias_shadows_a_global_root(tmp_path):
