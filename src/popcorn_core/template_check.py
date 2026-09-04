@@ -79,6 +79,12 @@ TRIGGER_KEYS = frozenset(
     {
         "thread_id",
         "message_id",
+        # The human whose turn triggered the run — None for scheduled,
+        # webhook and contact-scoped runs. Display-only identity; compose
+        # flows sign drafts with it via feature.email.sender_identity,
+        # which is what three shipped bundles were being flagged for
+        # while this set was missing it.
+        "user_id",
         "conversation_id",
         "thread_root",
         "contact_id",
@@ -469,6 +475,19 @@ class _Checker:
                         "schedule-no-trigger",
                         where,
                         "Schedule has neither `interval:` nor `cron:`, so it can never fire.",
+                    )
+                # At MOST one, as well as at least one. A schedule spec
+                # carrying both cadences has two, and the backend refuses
+                # rather than guess which the author meant to keep — so
+                # catching it here is the difference between a checker
+                # finding and an install against a real channel failing.
+                if sched.get("interval") and sched.get("cron"):
+                    self.err(
+                        "schedule-two-triggers",
+                        where,
+                        "Schedule declares both `interval:` and `cron:`. Exactly one "
+                        "cadence is allowed — the installer cannot pick between them "
+                        "and will refuse the schedule.",
                     )
 
         webhooks = manifest.get("webhooks")
