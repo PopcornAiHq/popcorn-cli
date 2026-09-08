@@ -1,4 +1,5 @@
-.PHONY: install install-local dev fmt lint typecheck test check ci clean release
+.PHONY: install install-local dev fmt lint typecheck test check ci clean release \
+	sync-rules check-rules
 
 # ── Setup ────────────────────────────────────────────────────────────
 
@@ -41,6 +42,21 @@ ci:  ## Non-mutating check for CI — same gates, but fails instead of fixing
 	uv run ruff format --check .
 	uv run mypy src/popcorn_core src/popcorn_cli
 	uv run pytest tests/
+
+# ── Generated flow rules ─────────────────────────────────────────────
+#
+# `src/popcorn_core/flow_rules.py` is generated from
+# `GET /customer-flows/schema`, which `popcorn template check` reads instead of
+# hand-copying the DSL's rules out of backend source. Both targets need
+# workspace-member credentials, which is why neither is part of `make ci` —
+# CI cannot reach the endpoint, so drift is caught here, by hand, and by the
+# longhand value assertions in tests/test_flow_rules.py.
+
+sync-rules:  ## Refresh the generated flow rules from the endpoint
+	uv run python scripts/sync_flow_rules.py
+
+check-rules:  ## Fail if the generated flow rules have drifted from the endpoint
+	uv run python scripts/sync_flow_rules.py --check
 
 # ── Version ──────────────────────────────────────────────────────────
 
