@@ -291,10 +291,19 @@ outputs:
 | `$trigger.*` | what triggered the run |
 | `as:` name | the current item inside a `foreach` |
 
-`$trigger` carries exactly `thread_id`, `message_id`, `conversation_id`,
-`thread_root`, `contact_id`, `workflow_id`, `run_id` — a closed set, so a typo
-in it is caught offline. `$channel` is not: its keys come from a per-channel
-config the bundle cannot see, which is why an unrecognized one is a warning.
+`$trigger` carries exactly `thread_id`, `message_id`, `user_id`,
+`conversation_id`, `thread_root`, `contact_id`, `workflow_id`, `run_id` — a
+closed set, so a typo in it is caught offline. Every key is always present; one
+that does not apply to the run's trigger kind (`user_id` on a scheduled run,
+say) resolves to null rather than erroring. `$channel` is not closed: its keys
+come from a per-channel config the bundle cannot see, which is why an
+unrecognized one is a warning.
+
+**Every dot-separated segment starts with a letter or underscore** and then
+carries only letters, digits and underscores. `$a.`, `$a..b` and `$a.1b` are
+not references at all — they resolve as literal strings at runtime, which is a
+silently wrong value rather than an error. A numeric segment is the one
+exception and means an array index (`$steps.x.output.rows.0.title`).
 
 **A `foreach` alias shadows every global root.** The interpreter resolves
 aliases first, deliberately, so `as: channel` or `as: trigger` keeps working.
@@ -362,6 +371,11 @@ step is **re-evaluated per item** in that item's scope, so `when: $row.Status
 
 `activity:`, `sleep_seconds:`, `await_approval:`, or a nested `steps:` block.
 Exactly one — the model rejects a step with two, or none.
+
+Blocks nest three lists deep, counting the flow's own `steps:` as the first —
+so a block inside a block is the deepest legal shape and a third level is
+rejected. `template check` reports it as `block-too-deep`; without that you
+would not hear about it until the install failed.
 
 ```yaml
   - id: maybe                     # a BLOCK: `when:` gates the whole group

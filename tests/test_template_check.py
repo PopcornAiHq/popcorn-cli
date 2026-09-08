@@ -667,6 +667,61 @@ def test_a_block_is_a_legal_step(tmp_path):
     assert check_bundle(root).findings == []
 
 
+def _nested_block_flow(depth: int) -> dict[str, Any]:
+    """A flow whose innermost step list sits at `depth`.
+
+    `depth=1` is a flow with no block at all, `depth=2` is one block, and each
+    further level wraps the last in another `steps:`. Counting the flow's own
+    list as 1 is the DSL tree validator's origin, so a `depth` here compares
+    directly against MAX_BLOCK_DEPTH.
+    """
+    step: dict[str, Any] = {
+        "id": "leaf",
+        "activity": "foundation.channel.post",
+        "args": {"channel_id": "$inputs.conversation_id", "text": "hi"},
+    }
+    for level in range(depth - 1, 0, -1):
+        step = {"id": f"block{level}", "steps": [step]}
+    return {
+        "name": "nested",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}},
+        "steps": [step],
+    }
+
+
+def test_a_block_at_the_nesting_cap_is_clean(tmp_path):
+    """A block inside a block is the deepest legal shape, and three of the
+    shipped bundles use it — so the cap has to be off-by-one exact or this
+    check is a false-positive generator against real templates."""
+    root = write_bundle(
+        tmp_path / "b", flows={"nested": _nested_block_flow(3)}, manifest=bare_manifest()
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_block_nested_past_the_cap_is_an_error(tmp_path):
+    """The rule the checker had no counterpart for at all: the endpoint serves
+    it, the DSL's model validator enforces it, and a bundle nesting past it
+    checked clean here and then failed at install."""
+    root = write_bundle(
+        tmp_path / "b", flows={"nested": _nested_block_flow(4)}, manifest=bare_manifest()
+    )
+    findings = check_bundle(root).findings
+    assert [f.code for f in findings] == ["block-too-deep"]
+    assert "block3" in findings[0].where
+
+
+def test_every_over_deep_block_is_reported_not_just_the_first(tmp_path):
+    """The DSL validator raises on the first one, so it can only ever name
+    one. An author fixing a bundle wants the whole list in one pass, which is
+    why the walk continues past the finding."""
+    root = write_bundle(
+        tmp_path / "b", flows={"nested": _nested_block_flow(5)}, manifest=bare_manifest()
+    )
+    assert [f.code for f in check_bundle(root).findings] == ["block-too-deep"] * 2
+
+
 @pytest.mark.parametrize(
     "step",
     [
@@ -830,6 +885,22 @@ def test_a_non_foreach_when_has_no_item_alias(tmp_path):
     flow = mutate(CLEAN_INTAKE, "post", when="$row.Status == 'firing'")
     root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
     assert "unknown-reference-root" in codes(root)
+
+
+@pytest.mark.parametrize("ref", ["$trigger.", "$trigger..thread_id", "$trigger.1bad"])
+def test_a_path_segment_must_start_with_a_letter_or_underscore(tmp_path, ref):
+    """The divergence that made this whole snapshot worth building.
+
+    The vendored grammar allowed dots and digits anywhere after the first
+    character, so all three of these matched, and the checker then reported
+    something about the KEY — telling an author the path was fine and the name
+    was wrong. The interpreter rejects the path outright: a segment that does
+    not start with a letter or underscore never parses as a reference, so the
+    whole value resolves as a literal string at runtime.
+    """
+    flow = mutate(CLEAN_INTAKE, "post", args={"text": ref})
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert [f.code for f in check_bundle(root).findings] == ["malformed-reference"]
 
 
 def test_a_numeric_segment_is_an_array_index(tmp_path):

@@ -10,9 +10,9 @@ popcorn-cli/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
 ├── tests/                     ← pytest (~590 tests)
-├── scripts/                   ← test-install.sh (Docker-based install tests)
+├── scripts/                   ← test-install.sh (Docker install tests), sync_flow_rules.py
 ├── pyproject.toml             ← Single package config
-├── Makefile                   ← fmt, lint, typecheck, test, check, dev
+├── Makefile                   ← fmt, lint, typecheck, test, check, dev, sync-rules
 └── .pre-commit-config.yaml
 ```
 
@@ -98,9 +98,40 @@ says.
 
 The line is *catalog vs grammar*. It must know the DSL's shape — a step is one
 of `activity`/`sleep_seconds`/`await_approval`/`steps`, a block's inner ids are
-private, `$trigger` has seven keys, `collect:` publishes a second name — because
-without that it cannot tell a reference from a typo. It must not know what
-`foundation.store.upsert_rows` takes.
+private, `$trigger` is a closed key set, `collect:` publishes a second name —
+because without that it cannot tell a reference from a typo. It must not know
+what `foundation.store.upsert_rows` takes.
+
+**The shape is generated, not authored.** `src/popcorn_core/flow_rules.py` is a
+snapshot of `GET /customer-flows/schema`, written by
+`scripts/sync_flow_rules.py`; the checker imports it and nothing else beyond
+stdlib, so `template check` stays offline — no server, no channel, no
+credentials, identical findings on every machine, which is what `--strict` in
+CI has to guarantee.
+
+```
+backend: lib/temporal/dsl/schema.py — flow_document_schema
+   │  GET /api/customer-flows/schema
+   ▼
+scripts/sync_flow_rules.py  (make sync-rules / make check-rules)
+   │  renders, deterministically — no timestamp, so no diff means no change
+   ▼
+src/popcorn_core/flow_rules.py   ← GENERATED, do not edit
+   │  import
+   ▼
+src/popcorn_core/template_check.py
+```
+
+Do not hand-edit the generated module, and do not re-vendor a rule it already
+carries. `make check-rules` fetches and fails on any diff, including a
+hand-edit; it needs credentials, so it cannot run in CI and is a
+before-a-release check instead. A newly served rule makes the script **fail**
+rather than skip, so a rule the checker does not consume forces a decision.
+
+Two rules were live divergences when this landed, both under-warns: the
+reference grammar accepted `$a.`, `$a..b` and `$a.1b`, which the interpreter
+rejects, and `max_block_depth` had no counterpart at all, so a block nested
+past the cap checked clean and failed at install (`block-too-deep`).
 
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,
@@ -111,16 +142,17 @@ about its grammar. A near-miss reimplementation is worse than no check: the
 Finding `code` values are a stable contract (CI and agents branch on them);
 renaming one is a minor version bump.
 
-Three test layers, and the gap at the bottom is deliberate:
+Four test layers, and the gap at the bottom is deliberate:
 
 | | Runs | Guards |
 |---|---|---|
 | `tests/test_fixture_bundles.py` | CI | every `tests/fixtures/bundles/*/`, so a new bundle is gated the moment it is added |
 | `tests/test_template_check.py` | CI | one grammar feature per test, derived from what real templates do |
-| `tests/test_backend_templates.py` | **local only** | the five shipped `popcorn-backend` templates, read from the real checkout |
+| `tests/test_flow_rules.py` | CI | every generated rule, asserted longhand, plus the generator's own failure modes |
+| `tests/test_backend_templates.py` | **local only** | the shipped `popcorn-backend` bundles, read from the real checkout |
 
 The last one skips without a backend checkout (`POPCORN_BACKEND_FLOWS`, or
-`~/popcorn/backend/lib/temporal/flows`), so **it does not run in CI** — vendoring
+`~/popcorn/backend/lib/apps`), so **it does not run in CI** — vendoring
 copies would rot within a release. It exists because the checker shipped with
 ~180 false positives against those templates while passing everything in this
 repo: the fixture bundles use no block, no `collect:`, no expression-rail

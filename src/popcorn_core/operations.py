@@ -856,6 +856,20 @@ def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> 
     )
 
 
+def get_flow_schema(client: APIClient) -> dict[str, Any]:
+    """The flow document's rules — what a flow may CONTAIN.
+
+    The complement to the activity catalog, which answers what an activity
+    takes and returns. Static and identical for every workspace, so it is
+    workspace-member gated with no conversation scope.
+
+    Read by `scripts/sync_flow_rules.py`, not at check time: `template check`
+    is offline by contract and reads the generated `popcorn_core.flow_rules`
+    snapshot instead, so its findings do not depend on credentials or network.
+    """
+    return client.get("/api/customer-flows/schema")
+
+
 def list_activity_catalog(
     client: APIClient,
     conversation: str | None = None,
