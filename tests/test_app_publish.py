@@ -472,16 +472,16 @@ class TestForkLineReach:
     """A publish is workspace-scoped in effect; the output has to say so."""
 
     def test_reports_the_other_channels_and_the_version(self):
-        note = fork_line_reach({"other_channels_on_line": 6, "semver": "0.2.1"})
+        note = fork_line_reach({"other_channels_converging": 6, "semver": "0.2.1"})
         assert "6 other channels" in note
         assert "0.2.1" in note
 
     def test_says_channel_singular_for_one(self):
-        note = fork_line_reach({"other_channels_on_line": 1, "semver": "0.2.1"})
+        note = fork_line_reach({"other_channels_converging": 1, "semver": "0.2.1"})
         assert "1 other channel " in note
 
     def test_silent_when_the_publisher_is_the_only_channel(self):
-        assert fork_line_reach({"other_channels_on_line": 0, "semver": "0.2.1"}) == ""
+        assert fork_line_reach({"other_channels_converging": 0, "semver": "0.2.1"}) == ""
 
     def test_silent_when_the_server_did_not_send_a_count(self):
         """A popcorn newer than the API must not claim a reach of zero.
@@ -490,7 +490,7 @@ class TestForkLineReach:
         facts, and the first reads as "this affects only you".
         """
         assert fork_line_reach({"semver": "0.2.1"}) == ""
-        assert fork_line_reach({"other_channels_on_line": None}) == ""
+        assert fork_line_reach({"other_channels_converging": None}) == ""
 
 
 class TestPublishCommand:
@@ -582,7 +582,7 @@ class TestPublishCommand:
         _checkout(tmp_path, base)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
 
-        rec = _Recorder(other_channels_on_line=6, semver="0.2.1")
+        rec = _Recorder(other_channels_converging=6, semver="0.2.1")
         captured = {}
         from popcorn_cli.commands import app as mod
 
@@ -599,14 +599,14 @@ class TestPublishCommand:
 
         assert "6 other channels on this fork line" in captured["rendered"]
         # The raw count rides through to --json for an agent to branch on.
-        assert captured["data"]["other_channels_on_line"] == 6
+        assert captured["data"]["other_channels_converging"] == 6
 
     def test_output_stays_quiet_when_no_other_channel_is_on_the_line(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
 
-        rec = _Recorder(other_channels_on_line=0)
+        rec = _Recorder(other_channels_converging=0)
         captured = {}
         from popcorn_cli.commands import app as mod
 

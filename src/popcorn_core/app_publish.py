@@ -339,17 +339,21 @@ def fork_line_reach(result: dict[str, Any]) -> str:
     """What a publish changes beyond the channel it was run from.
 
     A publish is channel-scoped in permission but workspace-scoped in effect:
-    every other channel bound to the fork line converges on the new head
-    within a day, through its own auto-update schedule. Reported because the
-    line that follows — "Installing on this channel" — is true of the install
-    and false of the publish, and a caller relaying only that tells its reader
-    one channel changed.
+    every other channel on the fork line picks the new head up within a day,
+    through its own auto-update schedule. Reported because the line that
+    follows — "Installing on this channel" — is true of the install and false
+    of the publish, and a caller relaying only that tells its reader one
+    channel changed.
+
+    The server counts only the channels that will actually converge: one that
+    is archived or has pinned its app is bound to the line but never receives
+    the publish.
 
     Empty when the server did not send a count. A popcorn newer than the API
     it is talking to must say nothing here rather than claim a reach of zero,
     which would be the same sentence as "this affects only you".
     """
-    count = result.get("other_channels_on_line")
+    count = result.get("other_channels_converging")
     if not isinstance(count, int) or count <= 0:
         return ""
     channels = "channel" if count == 1 else "channels"
