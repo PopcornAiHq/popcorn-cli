@@ -40,6 +40,7 @@ from popcorn_core.app_checkout import (
 from popcorn_core.app_publish import (
     collect_tree,
     diff_tree,
+    fork_line_reach,
     ignored_note,
     local_digest,
     manifest_version,
@@ -336,6 +337,9 @@ def _app_publish(args: argparse.Namespace) -> None:
         rendered.append(ignored_note(local.ignored))
     if diff.preserved:
         rendered.append(preserved_note(diff.preserved))
+    reach = fork_line_reach(result)
+    if reach:
+        rendered.append(reach)
     if result.get("install_workflow_id"):
         rendered.append(f"Installing on this channel: {result['install_workflow_id']}")
         rendered.append("Next: popcorn app status")

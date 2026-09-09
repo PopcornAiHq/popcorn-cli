@@ -30,6 +30,7 @@ from popcorn_core.app_checkout import (
 from popcorn_core.app_publish import (
     collect_tree,
     diff_tree,
+    fork_line_reach,
     manifest_version,
     parse_semver,
     publish_payload,
@@ -467,6 +468,31 @@ def _run_publish(tmp_path, files_response, recorder, args):
         mod._app_publish(args)
 
 
+class TestForkLineReach:
+    """A publish is workspace-scoped in effect; the output has to say so."""
+
+    def test_reports_the_other_channels_and_the_version(self):
+        note = fork_line_reach({"other_channels_on_line": 6, "semver": "0.2.1"})
+        assert "6 other channels" in note
+        assert "0.2.1" in note
+
+    def test_says_channel_singular_for_one(self):
+        note = fork_line_reach({"other_channels_on_line": 1, "semver": "0.2.1"})
+        assert "1 other channel " in note
+
+    def test_silent_when_the_publisher_is_the_only_channel(self):
+        assert fork_line_reach({"other_channels_on_line": 0, "semver": "0.2.1"}) == ""
+
+    def test_silent_when_the_server_did_not_send_a_count(self):
+        """A popcorn newer than the API must not claim a reach of zero.
+
+        "0 other channels" and "the server never told me" are different
+        facts, and the first reads as "this affects only you".
+        """
+        assert fork_line_reach({"semver": "0.2.1"}) == ""
+        assert fork_line_reach({"other_channels_on_line": None}) == ""
+
+
 class TestPublishCommand:
     def test_publishes_the_diff_and_moves_the_baseline(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0"), "alert.yaml": "name: alert\n"}
@@ -550,6 +576,52 @@ class TestPublishCommand:
             _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
         assert "code/Calc/main.py" in str(exc.value)
         assert rec.calls == []
+
+    def test_output_names_the_channels_a_publish_will_reach(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+
+        rec = _Recorder(other_channels_on_line=6, semver="0.2.1")
+        captured = {}
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            patch.object(operations, "publish_channel_app", rec),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path)))
+
+        assert "6 other channels on this fork line" in captured["rendered"]
+        # The raw count rides through to --json for an agent to branch on.
+        assert captured["data"]["other_channels_on_line"] == 6
+
+    def test_output_stays_quiet_when_no_other_channel_is_on_the_line(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+
+        rec = _Recorder(other_channels_on_line=0)
+        captured = {}
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(rendered=rendered),
+            ),
+            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            patch.object(operations, "publish_channel_app", rec),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path)))
+
+        assert "fork line" not in captured["rendered"]
 
     def test_refuses_a_product_bound_checkout(self, tmp_path):
         """The fix is a different command, which the server's 409 cannot say."""

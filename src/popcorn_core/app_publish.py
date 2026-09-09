@@ -335,6 +335,30 @@ def diff_tree(base: dict[str, str], local: dict[str, str]) -> TreeDiff:
     return diff
 
 
+def fork_line_reach(result: dict[str, Any]) -> str:
+    """What a publish changes beyond the channel it was run from.
+
+    A publish is channel-scoped in permission but workspace-scoped in effect:
+    every other channel bound to the fork line converges on the new head
+    within a day, through its own auto-update schedule. Reported because the
+    line that follows — "Installing on this channel" — is true of the install
+    and false of the publish, and a caller relaying only that tells its reader
+    one channel changed.
+
+    Empty when the server did not send a count. A popcorn newer than the API
+    it is talking to must say nothing here rather than claim a reach of zero,
+    which would be the same sentence as "this affects only you".
+    """
+    count = result.get("other_channels_on_line")
+    if not isinstance(count, int) or count <= 0:
+        return ""
+    channels = "channel" if count == 1 else "channels"
+    return (
+        f"{count} other {channels} on this fork line will converge on "
+        f"{result.get('semver') or 'this version'} within a day."
+    )
+
+
 def preserved_note(preserved: list[str]) -> str:
     """Reported, never silent: this CLI is behind the bundle format."""
     return (
