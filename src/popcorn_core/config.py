@@ -132,6 +132,12 @@ OAUTH_CALLBACK_PORT = 28771  # Fixed port for Clerk redirect URI (ASCII "pc")
 
 @dataclass
 class Profile:
+    # The key this profile is stored under in `Config.profiles`. Not
+    # serialised — the JSON object key already carries it — but a profile that
+    # travels alone (into APIClient, say) has no other way to name its own
+    # slot, and writing a refreshed token back to the wrong slot overwrites
+    # another environment's credentials.
+    name: str = ""
     api_url: str = ""
     clerk_issuer: str = ""
     clerk_client_id: str = ""
@@ -170,8 +176,12 @@ class Config:
 
     def active_profile(self) -> Profile:
         if self.default_profile not in self.profiles:
-            self.profiles[self.default_profile] = Profile()
-        return self.profiles[self.default_profile]
+            self.profiles[self.default_profile] = Profile(name=self.default_profile)
+        profile = self.profiles[self.default_profile]
+        # Stamp the name on every access so the dict key stays authoritative,
+        # including for a Config assembled in memory rather than loaded.
+        profile.name = self.default_profile
+        return profile
 
 
 def load_config() -> Config:
@@ -206,7 +216,9 @@ def load_config() -> Config:
                                 "available. Run: popcorn auth login"
                             )
                         pdata[fld] = val or ""
-            cfg.profiles[name] = Profile.from_dict(pdata)
+            profile = Profile.from_dict(pdata)
+            profile.name = name
+            cfg.profiles[name] = profile
         return cfg
     except (KeyError, TypeError, AttributeError) as e:
         raise PopcornError(

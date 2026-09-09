@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import os
 import time
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -71,10 +72,7 @@ class APIClient:
             claims = jwt.decode(self.profile.id_token, options={"verify_signature": False})
             self.profile.expires_at = claims.get("exp", 0)
 
-            # Persist refreshed tokens
-            cfg = load_config()
-            cfg.profiles[cfg.default_profile] = self.profile
-            save_config(cfg)
+            self._persist_tokens()
         except AuthError:
             raise
         except httpx.HTTPError as e:
@@ -83,6 +81,37 @@ class APIClient:
             raise AuthError(
                 f"Token refresh failed ({type(e).__name__}: {e}). Run: popcorn auth login"
             ) from e
+
+    def _persist_tokens(self) -> None:
+        """Write the refreshed tokens back to this profile's own slot.
+
+        Keyed by `profile.name` rather than the config file's
+        `default_profile`, and copying only the four token fields, because
+        both halves were wrong and combined into one silent credential
+        clobber: `-e/--env` selects a profile in memory without writing the
+        selection to disk, so keying by the file's default wrote the active
+        environment's credentials — endpoints and all — over a *different*
+        environment's slot; and assigning the whole `Profile` also made
+        in-memory overrides like `--workspace` permanent. The issuer gate in
+        `_token` cannot catch either, since the clobbered slot stays
+        internally consistent.
+        """
+        if not self.profile.name:
+            # A hand-built profile (proxy mode, tests) names no slot. Proxy
+            # mode never refreshes; nothing else has a slot to write to.
+            return
+        cfg = load_config()
+        stored = cfg.profiles.get(self.profile.name)
+        if stored is None:
+            # The slot is gone — config deleted or rewritten mid-run. Nothing
+            # to preserve, so recreate it from the live profile.
+            cfg.profiles[self.profile.name] = replace(self.profile)
+        else:
+            stored.id_token = self.profile.id_token
+            stored.access_token = self.profile.access_token
+            stored.refresh_token = self.profile.refresh_token
+            stored.expires_at = self.profile.expires_at
+        save_config(cfg)
 
     def _headers(self) -> dict[str, str]:
         token = self._token()
