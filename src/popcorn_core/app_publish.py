@@ -33,12 +33,15 @@ from typing import Any
 
 import yaml
 
+from . import flow_rules
 from .app_checkout import BASELINE_FILE, tree_digest
 from .errors import PopcornError
 
-# One level under these seeds a channel_parameter of the same name; nothing
-# else may be a directory in a bundle.
-FILES_SUBDIRS = ("prompts", "templates")
+# One level under these seeds a channel_parameter of the same name. Read from
+# the served rules rather than restated: this is the same `bundle.subdirs` the
+# checker consumes, and a second hand-written copy of a served rule is the
+# thing KEW-2192 set out to end.
+FILES_SUBDIRS = flow_rules.SUBDIRS
 MANIFEST_FILENAMES = ("manifest.yaml", "config.yaml")
 _DOC_FILENAMES = ("AGENT.md", "README.md")
 # Byproducts, never authored content — the only paths skipped without comment.
@@ -67,22 +70,47 @@ def _is_bundle_file(filename: str) -> bool:
     return filename.endswith((".yaml", ".yml"))
 
 
+def _is_code_block_path(parts: list[str]) -> bool:
+    """`code/<block>/…` with a slug block name and no hidden segment below it.
+
+    The server's `_is_code_block_path`, applied to the same rules this CLI now
+    reads from the endpoint. Any depth below the block, unlike a subdir file's
+    exact depth: a block may be a small package rather than a single file.
+    """
+    return (
+        len(parts) >= flow_rules.CODE_MIN_PATH_DEPTH
+        and parts[0] == flow_rules.CODE_SUBDIR
+        and bool(re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, parts[1]))
+        and all(re.match(flow_rules.CODE_PATH_SEGMENT_PATTERN, seg) for seg in parts[2:])
+    )
+
+
 def recognized(path: str) -> bool:
-    """Whether this CLI would collect `path` from disk.
+    """Whether this CLI understands `path` as installable bundle content.
 
     Applied to SERVED paths as well as local ones, which is the point: the
     server may publish a shape this CLI predates — another `_FILES_SUBDIRS`
-    entry is the obvious candidate — and a path we cannot collect is one we
+    entry is the obvious candidate — and a path we cannot classify is one we
     must not claim the user deleted.
+
+    Deliberately STRICTER than `collect_tree` under `code/`, which collects a
+    misplaced path so publish can refuse it by name. The two answer different
+    questions: collection is permissive so a mistake is loud, recognition is
+    strict so a blind spot is never mistaken for a deletion. Nothing served
+    can currently land in the gap — the server refuses to publish such a tree
+    — but a future block shape this snapshot predates would, and preserving
+    it beats deleting it.
     """
     if "/" not in path:
         return _is_bundle_file(path)
     parts = path.split("/")
+    if parts[0] == flow_rules.CODE_SUBDIR:
+        return _is_code_block_path(parts)
     return (
-        len(parts) == 2
+        len(parts) == flow_rules.SUBDIR_PATH_DEPTH
         and parts[0] in FILES_SUBDIRS
-        and bool(parts[1])
-        and not parts[1].startswith(".")
+        and bool(parts[-1])
+        and not parts[-1].startswith(".")
     )
 
 
@@ -106,6 +134,10 @@ def collect_tree(directory: Path) -> LocalTree:
     which the caller prints — an authoring directory legitimately holds
     fixtures and notes, and refusing them would reject the very examples the
     CLI docs ship.
+
+    `code/` is the exception to that filtering, and to the one-level rule: it
+    is walked in FULL, misplacements included, because the server's collector
+    does the same and for the same reason — see `_walk_code_dir`.
     """
     tree = LocalTree()
     if not directory.is_dir():
@@ -115,6 +147,10 @@ def collect_tree(directory: Path) -> LocalTree:
         if entry.name.startswith(".") or entry.name in _SILENT_SKIPS:
             continue
         if entry.is_dir():
+            if entry.name == flow_rules.CODE_SUBDIR:
+                for child in _walk_code_dir(entry):
+                    tree.files[child.relative_to(directory).as_posix()] = _read_text(child)
+                continue
             if entry.name not in FILES_SUBDIRS:
                 tree.ignored.append(f"{entry.name}/")
                 continue
@@ -136,6 +172,58 @@ def collect_tree(directory: Path) -> LocalTree:
             continue
         tree.files[entry.name] = _read_text(entry)
     return tree
+
+
+def _walk_code_dir(root: Path) -> list[Path]:
+    """Every non-hidden file under a code directory, at any depth.
+
+    Recursive, and deliberately unfiltered past dotfiles and `__pycache__`: a
+    misplaced entry — a loose `code/loose.py`, a block directory named `Calc`
+    — has to survive collection to reach `unrecognized_code_paths`. The
+    server's `bundle_file_tree` keeps one for the same reason, so that
+    `validate_code_blocks` can refuse it; dropping it here instead would
+    publish a half-block and call the publish a success.
+    """
+    found: list[Path] = []
+    for child in sorted(root.iterdir(), key=lambda p: p.name):
+        if child.name.startswith(".") or child.name in _SILENT_SKIPS:
+            continue
+        if child.is_dir():
+            found.extend(_walk_code_dir(child))
+        elif child.is_file():
+            found.append(child)
+    return found
+
+
+def unrecognized_code_paths(files: dict[str, str]) -> list[str]:
+    """Collected `code/` paths the installer would never read.
+
+    The local half of the server's `unrecognized_tree_paths`, narrowed to
+    `code/` because that is the only classification `collect_tree` collects
+    without filtering — every other misplacement lands in `ignored` and is
+    never sent, so it has nothing to refuse.
+
+    Publish refuses these rather than letting the server do it. The round trip
+    is avoidable, and the server's message cannot name the directory the
+    author is standing in.
+    """
+    return [
+        path
+        for path in sorted(files)
+        if path.split("/")[0] == flow_rules.CODE_SUBDIR and not _is_code_block_path(path.split("/"))
+    ]
+
+
+def unrecognized_code_note(paths: list[str]) -> str:
+    """Why those paths block a publish — shared so `app status` warns in the
+    same words `app publish` refuses in."""
+    return (
+        "Not readable as block source: "
+        + ", ".join(paths)
+        + f" (code ships one directory per block — {flow_rules.CODE_SUBDIR}/<block>/<file>, "
+        "the block name a lowercase slug, no hidden segment below it). "
+        "Publish refuses a tree carrying one."
+    )
 
 
 def _read_text(path: Path) -> str:

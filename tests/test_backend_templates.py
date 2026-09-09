@@ -35,6 +35,8 @@ from pathlib import Path
 
 import pytest
 
+from popcorn_core.app_publish import collect_tree, unrecognized_code_paths
+from popcorn_core.flow_rules import CODE_SUBDIR
 from popcorn_core.template_check import check_bundle
 
 _ENV = "POPCORN_BACKEND_FLOWS"
@@ -80,3 +82,25 @@ def test_a_shipped_template_has_no_warnings_either(bundle: Path) -> None:
     """
     report = check_bundle(bundle)
     assert report.warnings == [], [str(f) for f in report.warnings]
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)
+def test_a_shipped_templates_code_blocks_are_publishable(bundle: Path) -> None:
+    """`app publish` must read the block source the server reads.
+
+    The same argument as the checks above, applied to the publish path: a
+    bundle shape nobody wrote a fixture for is one this CLI silently declines
+    to publish. `codeblockshowcase` was exactly that — five blocks, eight
+    files, the whole of `code/` landing in `ignored` — so an author could edit
+    a block, publish, and be told it worked.
+
+    Not asserted: `ignored == []`. `claimcoordinator` ships an `evals/`
+    directory that both collectors skip by design, and demanding an empty
+    `ignored` would call that a defect.
+    """
+    tree = collect_tree(bundle)
+    assert [p for p in tree.ignored if p.startswith(CODE_SUBDIR)] == []
+    assert unrecognized_code_paths(tree.files) == []
+    on_disk = (bundle / CODE_SUBDIR).is_dir()
+    collected = any(p.startswith(f"{CODE_SUBDIR}/") for p in tree.files)
+    assert collected == on_disk
