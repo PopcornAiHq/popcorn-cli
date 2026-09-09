@@ -26,7 +26,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from popcorn_core import operations
+from popcorn_core import flow_rules, operations
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
     Baseline,
@@ -47,6 +47,8 @@ from popcorn_core.app_publish import (
     preserved_note,
     publish_payload,
     require_bump,
+    unrecognized_code_note,
+    unrecognized_code_paths,
 )
 from popcorn_core.errors import PopcornError
 from popcorn_core.resolve import resolve_conversation
@@ -284,6 +286,16 @@ def _app_publish(args: argparse.Namespace) -> None:
         )
 
     local = collect_tree(directory)
+    # Refused before the round trip: the server rejects the whole tree over
+    # one such path, and its message cannot name the working copy the author
+    # is standing in.
+    unpublishable = unrecognized_code_paths(local.files)
+    if unpublishable:
+        raise PopcornError(
+            unrecognized_code_note(unpublishable),
+            error_code="validation",
+            hint=f"move each one under {flow_rules.CODE_SUBDIR}/<block>/, or delete it",
+        )
     version = manifest_version(local.files)
     resp = _fetch_base(client, conversation, baseline)
     diff = diff_tree(files_from_response(resp), local.files)
@@ -373,6 +385,7 @@ def _app_status(args: argparse.Namespace) -> None:
     conversation = _channel_of(args, baseline)
 
     local = collect_tree(directory)
+    unpublishable = unrecognized_code_paths(local.files)
     resp = operations.get_channel_app_files(client, conversation)
     base_files = files_from_response(resp)
     # Diffed against the CHANNEL's tree, not the baseline's digest: status is
@@ -397,6 +410,7 @@ def _app_status(args: argparse.Namespace) -> None:
         "deleted": diff.deletes,
         "ignored": local.ignored,
         "preserved": diff.preserved,
+        "unpublishable": unpublishable,
     }
 
     lines = [
@@ -423,6 +437,9 @@ def _app_status(args: argparse.Namespace) -> None:
     if local.ignored:
         lines.append("")
         lines.append(ignored_note(local.ignored))
+    if unpublishable:
+        lines.append("")
+        lines.append(unrecognized_code_note(unpublishable))
     if diff.preserved:
         lines.append("")
         lines.append(preserved_note(diff.preserved))

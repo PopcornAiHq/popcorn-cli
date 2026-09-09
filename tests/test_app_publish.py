@@ -34,6 +34,7 @@ from popcorn_core.app_publish import (
     parse_semver,
     publish_payload,
     require_bump,
+    unrecognized_code_paths,
 )
 from popcorn_core.errors import PopcornError
 
@@ -194,6 +195,72 @@ class TestCollectTree:
         _checkout(tmp_path, {"manifest.yaml": _manifest(), "prompts/a/b.md.j2": "x\n"})
         assert collect_tree(tmp_path).ignored == ["prompts/a/"]
 
+    def test_collects_a_code_block_at_any_depth(self, tmp_path):
+        """The bug this fixes: `code/` was appended to `ignored` and dropped.
+
+        An author could check a block out, edit it, publish, and see no
+        change. Depth is a FLOOR under `code/`, not the exact two levels a
+        prompts/ file gets, because a block may be a small package.
+        """
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "code/calc/main.py": "print(1)\n",
+                "code/calc/lib/util.py": "x = 1\n",
+                "code/other-block/index.js": "0\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert tree.ignored == []
+        assert set(tree.files) == {
+            "manifest.yaml",
+            "code/calc/main.py",
+            "code/calc/lib/util.py",
+            "code/other-block/index.js",
+        }
+
+    def test_skips_hidden_and_pycache_below_a_block(self, tmp_path):
+        """The same filter the server's walker applies, and for the reason
+        `template_check` documents: publish refuses a tree carrying a hidden
+        block entry, so never collecting one keeps the CLI from minting it."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "code/calc/main.py": "print(1)\n",
+                "code/calc/.env": "SECRET=1\n",
+                "code/calc/__pycache__/main.pyc": "junk\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert set(tree.files) == {"manifest.yaml", "code/calc/main.py"}
+        assert tree.ignored == []
+
+    def test_keeps_a_misplaced_code_path_for_the_refusal(self, tmp_path):
+        """Collected, not filtered — the server's `bundle_file_tree` keeps a
+        loose `code/x.py` for the same reason: dropping it here would publish
+        a half-block and report success."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "code/loose.py": "x\n",
+                "code/Calc/main.py": "x\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert "code/loose.py" in tree.files
+        assert "code/Calc/main.py" in tree.files
+        assert unrecognized_code_paths(tree.files) == ["code/Calc/main.py", "code/loose.py"]
+
+    def test_a_legal_block_tree_has_nothing_to_refuse(self, tmp_path):
+        _checkout(
+            tmp_path,
+            {"manifest.yaml": _manifest(), "code/calc/lib/deep/util.py": "x\n"},
+        )
+        assert unrecognized_code_paths(collect_tree(tmp_path).files) == []
+
     def test_refuses_a_binary_file_by_name(self, tmp_path):
         _checkout(tmp_path, {"manifest.yaml": _manifest()})
         (tmp_path / "prompts").mkdir()
@@ -243,6 +310,26 @@ class TestDiffTree:
         diff = diff_tree(base, {"manifest.yaml": "1"})
         assert diff.deletes == []
         assert diff.preserved == ["schemas/alert.json"]
+
+    def test_a_deleted_block_file_is_a_deletion(self):
+        """`code/` is collected now, so its absence is a real deletion —
+        before the fix every block path fell through to `preserved`."""
+        base = {"manifest.yaml": "1", "code/calc/main.py": "x", "code/calc/lib/util.py": "y"}
+        diff = diff_tree(base, {"manifest.yaml": "1", "code/calc/main.py": "x"})
+        assert diff.deletes == ["code/calc/lib/util.py"]
+        assert diff.preserved == []
+
+    def test_a_served_block_shape_this_cli_cannot_classify_is_preserved(self):
+        """Recognition stays stricter than collection under `code/`.
+
+        Nothing served can reach this today — the server refuses to publish
+        such a tree — but a block shape a stale `flow_rules` predates would,
+        and preserving it beats deleting it.
+        """
+        base = {"manifest.yaml": "1", "code/singlefile.py": "x"}
+        diff = diff_tree(base, {"manifest.yaml": "1"})
+        assert diff.deletes == []
+        assert diff.preserved == ["code/singlefile.py"]
 
     def test_a_recognized_absence_is_still_a_deletion(self):
         """The guard must not swallow the ordinary case."""
@@ -412,6 +499,58 @@ class TestPublishCommand:
         _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
         assert rec.calls[0][1]["deletes"] == ["old.yaml"]
 
+    def test_sends_an_edited_code_block(self, tmp_path):
+        """The end-to-end shape of the bug: checkout, edit a block, publish.
+
+        Before this, the edit never reached `files` and the publish reported
+        success having changed nothing.
+        """
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "code/calc/main.py": "print(1)\n",
+            "code/calc/lib/util.py": "x = 1\n",
+        }
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "code" / "calc" / "main.py").write_text("print(2)\n")
+
+        rec = _Recorder()
+        _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+
+        payload = rec.calls[0][1]
+        assert set(payload["files"]) == {"manifest.yaml", "code/calc/main.py"}
+        assert payload["files"]["code/calc/main.py"] == "print(2)\n"
+        assert payload["deletes"] == []
+
+    def test_refuses_a_misplaced_code_path_before_the_round_trip(self, tmp_path):
+        """The server rejects the whole tree over one such path; its message
+        cannot name the working copy the author is standing in."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "code").mkdir()
+        (tmp_path / "code" / "loose.py").write_text("x\n")
+
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+        assert "code/loose.py" in str(exc.value)
+        assert "code/<block>/" in str(exc.value.hint or "")
+        assert rec.calls == []
+
+    def test_refuses_a_block_name_that_is_not_a_slug(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "code" / "Calc").mkdir(parents=True)
+        (tmp_path / "code" / "Calc" / "main.py").write_text("x\n")
+
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+        assert "code/Calc/main.py" in str(exc.value)
+        assert rec.calls == []
+
     def test_refuses_a_product_bound_checkout(self, tmp_path):
         """The fix is a different command, which the server's 409 cannot say."""
         _checkout(tmp_path, {"manifest.yaml": _manifest()}, kind="product")
@@ -550,6 +689,17 @@ class TestStatusCommand:
         )
         assert out["data"]["in_sync"] is False
         assert "0.3.0" in out["rendered"]
+
+    def test_flags_a_misplaced_code_path_without_refusing(self, tmp_path):
+        """status must not refuse the way publish does — it is the command
+        you run to find out why publish will."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "code").mkdir()
+        (tmp_path / "code" / "loose.py").write_text("x")
+        out = self._run(tmp_path, _files_response(base), _args(directory=str(tmp_path)))
+        assert out["data"]["unpublishable"] == ["code/loose.py"]
+        assert "code/loose.py" in out["rendered"]
 
     def test_flags_paths_that_will_not_be_published(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0")}
