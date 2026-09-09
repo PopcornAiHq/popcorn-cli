@@ -49,6 +49,18 @@ class TestConfig:
         cfg.profiles["default"] = Profile(email="a@b.com")
         assert cfg.active_profile().email == "a@b.com"
 
+    def test_active_profile_stamps_the_slot_name(self):
+        # A profile that travels alone (into APIClient) must be able to name
+        # the slot it came from, or a refreshed token lands in another
+        # environment's credentials.
+        cfg = Config(default_profile="dev")
+        cfg.profiles["dev"] = Profile(email="a@b.com")
+        assert cfg.active_profile().name == "dev"
+
+    def test_active_profile_names_the_slot_it_creates(self):
+        cfg = Config(default_profile="staging")
+        assert cfg.active_profile().name == "staging"
+
 
 class TestLoadSave:
     def test_load_missing_file(self, tmp_path, monkeypatch):
@@ -56,6 +68,24 @@ class TestLoadSave:
         cfg = load_config()
         assert isinstance(cfg, Config)
         assert cfg.default_profile == "default"
+
+    def test_load_names_every_profile_after_its_key(self, tmp_path, monkeypatch):
+        config_file = tmp_path / "auth.json"
+        monkeypatch.setattr("popcorn_core.config.CONFIG_DIR", tmp_path)
+        monkeypatch.setattr("popcorn_core.config.CONFIG_FILE", config_file)
+        monkeypatch.setattr("popcorn_core.config._keyring_available", False)
+
+        cfg = Config(default_profile="prod")
+        cfg.profiles["prod"] = Profile(email="a@b.com")
+        cfg.profiles["dev"] = Profile(email="a@b.com")
+        save_config(cfg)
+
+        loaded = load_config()
+        assert loaded.profiles["prod"].name == "prod"
+        assert loaded.profiles["dev"].name == "dev"
+        # The key carries the name — it is not a second copy on disk.
+        raw = json.loads(config_file.read_text())
+        assert "name" not in raw["profiles"]["prod"]
 
     def test_save_and_load(self, tmp_path, monkeypatch):
         config_file = tmp_path / "auth.json"
