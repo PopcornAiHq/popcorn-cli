@@ -113,6 +113,20 @@ def test_the_bundle_layout_rules():
     assert flow_rules.MAX_ENTRY_BYTES == 1024 * 1024
 
 
+def test_the_code_block_rules():
+    """The third classification, and the one the payload carried nothing about
+    until backend#1923 — which is why `template check` reported a false
+    `basename-collision` on any bundle with two Python blocks.
+
+    `CODE_MIN_PATH_DEPTH` is a floor where `SUBDIR_PATH_DEPTH` is exact: a
+    block may be a small package, so a file nested deeper is still read.
+    """
+    assert flow_rules.CODE_SUBDIR == "code"
+    assert flow_rules.CODE_BLOCK_NAME_PATTERN == r"^[a-z0-9][a-z0-9_-]{0,62}$"
+    assert flow_rules.CODE_MIN_PATH_DEPTH == 3
+    assert flow_rules.CODE_PATH_SEGMENT_PATTERN == r"^[^.][^/]*$"
+
+
 # ── the generator ─────────────────────────────────────────────────────
 
 
@@ -164,9 +178,17 @@ def test_a_newly_served_rule_is_an_error_not_a_silent_skip():
 
 
 def test_a_newly_served_bundle_rule_is_an_error_too():
+    """`code_entrypoints` is the real candidate, which is why it stands in here.
+
+    The entrypoint convention (`main.py` for Python, `index.js` or a
+    `package.json` `main` for Node) is declared in the code runner, which the
+    API image does not ship — so serving it needs the declaration hoisted into
+    a shared package first. If it ever does arrive, this test is what makes the
+    CLI notice instead of quietly not enforcing it.
+    """
     payload = _payload()
-    payload["bundle"]["code_subdir"] = "code"
-    with pytest.raises(ValueError, match="code_subdir"):
+    payload["bundle"]["code_entrypoints"] = {"python": "main.py"}
+    with pytest.raises(ValueError, match="code_entrypoints"):
         sync_flow_rules.render(payload)
 
 

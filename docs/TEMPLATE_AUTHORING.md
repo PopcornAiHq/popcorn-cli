@@ -178,7 +178,18 @@ transport). Both then:
   be `.json` — a sample payload named `.yaml` can be installed as a flow.
 - **Descends `prompts/` and `templates/` only**, one level, seeding
   `$channel.prompts.<stem>` and `$channel.templates.<stem>`.
+- **Descends `code/<block>/` to any depth** — one directory per custom code
+  block, so a block may be a small package rather than a single file. The block
+  name is a slug (it rides inside flow YAML as `code_name:`), and every segment
+  below it must be visible: a hidden entry gets the tree refused at publish.
+  Unlike the two directories above, files here are **not** seeded into channel
+  config — `foundation.code.execute` reads them by block name at run time.
 - **Silently skips everything else**, including dotfiles and `__MACOSX`.
+
+A block file may carry any extension, `.yaml` included, and is block source
+rather than a flow. `template check` reports `code-file-outside-block` for a
+loose file directly under `code/` and `code-block-name-invalid` for a name that
+is not a slug — both are trees `app publish` refuses.
 
 Where they diverge — **keep the bundle flat and it never matters:**
 
@@ -770,7 +781,8 @@ Watch for these when reading results:
 3. `scalars` UPSERT every install, `schedules` REPLACE wholesale,
    `default_scalars` write once. Runtime state belongs in none of them.
 4. Flow identity is `name:`, not the filename.
-5. Zips flatten to basenames, except `prompts/` and `templates/`.
+5. Zips flatten to basenames, except `prompts/` and `templates/`. `code/`
+   blocks are a tree-reader concept only — a zip carries no code blocks.
 6. Webhook-triggered flows get `{conversation_id, payload, headers,
    source_hint, delivery_id, webhook_id}`, and only in `trigger_workflow` mode.
 7. `<channel-conversation-id>` / `<workspace-id>` are substituted in schedule

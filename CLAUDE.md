@@ -133,6 +133,21 @@ reference grammar accepted `$a.`, `$a..b` and `$a.1b`, which the interpreter
 rejects, and `max_block_depth` had no counterpart at all, so a block nested
 past the cap checked clean and failed at install (`block-too-deep`).
 
+**Code blocks are a third path classification** (`code/<block>/…`), served since
+backend#1923. A block file keeps its whole path rather than flattening to a
+basename, because neither reader keys it that way — which is what stopped
+`template check` reporting a `basename-collision` between two blocks' `main.py`,
+the entrypoint the runner's convention requires each Python block to carry. The
+rule also makes a `.yaml` under a block block source rather than a lost flow.
+The two findings it adds — `code-file-outside-block` and
+`code-block-name-invalid` — are paths `app publish` refuses outright.
+
+A hidden entry below a block (`code/calc/.env`) gets the tree refused too, but
+`_collect_files` drops every dotted path before the check runs, and
+`app_publish.collect_tree` applies the same filter when reading a working copy,
+so the CLI would never have uploaded it. That symmetry is the reason there is no
+finding for it — not an oversight.
+
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,
 so the checker validates the references inside a `when:` and asserts nothing

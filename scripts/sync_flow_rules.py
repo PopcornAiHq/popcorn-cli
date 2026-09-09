@@ -170,6 +170,33 @@ _FIELDS: tuple[_Field, ...] = (
         "for `foo.md.j2`.",
     ),
     _Field(
+        "CODE_SUBDIR",
+        ("bundle", "code_subdir"),
+        "Directory holding custom code blocks, one directory per block. A THIRD\n"
+        "classification beside root files and SUBDIRS: the tree reader descends it to any\n"
+        "depth, because a block may be a small package rather than one file.",
+    ),
+    _Field(
+        "CODE_BLOCK_NAME_PATTERN",
+        ("bundle", "code_block_name_pattern"),
+        "The block directory's own name — a slug, since it rides inside flow YAML as\n"
+        "`code_name:` and through error messages. Publish refuses a tree whose block\n"
+        "segment does not match.",
+    ),
+    _Field(
+        "CODE_MIN_PATH_DEPTH",
+        ("bundle", "code_min_path_depth"),
+        "How many segments a block file needs at minimum — `code/<block>/<file>`. A\n"
+        "FLOOR, unlike SUBDIR_PATH_DEPTH's exact count, so a file nested deeper is still\n"
+        "read rather than ignored.",
+    ),
+    _Field(
+        "CODE_PATH_SEGMENT_PATTERN",
+        ("bundle", "code_path_segment_pattern"),
+        "Applied to every segment BELOW the block. A hidden entry there is local cruft\n"
+        "rather than block source, and publish refuses the tree carrying it.",
+    ),
+    _Field(
         "MAX_ENTRY_BYTES",
         ("bundle", "max_entry_bytes"),
         "The zip reader's per-entry cap. The one value here that is not about\n"
