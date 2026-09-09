@@ -247,6 +247,7 @@ class _Checker:
         files = self._collect_files()
         self._check_collisions(files)
         self._check_nesting(files)
+        self._check_code_blocks(files)
         self._load_manifest()
         self._load_flows(files)
         self._check_manifest_references()
@@ -300,11 +301,63 @@ class _Checker:
         TREE reader, and the endpoint publishes it for that reader only —
         read_zip keeps the leading segment at any depth, so `prompts/a/b.md`
         becomes `prompts/b.md` here and can collide with a real `prompts/b.md`.
+
+        A code path keeps its WHOLE path instead, so two blocks never collide.
+        The flattening model does not apply to it in either reader: the tree
+        reader addresses a block file by its full path under `code/<block>/`,
+        and read_zip installs flows and seeds `prompts/`/`templates/` — a
+        `.py` is not an entry it keys at all. Modelling it as a collision made
+        `template check` reject every bundle with two Python blocks, since the
+        runner's convention requires each of them to carry `main.py`.
         """
         rel = path.relative_to(self.dir)
+        if _under_code_dir(rel):
+            return str(rel)
         if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
             return f"{rel.parts[0]}/{path.name}"
         return path.name
+
+    def _check_code_blocks(self, files: list[Path]) -> None:
+        """A path under `code/` the tree reader would not read.
+
+        Publish REFUSES a tree containing one — an unread path would otherwise
+        mint a version whose digest covers bytes the installer never looks at
+        — so these are errors, not warnings. They are the only findings the
+        code rule adds; everything else it changed was a false positive being
+        removed.
+
+        Note what cannot be reported here: a hidden entry under a block
+        (`code/calc/.env`) also gets the tree refused, but `_collect_files`
+        drops every dotted path before this runs, so the checker never sees
+        one. That is the same filter `popcorn app publish` applies when it
+        reads a working copy, so a bundle this command calls clean is one the
+        CLI would not have uploaded the hidden file from anyway.
+        """
+        for path in files:
+            rel = path.relative_to(self.dir)
+            if not _under_code_dir(rel) or _code_block(rel) is not None:
+                continue
+            if len(rel.parts) < flow_rules.CODE_MIN_PATH_DEPTH:
+                self.err(
+                    "code-file-outside-block",
+                    str(rel),
+                    f"'{rel}' sits directly under {flow_rules.CODE_SUBDIR}/ rather than "
+                    f"inside a block directory. Code ships one directory per block "
+                    f"({flow_rules.CODE_SUBDIR}/<block>/…), and publish refuses a tree "
+                    "carrying a path the installer would never read.",
+                )
+            elif not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, rel.parts[1]):
+                # Tested explicitly rather than as an `else`: a bad segment
+                # BELOW the block also lands here, and reporting that as a bad
+                # block name would send an author to the wrong path segment.
+                self.err(
+                    "code-block-name-invalid",
+                    str(rel),
+                    f"'{rel.parts[1]}' is not a usable block name. It rides inside flow "
+                    "YAML as `code_name:` and through error messages, so it must be a "
+                    "slug — lowercase letters, digits, underscore and hyphen, starting "
+                    "with a letter or digit. Publish refuses the tree otherwise.",
+                )
 
     def _check_nesting(self, files: list[Path]) -> None:
         """A flow in a subdirectory means two different things, silently.
@@ -325,6 +378,10 @@ class _Checker:
             if len(rel.parts) == 1 or path.suffix not in flow_rules.FLOW_SUFFIXES:
                 continue
             if rel.parts[0] in PRESERVED_DIRS:
+                continue
+            # A `.yaml` under a code block is block source — a fixture the
+            # block reads — not a flow the registry failed to find.
+            if _under_code_dir(rel):
                 continue
             self.warn(
                 "nested-flow-file",
@@ -555,6 +612,9 @@ class _Checker:
                 continue
             rel = path.relative_to(self.dir)
             if path.name in RESERVED_FILENAMES:
+                continue
+            # Same reason as in `_check_nesting`: block source, not a flow.
+            if _under_code_dir(rel):
                 continue
             if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
                 continue
@@ -1075,6 +1135,36 @@ def _ref_parts(match: re.Match[str]) -> list[str]:
 def _is_subdir_file(rel: Path, subdir: str) -> bool:
     """Whether a bundle-relative path is a file the tree reader reads from `subdir`."""
     return rel.parts[0] == subdir and len(rel.parts) == flow_rules.SUBDIR_PATH_DEPTH
+
+
+def _under_code_dir(rel: Path) -> bool:
+    """Whether a bundle-relative path sits anywhere below the code directory.
+
+    Not the same question as `_code_block(rel)`: a path can be under `code/`
+    and still be one publish refuses. The checks that must not mistake a block
+    file for something else — a nested flow, a basename collision — ask this,
+    so a malformed code path draws its own finding rather than an unrelated
+    one about flows.
+    """
+    return rel.parts[0] == flow_rules.CODE_SUBDIR
+
+
+def _code_block(rel: Path) -> str | None:
+    """The block a path belongs to, or None if it is not a legal block file.
+
+    The whole rule, applied in the order the tree reader applies it: under the
+    code directory, at least `CODE_MIN_PATH_DEPTH` segments, a block segment
+    matching `CODE_BLOCK_NAME_PATTERN`, and every segment below the block
+    matching `CODE_PATH_SEGMENT_PATTERN`.
+    """
+    parts = rel.parts
+    if not _under_code_dir(rel) or len(parts) < flow_rules.CODE_MIN_PATH_DEPTH:
+        return None
+    if not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, parts[1]):
+        return None
+    if not all(re.match(flow_rules.CODE_PATH_SEGMENT_PATTERN, p) for p in parts[2:]):
+        return None
+    return parts[1]
 
 
 def _file_key(filename: str) -> str:

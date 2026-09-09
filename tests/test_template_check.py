@@ -151,6 +151,15 @@ def write_bundle(
     return root
 
 
+def write_code(root: Path, paths: dict[str, str]) -> Path:
+    """Add code-block files to a bundle, keyed by bundle-relative path."""
+    for rel, text in paths.items():
+        target = root / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(text)
+    return root
+
+
 def bare_manifest(**extra: Any) -> dict[str, Any]:
     """The clean manifest minus anything that names a flow.
 
@@ -1077,3 +1086,71 @@ def test_a_missing_prompt_is_still_an_error(tmp_path):
     (root / "prompts").mkdir()
     (root / "prompts" / "compose.md.j2").write_text("hello")
     assert "unknown-prompt" in codes(root)
+
+
+# ── code blocks ───────────────────────────────────────────────────────
+
+
+def test_two_python_blocks_are_clean(tmp_path):
+    """The bug this rule was served for.
+
+    Every Python block must carry `main.py` — that is how the runner detects
+    its entrypoint — so two blocks always share a basename. Modelling a code
+    path with the flattening rule made that a `basename-collision` error and
+    rejected a bundle publish accepts, which no author could work around.
+    """
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(root, {"code/calc/main.py": "print(1)\n", "code/report/main.py": "print(2)\n"})
+    assert check_bundle(root).findings == []
+
+
+def test_a_block_may_be_a_package(tmp_path):
+    """`CODE_MIN_PATH_DEPTH` is a floor, so a file nested below the block is
+    still block source — and still must not collide with a same-named file in
+    another block."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(
+        root,
+        {
+            "code/calc/main.py": "print(1)\n",
+            "code/calc/lib/util.py": "x = 1\n",
+            "code/report/lib/util.py": "x = 2\n",
+        },
+    )
+    assert check_bundle(root).findings == []
+
+
+def test_a_yaml_under_a_block_is_not_a_flow(tmp_path):
+    """Block source may carry any extension. Read as a flow it drew both
+    `yaml-is-not-a-flow` and `nested-flow-file`, neither of them true."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(root, {"code/calc/main.py": "print(1)\n", "code/calc/fixture.yaml": "a: 1\n"})
+    assert check_bundle(root).findings == []
+
+
+def test_a_file_directly_under_code_is_an_error(tmp_path):
+    """Code ships one directory per block, so a loose file has no block to
+    belong to and publish refuses the whole tree."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(root, {"code/loose.py": "print(1)\n"})
+    assert [f.code for f in check_bundle(root).findings] == ["code-file-outside-block"]
+
+
+def test_a_block_name_that_is_not_a_slug_is_an_error(tmp_path):
+    """The name rides inside flow YAML as `code_name:`, so publish refuses
+    anything but a slug."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(root, {"code/Bad_Name/main.py": "print(1)\n"})
+    findings = check_bundle(root).findings
+    assert [f.code for f in findings] == ["code-block-name-invalid"]
+    assert "Bad_Name" in findings[0].message
+
+
+def test_a_real_collision_inside_one_block_is_still_reported(tmp_path):
+    """Exempting code paths from flattening must not exempt them from
+    everything: two files at the SAME path cannot both exist, but a block file
+    colliding with a root file must not be silently merged either."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    write_code(root, {"code/calc/main.py": "print(1)\n"})
+    (root / "main.py").write_text("print(3)\n")
+    assert "basename-collision" not in codes(root)

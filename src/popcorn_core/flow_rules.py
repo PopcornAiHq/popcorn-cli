@@ -114,6 +114,25 @@ FILE_KEY_SUFFIXES = (
     ".txt",
 )
 
+# Directory holding custom code blocks, one directory per block. A THIRD
+# classification beside root files and SUBDIRS: the tree reader descends it to any
+# depth, because a block may be a small package rather than one file.
+CODE_SUBDIR = "code"
+
+# The block directory's own name — a slug, since it rides inside flow YAML as
+# `code_name:` and through error messages. Publish refuses a tree whose block
+# segment does not match.
+CODE_BLOCK_NAME_PATTERN = "^[a-z0-9][a-z0-9_-]{0,62}$"
+
+# How many segments a block file needs at minimum — `code/<block>/<file>`. A
+# FLOOR, unlike SUBDIR_PATH_DEPTH's exact count, so a file nested deeper is still
+# read rather than ignored.
+CODE_MIN_PATH_DEPTH = 3
+
+# Applied to every segment BELOW the block. A hidden entry there is local cruft
+# rather than block source, and publish refuses the tree carrying it.
+CODE_PATH_SEGMENT_PATTERN = "^[^.][^/]*$"
+
 # The zip reader's per-entry cap. The one value here that is not about
 # classification: it is a real ceiling on an uploaded bundle, so a checker
 # should warn before an author hits it.
