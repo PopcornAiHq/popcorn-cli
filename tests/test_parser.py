@@ -763,6 +763,26 @@ class TestFlowCommands:
         assert args.include_errors is True
 
 
+class TestScheduleCommands:
+    def test_schedule_list(self, parser):
+        args = parser.parse_args(["schedule", "list", "--channel", "#ops"])
+        assert args.schedule_command == "list"
+        assert args.channel == "#ops"
+
+    def test_schedule_list_requires_a_channel(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["schedule", "list"])
+
+    def test_schedule_get(self, parser):
+        args = parser.parse_args(["schedule", "get", "claim-tick", "--channel", "#ops"])
+        assert args.schedule_command == "get"
+        assert args.schedule == "claim-tick"
+
+    def test_schedule_get_requires_a_ref(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["schedule", "get", "--channel", "#ops"])
+
+
 class TestDidYouMean:
     def test_close_typo_suggests(self):
         parser = build_parser()

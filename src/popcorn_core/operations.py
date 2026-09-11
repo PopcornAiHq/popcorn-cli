@@ -748,6 +748,61 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+# ---------------------------------------------------------------------------
+# Scheduled flows (read-only)
+# ---------------------------------------------------------------------------
+
+
+def list_scheduled_flows(client: APIClient, conversation: str) -> dict[str, Any]:
+    """List a channel's scheduled flows — the LIVE schedule set.
+
+    This is the authoritative cadence, which a bundle manifest is not: a
+    manifest declares what an install creates, while `set_app_mode` and the
+    deterministic de-peak offsets both rewrite the installed schedule in
+    place. Reading the manifest to answer "how often does this run" is how
+    you get an answer that is wrong by a factor of five.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/customer-scheduled-flows/list", {"conversation_id": conv_id})
+
+
+def resolve_schedule_ref(client: APIClient, conversation: str, ref: str) -> str:
+    """Resolve a schedule slug or flow id to a full `schedule_id`.
+
+    A `schedule_id` is a 60-odd-character composite
+    (`channel:<uuid>:flow:<flow_id>:<slug>`), so requiring one verbatim would
+    make `get` unusable without a preceding `list` and a copy-paste. Anything
+    already carrying the composite's `:` separator passes through untouched;
+    everything else is matched against the channel's schedules by `slug`
+    first, then `flow_id`.
+    """
+    if ":" in ref:
+        return ref
+    resp = list_scheduled_flows(client, conversation)
+    items = resp.get("scheduled_flows") or []
+    for key in ("slug", "flow_id"):
+        for item in items:
+            if item.get(key) == ref:
+                schedule_id = item.get("schedule_id")
+                if schedule_id:
+                    return str(schedule_id)
+    known = ", ".join(sorted(filter(None, (i.get("slug") for i in items)))) or "none"
+    raise PopcornError(
+        f"No schedule '{ref}' in {conversation} (have: {known})",
+        error_code="not_found",
+    )
+
+
+def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) -> dict[str, Any]:
+    """Get one scheduled flow by `schedule_id`, slug, or flow id."""
+    conv_id = resolve_conversation(client, conversation)
+    schedule_id = resolve_schedule_ref(client, conversation, schedule_ref)
+    return client.get(
+        "/api/customer-scheduled-flows/get",
+        {"conversation_id": conv_id, "schedule_id": schedule_id},
+    )
+
+
 # Mirrors the backend read_zip's per-entry ceiling so an oversized bundle fails
 # locally with a clear message instead of as an opaque 400.
 _MAX_TEMPLATE_ENTRY_BYTES = 1024 * 1024
