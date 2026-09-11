@@ -652,7 +652,9 @@ class TestPublishCommand:
         assert "nothing to publish" in str(exc.value)
         assert rec.calls == []
 
-    def test_refuses_when_the_channel_moved_ahead(self, tmp_path):
+    def test_refuses_when_the_fork_line_moved_ahead(self, tmp_path):
+        """Someone else published on the line since this checkout. The diff
+        base is gone, and the server would refuse the stale base anyway."""
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
@@ -665,32 +667,71 @@ class TestPublishCommand:
                 rec,
                 _args(directory=str(tmp_path)),
             )
-        assert "moved to" in str(exc.value)
+        assert "fork line moved to" in str(exc.value)
         assert "app checkout" in str(exc.value.hint or "")
         assert rec.calls == []
 
-    def test_says_still_installing_when_the_channel_is_behind(self, tmp_path):
-        """Our own publish landed but its install has not.
+    def test_publishes_from_the_head_while_the_channel_is_behind(self, tmp_path):
+        """The deadlock popcorn-backend #1985 removed.
 
-        Same "ids differ" fact as the case above, opposite cause — telling the
-        user to re-checkout here would throw away the edits they just
-        published.
+        The head's install failed, so the channel still runs the previous
+        version. The checkout IS the head, the publish is based on it, and
+        nothing about the channel's state may stop it — the old client-side
+        "install has not landed, wait" refusal was what wedged the line.
         """
-        base = {"manifest.yaml": _manifest("0.2.1")}
-        _checkout(tmp_path, base, semver="0.2.1", base_version_id=9)
-        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.2"))
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
 
         rec = _Recorder()
+        _run_publish(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
+            rec,
+            _args(directory=str(tmp_path)),
+        )
+        assert len(rec.calls) == 1
+        assert rec.calls[0][1]["base_version_id"] == 7
+
+    def test_fetches_the_head_not_the_bound_version(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        from popcorn_cli.commands import app as mod
+
+        seen: dict = {}
+
+        def _files(client, conversation, ref="head"):
+            seen["ref"] = ref
+            return _files_response(base)
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch("popcorn_cli.cli._output"),
+            patch.object(operations, "get_channel_app_files", _files),
+            patch.object(operations, "publish_channel_app", _Recorder()),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path)))
+        assert seen["ref"] == "head"
+
+    def test_the_servers_stale_base_refusal_is_shown_verbatim(self, tmp_path):
+        """The server owns the base check; its 409 already says what to do."""
+        from popcorn_core.errors import APIError
+
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        detail = (
+            "the checkout is alerttracker@0.2.0 but the fork line's head is 0.3.0 — "
+            "check out the head (ref=head) and redo the edits on that tree"
+        )
+
+        def _refuse(client, conversation, payload):
+            raise APIError(detail, status_code=409)
+
         with pytest.raises(PopcornError) as exc:
-            _run_publish(
-                tmp_path,
-                _files_response(base, version_id=7, semver="0.2.0"),
-                rec,
-                _args(directory=str(tmp_path)),
-            )
-        assert "has not landed" in str(exc.value)
-        assert exc.value.retryable
-        assert rec.calls == []
+            _run_publish(tmp_path, _files_response(base), _refuse, _args(directory=str(tmp_path)))
+        assert str(exc.value) == detail
 
     def test_refuses_outside_a_checkout(self, tmp_path):
         rec = _Recorder()
@@ -715,6 +756,67 @@ class TestPublishCommand:
             _args(directory=str(tmp_path), channel="#alerts"),
         )
         assert rec.calls[0][0] == "#alerts"
+
+
+def _run_publish_captured(tmp_path, recorder):
+    """Publish a one-line manifest bump and return what was rendered."""
+    from popcorn_cli.commands import app as mod
+
+    base = {"manifest.yaml": _manifest("0.2.0")}
+    _checkout(tmp_path, base)
+    (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+    captured: dict = {}
+    with (
+        patch("popcorn_cli.cli._get_client", return_value=object()),
+        patch(
+            "popcorn_cli.cli._output",
+            lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+        ),
+        patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+        patch.object(operations, "publish_channel_app", recorder),
+    ):
+        mod._app_publish(_args(directory=str(tmp_path)))
+    return captured
+
+
+class TestPublishInstallStatus:
+    """The publish succeeded in every case here; only the INSTALL differs."""
+
+    def test_started_points_at_status(self, tmp_path):
+        out = _run_publish_captured(tmp_path, _Recorder(install_status="started"))
+        assert "Installing on this channel: wf-1" in out["rendered"]
+        assert "popcorn app status" in out["rendered"]
+
+    def test_locked_channel_says_so_and_points_at_apply(self, tmp_path):
+        out = _run_publish_captured(
+            tmp_path,
+            _Recorder(install_status="blocked_app_updates_locked", install_workflow_id=None),
+        )
+        assert "Published alerttracker 0.2.1" in out["rendered"]
+        assert (
+            "Not applied to this channel: app updates are locked here — ask a "
+            "member to unlock them, then run 'popcorn app apply'" in out["rendered"]
+        )
+
+    def test_running_install_points_at_apply(self, tmp_path):
+        out = _run_publish_captured(
+            tmp_path,
+            _Recorder(install_status="blocked_install_in_progress", install_workflow_id=None),
+        )
+        assert "another install holds this channel's lock" in out["rendered"]
+        assert "popcorn app apply" in out["rendered"]
+
+    def test_not_requested_does_not_crash(self, tmp_path):
+        """Cannot happen from this CLI (it always names the channel), but the
+        value exists on the wire and must render, not raise."""
+        out = _run_publish_captured(
+            tmp_path, _Recorder(install_status="not_requested", install_workflow_id=None)
+        )
+        assert "Not applied to any channel." in out["rendered"]
+
+    def test_an_older_api_with_only_a_workflow_id_still_reads_as_started(self, tmp_path):
+        out = _run_publish_captured(tmp_path, _Recorder())
+        assert "Installing on this channel: wf-1" in out["rendered"]
 
 
 class TestStatusCommand:
@@ -750,7 +852,7 @@ class TestStatusCommand:
         assert out["data"]["added"] == ["alert.yaml"]
         assert out["data"]["dirty"] is True
 
-    def test_reports_a_moved_channel_instead_of_raising(self, tmp_path):
+    def test_reports_a_moved_line_instead_of_raising(self, tmp_path):
         """status is the command you run BECAUSE the two disagree."""
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
@@ -760,7 +862,35 @@ class TestStatusCommand:
             _args(directory=str(tmp_path)),
         )
         assert out["data"]["in_sync"] is False
-        assert "0.3.0" in out["rendered"]
+        assert "Fork line moved to 0.3.0" in out["rendered"]
+
+    def test_reports_a_channel_behind_the_head_without_refusing(self, tmp_path):
+        """Baseline == head, channel behind: the install has not landed (or
+        failed). Say so from the server's own fields and point at apply — no
+        semver guesswork, no refusal."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        out = self._run(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
+            _args(directory=str(tmp_path)),
+        )
+        assert out["data"]["in_sync"] is True
+        assert out["data"]["channel_behind"] is True
+        assert (out["data"]["channel_version_id"], out["data"]["head_version_id"]) == (5, 7)
+        assert "Channel still runs 0.1.0 (version 5)" in out["rendered"]
+        assert "popcorn app apply" in out["rendered"]
+
+    def test_reports_a_current_channel(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        out = self._run(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=7, bound_semver="0.2.0"),
+            _args(directory=str(tmp_path)),
+        )
+        assert out["data"]["channel_behind"] is False
+        assert "Channel runs the same version (7)." in out["rendered"]
 
     def test_flags_a_misplaced_code_path_without_refusing(self, tmp_path):
         """status must not refuse the way publish does — it is the command

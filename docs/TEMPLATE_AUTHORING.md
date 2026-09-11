@@ -111,7 +111,7 @@ and no intranet visit:
 
 ```bash
 popcorn app fork --channel '#chan'      # this workspace's own fork line
-popcorn app checkout --channel '#chan'  # the bound version, as files
+popcorn app checkout --channel '#chan'  # the fork line's head, as files
 # ... edit, then bump version: in manifest.yaml
 popcorn template check ./<app>
 popcorn app publish ./<app> --changelog "what changed"
@@ -124,8 +124,10 @@ product version is refused. `app publish` also starts the install that moves
 your channel onto the new version.
 
 **This is also how you read a real bundle.** `app checkout` returns the whole
-tree — manifest, every flow, `AGENT.md`, `strings.yaml` — for the version the
-channel is actually bound to, so it is the one source that cannot be stale.
+tree — manifest, every flow, `AGENT.md`, `strings.yaml` — for the head of the
+fork line the channel runs (normally the very version it is bound to; the two
+differ only while an install has not landed), so it is the one source that
+cannot be stale.
 When you want to study how a shipped app does something, spend a scratch
 channel on it rather than looking for a copy in a repo:
 

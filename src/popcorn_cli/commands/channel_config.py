@@ -338,7 +338,17 @@ register(
                 "accounts",
                 "Your connected accounts, with the ids 'integrations set' needs",
                 _accounts,
-                [],
+                [
+                    # Accepted, not used: the list is the caller's own and
+                    # not channel-scoped, but every sibling takes --channel
+                    # and a scripted `channel-config <sub> --channel X` must
+                    # not fail on this one.
+                    Argument(
+                        "channel",
+                        "Ignored — your accounts are not channel-scoped; "
+                        "accepted so every channel-config subcommand takes it",
+                    ),
+                ],
             ),
         ],
     )

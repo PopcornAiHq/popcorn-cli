@@ -202,10 +202,22 @@ class TestOperations:
         operations.list_channel_apps(mock_client, _CONV)
         mock_client.get.assert_called_once_with("/api/apps/list", {"conversation_id": _CONV})
 
-    def test_files_sends_conversation_id(self, mock_client):
+    def test_files_reads_the_line_head_by_default(self, mock_client):
+        """A checkout is what a publish is based on, and a publish must be
+        based on the fork line's head — not on whatever the channel runs
+        (popcorn-backend #1985)."""
         mock_client.get.return_value = _files_response({})
         operations.get_channel_app_files(mock_client, _CONV)
-        mock_client.get.assert_called_once_with("/api/apps/files", {"conversation_id": _CONV})
+        mock_client.get.assert_called_once_with(
+            "/api/apps/files", {"conversation_id": _CONV, "ref": "head"}
+        )
+
+    def test_files_can_ask_for_the_bound_version(self, mock_client):
+        mock_client.get.return_value = _files_response({})
+        operations.get_channel_app_files(mock_client, _CONV, ref="bound")
+        mock_client.get.assert_called_once_with(
+            "/api/apps/files", {"conversation_id": _CONV, "ref": "bound"}
+        )
 
     def test_tree_sends_conversation_id(self, mock_client):
         mock_client.get.return_value = {"paths": []}
@@ -242,13 +254,60 @@ class TestCheckoutCommand:
     def _run(self, resp, args):
         from popcorn_cli.commands import app as mod
 
+        captured: dict = {}
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
-            patch("popcorn_cli.cli._output"),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
             patch.object(mod, "resolve_conversation", return_value=_CONV),
             patch.object(operations, "get_channel_app_files", return_value=resp),
         ):
             mod._app_checkout(args)
+        return captured
+
+    def test_notes_when_the_channel_is_behind_the_head(self, tmp_path):
+        """The deadlock case: the head's install failed, the channel still
+        runs the previous version. The checkout is the head (what a publish
+        needs) and says so, rather than silently handing over a tree the
+        channel does not run."""
+        files = {"manifest.yaml": "version: '0.2.0'\n"}
+        out = self._run(
+            _files_response(
+                files,
+                kind="fork",
+                version_id=7,
+                semver="0.2.0",
+                ref="head",
+                bound_version_id=5,
+                bound_semver="0.1.0",
+            ),
+            _args(directory=str(tmp_path / "out")),
+        )
+        assert (
+            "Note: this channel still runs alerttracker 0.1.0; 0.2.0 is the fork "
+            "line's head — edits publish on top of the head and the channel moves "
+            "straight to the new version." in out["rendered"]
+        )
+        assert out["data"]["base_version_id"] == 7
+        assert (out["data"]["channel_version_id"], out["data"]["channel_semver"]) == (5, "0.1.0")
+
+    def test_says_nothing_extra_when_the_channel_is_current(self, tmp_path):
+        files = {"manifest.yaml": "version: '0.2.0'\n"}
+        out = self._run(
+            _files_response(files, ref="head", bound_version_id=7, bound_semver="0.2.0"),
+            _args(directory=str(tmp_path / "out")),
+        )
+        assert "Note:" not in out["rendered"]
+        assert out["data"]["channel_version_id"] == 7
+
+    def test_tolerates_an_api_without_the_bound_fields(self, tmp_path):
+        """A popcorn newer than the API it talks to: no note, no crash."""
+        files = {"manifest.yaml": "version: '0.2.0'\n"}
+        out = self._run(_files_response(files), _args(directory=str(tmp_path / "out")))
+        assert "Note:" not in out["rendered"]
+        assert out["data"]["channel_version_id"] == 7
 
     def test_writes_tree_and_baseline(self, tmp_path):
         files = {"manifest.yaml": "version: '0.2.0'\n", "AGENT.md": "notes\n"}
