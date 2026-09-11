@@ -3266,6 +3266,7 @@ Channels:
 
 Flows:
   flow            Flow commands (activities, validate, import, list, get, run, runs list, runs get)
+  schedule        Scheduled-flow commands (list, get)
 
 Templates:
   template        Channel-template commands (check)
