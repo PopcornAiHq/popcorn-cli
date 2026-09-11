@@ -395,3 +395,21 @@ class TestIntegrations:
     def test_accounts_handles_none_connected(self):
         out = _run("_accounts", _args(), _inspect(), accounts={"ok": True, "integrations": []})
         assert "no connected accounts" in out["rendered"]
+
+
+class TestAccountsParser:
+    """`accounts` lists YOUR accounts, so it needs no channel — but every
+    sibling takes --channel, and a scripted `channel-config <sub> --channel X`
+    must not blow up on this one subcommand (unrecognized arguments)."""
+
+    def test_accepts_channel(self):
+        from popcorn_cli.cli import build_parser
+
+        args = build_parser().parse_args(["channel-config", "accounts", "--channel", "#ops"])
+        assert args.channel == "#ops"
+
+    def test_channel_stays_optional(self):
+        from popcorn_cli.cli import build_parser
+
+        args = build_parser().parse_args(["channel-config", "accounts"])
+        assert args.channel is None

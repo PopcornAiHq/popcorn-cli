@@ -4,9 +4,16 @@
 app fork → app checkout → edit → template check → app publish → app apply
 ```
 
-`fork` leads even though a checkout is what you edit: publishing needs the
-channel bound to a version this workspace OWNS, so `publish` on a
-product-bound channel cannot work (`ChannelNotOnForkError`).
+`fork` leads even though a checkout is what you edit: publishing needs a
+checkout of a version this workspace OWNS, so `publish` from a product
+checkout cannot work (`PublishBaseNotForkError`).
+
+A checkout is the fork line's HEAD, not what the channel happens to run. A
+publish is a line operation and must be based on the head (popcorn-backend
+#1985); the two differ only while the channel lags its line — a head whose
+install has not landed, or failed — and that is the case where a checkout of
+the bound tree used to leave the line stuck. `checkout` says so when it
+happens; `status` shows both versions.
 
 Two groups of commands, split by what they act on:
 
@@ -44,7 +51,6 @@ from popcorn_core.app_publish import (
     ignored_note,
     local_digest,
     manifest_version,
-    parse_semver,
     preserved_note,
     publish_payload,
     require_bump,
@@ -137,27 +143,40 @@ def _app_checkout(args: argparse.Namespace) -> None:
     baseline = baseline_from_response(resp, files, conversation_id=conv_id)
     write_baseline(directory, baseline)
 
+    # What the channel runs, alongside what was served. An API older than
+    # popcorn-backend #1985 sends neither field; then the served version IS
+    # the bound one and there is nothing to note.
+    channel_id = resp.get("bound_version_id", baseline.base_version_id)
+    channel_semver = str(resp.get("bound_semver") or baseline.semver)
     data = {
         "directory": str(directory),
         "app": baseline.app,
         "kind": baseline.kind,
         "semver": baseline.semver,
         "base_version_id": baseline.base_version_id,
+        "channel_semver": channel_semver,
+        "channel_version_id": channel_id,
         "tree_digest": baseline.tree_digest,
         "files": written,
     }
-    rendered = "\n".join(
-        [
-            f"Checked out {baseline.app} {baseline.semver} ({baseline.kind}) into {directory}",
-            *(f"  {p}" for p in written),
-            "",
-            f"{len(written)} file{'s' if len(written) != 1 else ''}, "
-            f"baseline version {baseline.base_version_id}",
-            "",
-            f"Next: popcorn template check {directory}",
-        ]
-    )
-    _output(args, data, rendered)
+    lines = [
+        f"Checked out {baseline.app} {baseline.semver} ({baseline.kind}) into {directory}",
+    ]
+    if channel_id != baseline.base_version_id:
+        lines.append(
+            f"Note: this channel still runs {baseline.app} {channel_semver}; "
+            f"{baseline.semver} is the fork line's head — edits publish on top of "
+            "the head and the channel moves straight to the new version."
+        )
+    lines += [
+        *(f"  {p}" for p in written),
+        "",
+        f"{len(written)} file{'s' if len(written) != 1 else ''}, "
+        f"baseline version {baseline.base_version_id}",
+        "",
+        f"Next: popcorn template check {directory}",
+    ]
+    _output(args, data, "\n".join(lines))
 
 
 # ---------------------------------------------------------------------------
@@ -200,47 +219,27 @@ def _channel_of(args: argparse.Namespace, baseline: Baseline) -> str:
 
 
 def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
-    """The channel's current tree, refusing when it is not what we edited.
+    """The fork line's head, refusing when it is not the version we edited.
 
-    Three outcomes, and collapsing them into one "re-checkout" message would
-    be wrong in two: the binding may be BEHIND us (our own publish is still
-    installing), ahead/elsewhere (someone moved the channel), or the expected
-    match.
+    The diff is computed against this tree, so it must be the one the
+    checkout came from — and the head is what a publish must be based on
+    (popcorn-backend #1985). What the CHANNEL runs plays no part: a channel
+    still behind its line (a head whose install has not landed, or failed)
+    publishes fine from a checkout of that head. A head past the baseline
+    means someone else published on the line; the server would refuse the
+    stale base, and the answer is the same here: check out again.
     """
-    resp = operations.get_channel_app_files(client, conversation)
-    current_id = resp.get("version_id")
-    if current_id == baseline.base_version_id:
+    resp = operations.get_channel_app_files(client, conversation, ref="head")
+    head_id = resp.get("version_id")
+    if head_id == baseline.base_version_id:
         return resp
-
-    current = str(resp.get("semver") or "")
-    if _is_behind(current, baseline.semver):
-        raise PopcornError(
-            f"the channel still runs {resp.get('app')} {current}; "
-            f"{baseline.semver} is published but its install has not landed "
-            "yet",
-            error_code="conflict",
-            hint="wait for the install, then re-run — 'popcorn app status' shows both versions",
-            retryable=True,
-        )
     raise PopcornError(
-        f"the channel moved to {resp.get('app')} {current} "
-        f"(version {current_id}) since this checkout of {baseline.semver} "
+        f"the fork line moved to {resp.get('app')} {resp.get('semver')} "
+        f"(version {head_id}) since this checkout of {baseline.semver} "
         f"(version {baseline.base_version_id})",
         error_code="conflict",
         hint="re-run 'popcorn app checkout' and redo the edits on the current tree",
     )
-
-
-def _is_behind(current: str, baseline_semver: str) -> bool:
-    """Whether the channel's version is older than the baseline's.
-
-    Unparseable either side means we cannot tell, and guessing "behind" would
-    invite an endless retry — so say no and let the generic message stand.
-    """
-    try:
-        return parse_semver(current) < parse_semver(baseline_semver)
-    except PopcornError:
-        return False
 
 
 def _app_fork(args: argparse.Namespace) -> None:
@@ -275,8 +274,8 @@ def _app_publish(args: argparse.Namespace) -> None:
     client = _get_client(args)
     conversation = _channel_of(args, baseline)
 
-    # Product-bound is refused here rather than by the 409, because the fix is
-    # a different command and the server's message cannot know that.
+    # A product checkout is refused here rather than by the 409, because the
+    # fix is a different command and the server's message cannot know that.
     if baseline.kind != "fork":
         raise PopcornError(
             f"{baseline.app} {baseline.semver} is a PRODUCT version — a "
@@ -310,11 +309,11 @@ def _app_publish(args: argparse.Namespace) -> None:
     payload = publish_payload(baseline.base_version_id, diff, args.changelog)
     result = operations.publish_channel_app(client, conversation, payload)
 
-    # The working copy now corresponds to the PUBLISHED version, so the
-    # baseline moves with it — otherwise the next edit needs a fresh
-    # checkout, which is the loop this command exists to close. The channel
-    # catches up when the install lands; until then _fetch_base reports the
-    # gap rather than pretending it is not there.
+    # The working copy now corresponds to the PUBLISHED version — the line's
+    # new head — so the baseline moves with it; otherwise the next edit needs
+    # a fresh checkout, which is the loop this command exists to close. The
+    # channel catches up when the install lands, and that is its business:
+    # the next publish is based on the head either way.
     published = Baseline(
         app=str(result.get("app") or baseline.app),
         kind="fork",
@@ -340,12 +339,33 @@ def _app_publish(args: argparse.Namespace) -> None:
     reach = fork_line_reach(result)
     if reach:
         rendered.append(reach)
-    if result.get("install_workflow_id"):
-        rendered.append(f"Installing on this channel: {result['install_workflow_id']}")
-        rendered.append("Next: popcorn app status")
-    else:
-        rendered.append("Next: popcorn app apply")
+    rendered += _install_lines(result)
     _output(args, {**result, "diff": diff.summary()}, "\n".join(rendered))
+
+
+def _install_lines(result: dict) -> list[str]:
+    """How the install onto this channel went, from `install_status`.
+
+    The version is published whatever the status says; every value but
+    "started" is about the INSTALL half, and `app apply` is the retry for all
+    of them. An API older than popcorn-backend #1985 sends no status, only a
+    workflow id when the install started.
+    """
+    status = str(result.get("install_status") or "")
+    workflow_id = result.get("install_workflow_id")
+    if status == "started" or (not status and workflow_id):
+        return [f"Installing on this channel: {workflow_id}", "Next: popcorn app status"]
+    if status == "blocked_app_updates_locked":
+        return [
+            "Not applied to this channel: app updates are locked here — ask a "
+            "member to unlock them, then run 'popcorn app apply'",
+        ]
+    if status == "blocked_install_in_progress":
+        return [
+            "Not applied yet — another install holds this channel's lock.",
+            "Next: popcorn app apply",
+        ]
+    return ["Not applied to any channel.", "Next: popcorn app apply"]
 
 
 def _app_apply(args: argparse.Namespace) -> None:
@@ -390,14 +410,19 @@ def _app_status(args: argparse.Namespace) -> None:
 
     local = collect_tree(directory)
     unpublishable = unrecognized_code_paths(local.files)
-    resp = operations.get_channel_app_files(client, conversation)
+    resp = operations.get_channel_app_files(client, conversation, ref="head")
     base_files = files_from_response(resp)
-    # Diffed against the CHANNEL's tree, not the baseline's digest: status is
+    # Diffed against the line's HEAD, not the baseline's digest: status is
     # the command you run when the two disagree, so it must not refuse the
     # way publish does.
     diff = diff_tree(base_files, local.files)
-    channel_id = resp.get("version_id")
-    in_sync = channel_id == baseline.base_version_id
+    head_id = resp.get("version_id")
+    head_semver = resp.get("semver")
+    # The channel's own version rides along (popcorn-backend #1985); an older
+    # API sends only the served one, and then the two are the same.
+    channel_id = resp.get("bound_version_id", head_id)
+    channel_semver = resp.get("bound_semver", head_semver)
+    in_sync = head_id == baseline.base_version_id
 
     data = {
         "directory": str(directory),
@@ -405,9 +430,12 @@ def _app_status(args: argparse.Namespace) -> None:
         "kind": baseline.kind,
         "baseline_semver": baseline.semver,
         "baseline_version_id": baseline.base_version_id,
-        "channel_semver": resp.get("semver"),
+        "head_semver": head_semver,
+        "head_version_id": head_id,
+        "channel_semver": channel_semver,
         "channel_version_id": channel_id,
         "in_sync": in_sync,
+        "channel_behind": channel_id != head_id,
         "dirty": local_digest(local.files) != baseline.tree_digest,
         "added": diff.added,
         "changed": diff.changed,
@@ -420,21 +448,21 @@ def _app_status(args: argparse.Namespace) -> None:
     lines = [
         f"{baseline.app} {baseline.semver} ({baseline.kind}) in {directory}",
     ]
-    if in_sync:
-        lines.append(f"Channel runs the same version ({channel_id}).")
-    elif _is_behind(str(resp.get("semver") or ""), baseline.semver):
+    if not in_sync:
         lines.append(
-            f"Channel still runs {resp.get('semver')} — the install of "
-            f"{baseline.semver} has not landed yet."
+            f"Fork line moved to {head_semver} (version {head_id}) — re-run 'popcorn app checkout'."
+        )
+    elif channel_id != head_id:
+        lines.append(
+            f"Channel still runs {channel_semver} (version {channel_id}); "
+            f"{baseline.semver} is the line's head and its install has not "
+            "landed — 'popcorn app apply' retries it."
         )
     else:
-        lines.append(
-            f"Channel moved to {resp.get('semver')} (version {channel_id}) — "
-            "re-run 'popcorn app checkout'."
-        )
+        lines.append(f"Channel runs the same version ({head_id}).")
     lines.append("")
     if diff.empty:
-        lines.append("Working copy matches the channel's tree.")
+        lines.append("Working copy matches the fork line's head.")
     else:
         lines.append("Uncommitted edits:")
         lines += diff.summary()
@@ -464,7 +492,7 @@ register(
             ),
             Subcommand(
                 "checkout",
-                "Write the channel's bound bundle to disk, with a baseline",
+                "Write the fork line's head to disk, with a baseline",
                 _app_checkout,
                 [
                     _CHANNEL,
@@ -511,7 +539,7 @@ register(
             ),
             Subcommand(
                 "status",
-                "Compare a checkout against the channel's current version",
+                "Compare a checkout against the fork line's head and the channel",
                 _app_status,
                 [_DIRECTORY, _CHANNEL_OPT],
             ),

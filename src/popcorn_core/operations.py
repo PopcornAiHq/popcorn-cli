@@ -1250,14 +1250,24 @@ def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dic
     return client.get("/api/apps/file", {"conversation_id": conv_id, "path": path})
 
 
-def get_channel_app_files(client: APIClient, conversation: str) -> dict[str, Any]:
-    """The bound version's complete tree in one round trip.
+def get_channel_app_files(
+    client: APIClient, conversation: str, ref: str = "head"
+) -> dict[str, Any]:
+    """One version's complete tree in one round trip.
 
     The checkout read. Bundle trees are tens of files and tens of KB, so this
     is one request rather than a tree listing plus N file reads.
+
+    `ref` picks the version: "head" is the latest on the channel's fork line
+    and is what a publish must be based on; "bound" is what the channel runs.
+    The two differ only while the channel lags its line — a head whose install
+    has not landed, or failed — which is exactly when a checkout of the bound
+    tree would produce an edit no publish can accept (popcorn-backend #1985).
+    The response carries both: `version_id`/`semver` for the served version
+    and `bound_version_id`/`bound_semver` for the channel's own.
     """
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/apps/files", {"conversation_id": conv_id})
+    return client.get("/api/apps/files", {"conversation_id": conv_id, "ref": ref})
 
 
 # ---------------------------------------------------------------------------
@@ -1288,12 +1298,16 @@ def fork_channel_app(
 def publish_channel_app(
     client: APIClient, conversation: str, payload: dict[str, Any]
 ) -> dict[str, Any]:
-    """Publish edits as the next version on the channel's fork line.
+    """Publish edits as the next version on the checkout's fork line.
 
     `payload` is `{base_version_id, files, deletes, changelog?}` — see
-    `app_publish.publish_payload`. Publishing also starts the install that
-    moves this channel onto the new version; other channels on the line catch
-    up on their own auto-update tick.
+    `app_publish.publish_payload`. The publish is a LINE operation: the server
+    checks `base_version_id` against the line's head and nothing about what
+    the channel runs (popcorn-backend #1985). `conversation_id` only names the
+    channel to install on right away; other channels on the line catch up on
+    their own auto-update tick. `install_status` in the response says how that
+    install went: "started", "blocked_install_in_progress",
+    "blocked_app_updates_locked", or "not_requested".
     """
     conv_id = resolve_conversation(client, conversation)
     return client.post("/api/apps/publish", payload, {"conversation_id": conv_id})
