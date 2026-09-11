@@ -33,6 +33,8 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from packaging.version import InvalidVersion, Version
+
 from popcorn_core import flow_rules, operations
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
@@ -233,6 +235,22 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
     head_id = resp.get("version_id")
     if head_id == baseline.base_version_id:
         return resp
+    # A backend older than popcorn-backend #1985 ignores `ref` and answers
+    # with the BOUND version — its response carries no `ref`. After our own
+    # publish advanced the baseline, that answer lags it until the install
+    # lands, and "the line moved, re-checkout" would tell the user to replace
+    # the working copy they just published with the stale tree. Say what is
+    # true instead. With `ref` present the server answered with the head, so
+    # a mismatch really is a moved line.
+    if "ref" not in resp and _lags(resp, baseline):
+        raise PopcornError(
+            f"the channel still runs {resp.get('app')} {resp.get('semver')}; "
+            f"{baseline.semver} is published but its install has not landed yet",
+            error_code="conflict",
+            hint="wait for the install, or run 'popcorn app apply'; publishing from "
+            "this checkout needs a backend that serves ref=head",
+            retryable=True,
+        )
     raise PopcornError(
         f"the fork line moved to {resp.get('app')} {resp.get('semver')} "
         f"(version {head_id}) since this checkout of {baseline.semver} "
@@ -240,6 +258,22 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
         error_code="conflict",
         hint="re-run 'popcorn app checkout' and redo the edits on the current tree",
     )
+
+
+def _lags(resp: dict, baseline: Baseline) -> bool:
+    """Whether an old-API /apps/files answer is BEHIND the baseline.
+
+    Both the id and the semver must say so: ids are monotonic per registry
+    and semver per line, and requiring both keeps an unparseable or odd
+    answer on the generic "moved" path rather than inviting a retry loop.
+    """
+    version_id = resp.get("version_id")
+    if not isinstance(version_id, int) or version_id >= baseline.base_version_id:
+        return False
+    try:
+        return Version(str(resp.get("semver") or "")) < Version(baseline.semver)
+    except InvalidVersion:
+        return False
 
 
 def _app_fork(args: argparse.Namespace) -> None:

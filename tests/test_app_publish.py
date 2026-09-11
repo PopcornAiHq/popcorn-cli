@@ -693,6 +693,49 @@ class TestPublishCommand:
         assert len(rec.calls) == 1
         assert rec.calls[0][1]["base_version_id"] == 7
 
+    def test_old_api_lagging_channel_is_a_retryable_lag_not_a_moved_line(self, tmp_path):
+        """A backend older than popcorn-backend #1985 ignores `ref` and answers
+        with the bound version (no `ref` in the response). After our own
+        publish moved the baseline, that lags until the install lands —
+        telling the user to re-checkout would replace the tree they just
+        published with the stale one."""
+        base = {"manifest.yaml": _manifest("0.2.1")}
+        _checkout(tmp_path, base, semver="0.2.1", base_version_id=9)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.2"))
+
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path,
+                _files_response(base, version_id=7, semver="0.2.0"),  # no `ref`
+                rec,
+                _args(directory=str(tmp_path)),
+            )
+        assert "has not landed" in str(exc.value)
+        assert exc.value.retryable
+        assert "app apply" in str(exc.value.hint or "")
+        assert "app checkout" not in str(exc.value.hint or "")
+        assert rec.calls == []
+
+    def test_new_api_mismatch_is_always_a_moved_line(self, tmp_path):
+        """With `ref` in the response the server answered with the HEAD, so a
+        lower version there is a real (if odd) line state, never a lag."""
+        base = {"manifest.yaml": _manifest("0.2.1")}
+        _checkout(tmp_path, base, semver="0.2.1", base_version_id=9)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.2"))
+
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path,
+                _files_response(base, ref="head", version_id=7, semver="0.2.0"),
+                rec,
+                _args(directory=str(tmp_path)),
+            )
+        assert "fork line moved to" in str(exc.value)
+        assert not exc.value.retryable
+        assert rec.calls == []
+
     def test_fetches_the_head_not_the_bound_version(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
