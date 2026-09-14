@@ -6,7 +6,10 @@ app fork → app checkout → edit → template check → app publish → app ap
 
 `fork` leads even though a checkout is what you edit: publishing needs a
 checkout of a version this workspace OWNS, so `publish` from a product
-checkout cannot work (`PublishBaseNotForkError`).
+checkout cannot work (`PublishBaseNotForkError`). `checkout --fork` does both
+in one command, since the pair is almost always run together; `fork` stays a
+command of its own, and a checkout WITHOUT it stays the way to read what a
+channel runs without touching it.
 
 A checkout is the fork line's HEAD, not what the channel happens to run. A
 publish is a line operation and must be based on the head (popcorn-backend
@@ -31,6 +34,7 @@ package at module load to build the parser, so a module-level import cycles.
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
 
 from popcorn_core import flow_rules, operations
@@ -113,13 +117,26 @@ def _app_list(args: argparse.Namespace) -> None:
 
 
 def _app_checkout(args: argparse.Namespace) -> None:
-    from ..cli import _get_client, _output
+    from ..cli import _confirm_force, _get_client, _output
 
     client = _get_client(args)
     # Resolved here rather than inside the operation because the baseline
     # stores it. resolve_conversation caches, so naming it twice is one
     # request, and it passes a UUID straight through.
     conv_id = resolve_conversation(client, args.channel)
+
+    # Before the read, not after: the fork re-binds the channel, so a checkout
+    # taken first would be of the product tree and the baseline would record
+    # `kind: product` — the very state `publish` refuses.
+    #
+    # `is not None` rather than truthiness: `--fork` with no value parses to
+    # the const "", which means "fork, infer the line" and must not read as
+    # "no --fork". Absent, it stays None and this whole branch is skipped —
+    # a fork-less checkout is a legitimate read of what a channel runs.
+    forked = None
+    if getattr(args, "fork", None) is not None:
+        forked = _fork(args, client, conv_id, args.fork or None)
+
     resp = operations.get_channel_app_files(client, conv_id)
     files = files_from_response(resp)
     if not files:
@@ -132,10 +149,15 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # directory cannot scatter bundle files over whatever is already there.
     directory = Path(args.directory) if args.directory else Path(resp.get("app") or "app")
 
-    if occupied(directory) and not args.force:
+    # `_confirm_force`, not `_confirm`: this overwrites files the author may
+    # be the only holder of, and `-y` must not be enough to lose them.
+    if occupied(directory) and not _confirm_force(
+        args, f"{directory} is not empty — overwrite its bundle files?"
+    ):
         raise PopcornError(
-            f"{directory} is not empty — pass --force to overwrite its bundle files",
+            f"{directory} is not empty — its bundle files were left as they are",
             error_code="validation",
+            hint="pass --force to overwrite them",
         )
 
     directory.mkdir(parents=True, exist_ok=True)
@@ -159,7 +181,10 @@ def _app_checkout(args: argparse.Namespace) -> None:
         "tree_digest": baseline.tree_digest,
         "files": written,
     }
+    if forked is not None:
+        data["fork"] = forked
     lines = [
+        *(_fork_lines(forked) if forked is not None else []),
         f"Checked out {baseline.app} {baseline.semver} ({baseline.kind}) into {directory}",
     ]
     if channel_id != baseline.base_version_id:
@@ -242,12 +267,63 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
     )
 
 
-def _app_fork(args: argparse.Namespace) -> None:
-    from ..cli import _get_client, _output
+def _inferred_fork_line(client, conversation: str) -> dict | None:
+    """The line a NAMELESS fork would adopt, when there is exactly one.
 
-    client = _get_client(args)
-    data = operations.fork_channel_app(client, args.channel, args.name)
+    `fork_channel_app` posts `{}` and the 0/1/2+ decision is the server's, so
+    the only way to know which line is about to be adopted is to ask: one
+    `kind: "fork"` entry per line comes back from `app list`. Filtered to the
+    app the channel actually runs, because a workspace can own fork lines of
+    apps this channel has nothing to do with.
 
+    None for both the 0 case (the server mints `default`, nothing to disclose)
+    and the 2+ case (the server refuses and lists them — a good message, and
+    duplicating it here is a second copy to drift).
+    """
+    data = operations.list_channel_apps(client, conversation)
+    app = (data.get("channel") or {}).get("app")
+    lines = [
+        item
+        for item in (data.get("apps") or [])
+        if item.get("kind") == "fork" and (not app or item.get("app") == app)
+    ]
+    return lines[0] if len(lines) == 1 else None
+
+
+def _fork(args: argparse.Namespace, client, conversation: str, name: str | None) -> dict:
+    """Fork, disclosing and confirming first when the line is being INFERRED.
+
+    A named fork is an explicit choice and goes straight through. A nameless
+    one silently adopts whatever single line the workspace owns, wherever that
+    has got to — in one prod workspace, 23 minor versions behind product
+    (KEW-2362).
+
+    The disclosure is the point, not the gate, so it prints on EVERY path: a
+    bare `print` rather than `cli._status`, because `--quiet` suppresses that
+    and `-q -y` is precisely the agent invocation this exists for.
+    """
+    from ..cli import _confirm
+
+    if not name:
+        line = _inferred_fork_line(client, conversation)
+        if line is not None:
+            label = line.get("fork_name") or "default"
+            print(
+                f"No --name given: adopting this workspace's existing fork line "
+                f"'{label}' of {line.get('app')}, at {line.get('semver')}.",
+                file=sys.stderr,
+            )
+            if not _confirm(args, f"Adopt fork line '{label}'?"):
+                raise PopcornError(
+                    "fork cancelled — no line was adopted",
+                    error_code="validation",
+                    hint=f"name the line to be sure: --name '{label}'",
+                )
+    return operations.fork_channel_app(client, conversation, name)
+
+
+def _fork_lines(data: dict) -> list[str]:
+    """How a fork went, as rendered lines. Shared with `checkout --fork`."""
     status = data.get("status")
     headline = {
         "created": "Forked",
@@ -262,7 +338,16 @@ def _app_fork(args: argparse.Namespace) -> None:
         rendered.append(
             "The install is asynchronous — 'popcorn app list' shows when the channel has moved."
         )
-    rendered += ["", "Next: popcorn app checkout --channel <channel>"]
+    return rendered
+
+
+def _app_fork(args: argparse.Namespace) -> None:
+    from ..cli import _get_client, _output
+
+    client = _get_client(args)
+    data = _fork(args, client, args.channel, args.name)
+
+    rendered = [*_fork_lines(data), "", "Next: popcorn app checkout --channel <channel>"]
     _output(args, data, "\n".join(rendered))
 
 
@@ -281,8 +366,8 @@ def _app_publish(args: argparse.Namespace) -> None:
             f"{baseline.app} {baseline.semver} is a PRODUCT version — a "
             "publish lands on a fork line this workspace owns",
             error_code="conflict",
-            hint="run 'popcorn app fork --channel <channel>', then re-run "
-            "'popcorn app checkout' before publishing",
+            hint="re-run 'popcorn app checkout --channel <channel> --fork' — "
+            "one command forks and checks out the line's head",
         )
 
     local = collect_tree(directory)
@@ -503,8 +588,20 @@ register(
                         nargs="?",
                     ),
                     Argument(
+                        "fork",
+                        "Fork first, then check out the line's head. Takes an "
+                        "optional line name; bare, it confirms the line it "
+                        "infers. It cannot be told apart from the directory "
+                        "positional, so '--fork mydir' names the LINE 'mydir' "
+                        "— write '--fork=<line>', or put the directory ahead "
+                        "of a bare --fork",
+                        nargs="?",
+                        const="",
+                    ),
+                    Argument(
                         "force",
-                        "Overwrite bundle files in a non-empty directory",
+                        "Overwrite bundle files in a non-empty directory "
+                        "without asking (--yes does not cover this)",
                         action="store_true",
                     ),
                 ],

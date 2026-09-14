@@ -241,6 +241,7 @@ def _args(**over):
     base = {
         "channel": "#alerts",
         "directory": None,
+        "fork": None,
         "force": False,
         "json": False,
         "quiet": True,
@@ -358,6 +359,155 @@ class TestCheckoutCommand:
         with pytest.raises(PopcornError) as exc:
             self._run(_files_response({}), _args(directory=str(tmp_path / "out")))
         assert "no files" in str(exc.value)
+
+
+class TestCheckoutFork:
+    """`--fork [name]` — fork and check out in one command (KEW-2362)."""
+
+    def _run(self, resp, args, listing=None):
+        """Like TestCheckoutCommand._run, with the fork path patched too.
+
+        `order` is what this class is mostly about: the fork must precede the
+        files read, or the tree is the product one.
+        """
+        from popcorn_cli.commands import app as mod
+
+        captured: dict = {"order": [], "forks": []}
+
+        def _files(client, conversation, ref="head"):
+            captured["order"].append("files")
+            return resp
+
+        def _fork(client, conversation, fork_name=None):
+            captured["order"].append("fork")
+            captured["forks"].append((conversation, fork_name))
+            return {"ok": True, "status": "created", "app": "alerttracker", "semver": "0.2.0"}
+
+        def _list(client, conversation):
+            captured["order"].append("list")
+            return listing or {"apps": [], "channel": None}
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(mod, "resolve_conversation", return_value=_CONV),
+            patch.object(operations, "get_channel_app_files", _files),
+            patch.object(operations, "fork_channel_app", _fork),
+            patch.object(operations, "list_channel_apps", _list),
+        ):
+            mod._app_checkout(args)
+        return captured
+
+    def test_forks_then_checks_out_in_one_step(self, tmp_path):
+        out = self._run(
+            _files_response({"manifest.yaml": "v: 1\n"}, kind="fork"),
+            _args(directory=str(tmp_path / "out"), fork="experiment"),
+        )
+        assert out["forks"] == [(_CONV, "experiment")]
+        # The read must come second: a fork re-binds the channel, so the other
+        # order checks out the product tree the publish would then refuse.
+        assert out["order"] == ["fork", "files"]
+        assert (tmp_path / "out" / "manifest.yaml").exists()
+        assert read_baseline(tmp_path / "out").kind == "fork"
+        assert "Forked alerttracker" in out["rendered"]
+        assert out["data"]["fork"]["status"] == "created"
+
+    def test_a_bare_fork_confirms_the_line_it_infers(self, tmp_path, tty):
+        """`--fork` with no value carries the same ambiguity as a nameless
+        `app fork`, so it goes through the same disclosure."""
+        prompts = tty("y")
+        listing = {
+            "apps": [
+                {"kind": "fork", "app": "alerttracker", "fork_name": "demo", "semver": "1.1.0"}
+            ],
+            "channel": {"app": "alerttracker"},
+        }
+        out = self._run(
+            _files_response({"manifest.yaml": "v: 1\n"}, kind="fork"),
+            # "" is what argparse's const gives a bare --fork.
+            _args(directory=str(tmp_path / "out"), fork=""),
+            listing=listing,
+        )
+        assert prompts and "demo" in prompts[0]
+        assert out["forks"] == [(_CONV, None)]
+        assert out["order"] == ["list", "fork", "files"]
+
+    def test_no_fork_flag_still_records_a_product_checkout(self, tmp_path):
+        """Reading what a channel runs without touching it stays a legitimate
+        use — it is how a shipped bundle gets read (KEW-2331)."""
+        out = self._run(
+            _files_response({"manifest.yaml": "v: 1\n"}),
+            _args(directory=str(tmp_path / "out")),
+        )
+        assert out["order"] == ["files"]
+        assert out["forks"] == []
+        assert read_baseline(tmp_path / "out").kind == "product"
+        assert "fork" not in out["data"]
+
+
+class TestCheckoutOverwrite:
+    """Overwriting a checkout prompts, and `-y` deliberately does not answer it.
+
+    Verified cost of the old `--force`-or-refuse shape: a README edit and a
+    `version:` bump both gone with no warning. The callers most likely to pass
+    `-y` by reflex are the ones with no way to notice.
+    """
+
+    def _run(self, resp, args):
+        return TestCheckoutCommand()._run(resp, args)
+
+    def test_prompts_and_overwrites_on_yes(self, tmp_path, tty):
+        (tmp_path / "manifest.yaml").write_text("mine")
+        prompts = tty("y")
+        self._run(_files_response({"manifest.yaml": "theirs"}), _args(directory=str(tmp_path)))
+        assert prompts and "not empty" in prompts[0]
+        assert (tmp_path / "manifest.yaml").read_text() == "theirs"
+
+    def test_declining_leaves_the_working_copy_alone(self, tmp_path, tty):
+        (tmp_path / "manifest.yaml").write_text("mine")
+        tty("n")
+        with pytest.raises(PopcornError) as exc:
+            self._run(_files_response({"manifest.yaml": "theirs"}), _args(directory=str(tmp_path)))
+        assert "--force" in str(exc.value.hint or "")
+        assert (tmp_path / "manifest.yaml").read_text() == "mine"
+
+    def test_force_accepts_without_asking(self, tmp_path, tty):
+        (tmp_path / "manifest.yaml").write_text("mine")
+        prompts = tty("n")
+        self._run(
+            _files_response({"manifest.yaml": "theirs"}),
+            _args(directory=str(tmp_path), force=True),
+        )
+        assert prompts == []
+        assert (tmp_path / "manifest.yaml").read_text() == "theirs"
+
+    def test_yes_alone_does_not_answer_this_one(self, tmp_path):
+        """`-y` answers the fork-line prompt; the two do not share a switch,
+        because they do not carry the same risk."""
+        (tmp_path / "manifest.yaml").write_text("mine")
+        with pytest.raises(PopcornError) as exc:
+            self._run(
+                _files_response({"manifest.yaml": "theirs"}),
+                _args(directory=str(tmp_path), yes=True),
+            )
+        assert "--force" in str(exc.value)
+        assert (tmp_path / "manifest.yaml").read_text() == "mine"
+
+    def test_yes_does_not_answer_it_interactively_either(self, tmp_path, tty):
+        """Not just a non-TTY accident: with a terminal to ask on, `-y` still
+        gets asked."""
+        (tmp_path / "manifest.yaml").write_text("mine")
+        prompts = tty("n")
+        with pytest.raises(PopcornError):
+            self._run(
+                _files_response({"manifest.yaml": "theirs"}),
+                _args(directory=str(tmp_path), yes=True),
+            )
+        assert prompts, "-y must not skip the overwrite prompt"
+        assert (tmp_path / "manifest.yaml").read_text() == "mine"
 
 
 # ---------------------------------------------------------------------------

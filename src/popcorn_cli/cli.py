@@ -338,6 +338,30 @@ def _confirm(args: argparse.Namespace, prompt: str, *, default: bool = False) ->
     return answer in ("y", "yes")
 
 
+def _confirm_force(args: argparse.Namespace, prompt: str) -> bool:
+    """`_confirm` for a destructive overwrite: ``--force`` accepts, ``-y`` does not.
+
+    Deliberately never consults `_assume_yes`. The two prompts do not carry the
+    same risk: adopting a fork line is recoverable, overwriting a working copy
+    destroys edits that exist nowhere else, and the callers most likely to pass
+    ``-y`` by reflex — scripts and agents — are the ones with no way to notice
+    the loss afterwards. So this one needs a switch that names the act.
+
+    Same three-way rule otherwise: ``--force`` → accept; non-TTY → raise rather
+    than hang; otherwise prompt, defaulting to no.
+    """
+    if getattr(args, "force", False):
+        return True
+    if not sys.stdin.isatty():
+        raise PopcornError(
+            "Refusing to prompt in non-interactive mode. "
+            "Pass --force to overwrite (--yes does not cover this).",
+            error_code="validation",
+            hint="--force",
+        )
+    return input(prompt + " [y/N] ").strip().lower() in ("y", "yes")
+
+
 def _resolve_data_arg(value: str) -> str:
     """Resolve the ``-d``/``--data`` argument, supporting curl/gh-style ``@`` prefix.
 
