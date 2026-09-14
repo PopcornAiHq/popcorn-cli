@@ -88,6 +88,19 @@ TRIGGER_KEYS = frozenset(flow_rules.TRIGGER_KEYS)
 # rejoins them into whole segments.
 _REF_RE = re.compile(flow_rules.REFERENCE_PATTERN)
 
+# The failure a step absorbed under `on_error: skip`, readable as
+# `$steps.<id>.error` and null when the step did not fail. Every step carries
+# it, so unlike `output` and a `collect:` name there is nothing per-step to
+# consult. Both properties are strings, so nothing is reachable below them.
+# Mirrors popcorn-backend: lib/temporal/dsl/validator.py — _STEP_ERROR_SCHEMA.
+#
+# Hand-authored, which is the bug this was added for: the served schema carries
+# the reference grammar but not the per-step head rule, so `make check-rules`
+# cannot see a head the backend adds. Moving the head list into the payload is
+# tracked on KEW-2331.
+_STEP_ERROR_PROPERTIES = ("message", "type")
+
+
 # `$channel` keys the interpreter seeds itself, so the manifest never declares
 # them: the connected-integrations map and the same integrations as a list to
 # fan out over.
@@ -937,14 +950,16 @@ class _Checker:
         head = parts[2]
         if head == info.collect:
             return  # a foreach's collected list; per-item shape unknowable here
+        if head == "error":
+            self._check_step_error_ref(value, parts[3:], step_id, where)
+            return
         if head != "output":
-            available = "`output`" + (f" or `{info.collect}`" if info.collect else "")
+            available = "`output` or `error`" + (f", or `{info.collect}`" if info.collect else "")
             self.err(
                 "step-ref-needs-output",
                 where,
                 f"'{value}' reads '{head}' off step '{step_id}', which publishes {available}. "
-                "A name other than `output` only resolves when the step declares it with "
-                "`collect:`.",
+                "Any other name only resolves when the step declares it with `collect:`.",
             )
             return
         rest = parts[3:]
@@ -982,6 +997,24 @@ class _Checker:
                 f"output_schema.required. A declared-but-optional property is genuinely optional, "
                 "and a missing key is a hard ReferenceError that fails the run — `on_error` "
                 "cannot rescue it, because resolution precedes invocation. Add it to `required`.",
+            )
+
+    def _check_step_error_ref(self, value: str, rest: list[str], step_id: str, where: str) -> None:
+        """Check the path under `$steps.<id>.error`, which any step publishes."""
+        if not rest:
+            return  # the whole `{message, type}` object
+        if rest[0] not in _STEP_ERROR_PROPERTIES:
+            self.err(
+                "unknown-step-error-property",
+                where,
+                f"'{value}' reads '{rest[0]}' off `$steps.{step_id}.error`, which carries "
+                f"{' and '.join(f'`{p}`' for p in _STEP_ERROR_PROPERTIES)}.",
+            )
+        elif len(rest) > 1:
+            self.err(
+                "unknown-step-error-property",
+                where,
+                f"'{value}' reaches below `$steps.{step_id}.error.{rest[0]}`, which is a string.",
             )
 
     def _check_channel_ref(self, value: str, parts: list[str], where: str, scope: _Scope) -> None:

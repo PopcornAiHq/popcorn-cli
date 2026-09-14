@@ -348,6 +348,53 @@ def test_step_ref_must_go_through_output(tmp_path):
     assert "step-ref-needs-output" in codes(root)
 
 
+def test_step_error_ref_is_accepted(tmp_path):
+    """`$steps.<id>.error` is the failure a skipped step absorbed — every step
+    has one, so it needs no `collect:` and no output_schema entry."""
+    flow = mutate(
+        CLEAN_INTAKE,
+        "post",
+        args={"channel_id": "$inputs.conversation_id", "text": "$steps.now.error.message"},
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "step-ref-needs-output" not in codes(root)
+    assert "unknown-step-error-property" not in codes(root)
+
+
+def test_bare_step_error_ref_is_accepted(tmp_path):
+    """The whole `{message, type}` object, with no path under it."""
+    flow = mutate(
+        CLEAN_INTAKE,
+        "post",
+        args={"channel_id": "$inputs.conversation_id", "text": "$steps.now.error"},
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "step-ref-needs-output" not in codes(root)
+    assert "unknown-step-error-property" not in codes(root)
+
+
+def test_unknown_step_error_property_is_an_error(tmp_path):
+    """`error` carries exactly `message` and `type`; anything else is a typo."""
+    flow = mutate(
+        CLEAN_INTAKE,
+        "post",
+        args={"channel_id": "$inputs.conversation_id", "text": "$steps.now.error.reason"},
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-step-error-property" in codes(root)
+
+
+def test_path_below_step_error_property_is_an_error(tmp_path):
+    """Both properties are strings, so nothing is reachable below them."""
+    flow = mutate(
+        CLEAN_INTAKE,
+        "post",
+        args={"channel_id": "$inputs.conversation_id", "text": "$steps.now.error.type.code"},
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    assert "unknown-step-error-property" in codes(root)
+
+
 def test_undeclared_channel_key_warns(tmp_path):
     flow = mutate(
         CLEAN_SWEEP,
