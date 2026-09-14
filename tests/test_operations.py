@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+import json
+from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 
 from popcorn_core import operations
@@ -410,6 +412,119 @@ class TestWebhookCreate:
         mock_client.get.return_value = {"sources": [], "action_modes": []}
         operations.webhook_event_types(mock_client)
         mock_client.get.assert_called_once_with("/api/webhooks/event-types")
+
+
+_HOOKS = {
+    "webhooks": [
+        {"id": "11111111-2222-3333-4444-555555555555", "name": "Intake", "url": "u/intake"},
+        {"id": "66666666-7777-8888-9999-000000000000", "name": "Alerts", "url": "u/alerts"},
+    ]
+}
+
+
+class TestWebhookSendResolution:
+    def test_url_target_needs_no_lookup(self, mock_client):
+        url = operations.resolve_webhook_url(
+            mock_client, "https://hooks.popcorn.ai/ingest/tok-1", None
+        )
+        assert url == "https://hooks.popcorn.ai/ingest/tok-1"
+        mock_client.get.assert_not_called()
+
+    def test_by_uuid(self, mock_client):
+        mock_client.get.return_value = _HOOKS
+        url = operations.resolve_webhook_url(
+            mock_client, "11111111-2222-3333-4444-555555555555", "conv-1"
+        )
+        assert url == "u/intake"
+
+    def test_by_name(self, mock_client):
+        mock_client.get.return_value = _HOOKS
+        assert operations.resolve_webhook_url(mock_client, "Alerts", "conv-1") == "u/alerts"
+
+    def test_by_name_is_case_insensitive(self, mock_client):
+        mock_client.get.return_value = _HOOKS
+        assert operations.resolve_webhook_url(mock_client, "iNtAkE", "conv-1") == "u/intake"
+
+    def test_missing_channel_explains_why(self, mock_client):
+        """The only lookup is conversation-scoped, so say that, not 'usage'."""
+        with pytest.raises(PopcornError) as exc:
+            operations.resolve_webhook_url(mock_client, "Intake", None)
+        assert "channel" in str(exc.value).lower()
+        assert exc.value.error_code == "validation"
+        mock_client.get.assert_not_called()
+
+    def test_unknown_target_lists_what_exists(self, mock_client):
+        mock_client.get.return_value = _HOOKS
+        with pytest.raises(PopcornError) as exc:
+            operations.resolve_webhook_url(mock_client, "Nope", "conv-1")
+        assert exc.value.error_code == "not_found"
+        assert "Intake" in str(exc.value)
+
+    def test_hook_without_url(self, mock_client):
+        mock_client.get.return_value = {"webhooks": [{"id": "wh-1", "name": "Intake"}]}
+        with pytest.raises(PopcornError, match="no ingest URL"):
+            operations.resolve_webhook_url(mock_client, "Intake", "conv-1")
+
+
+class TestWebhookSend:
+    @staticmethod
+    def _resp(status=200, json_body=None, text=""):
+        resp = MagicMock()
+        resp.status_code = status
+        resp.text = text
+        if json_body is None:
+            resp.json.side_effect = ValueError("not json")
+        else:
+            resp.json.return_value = json_body
+        return resp
+
+    def test_send_carries_no_authorization_header(self):
+        """The ingest host is not the API host — the POST must be credential-free."""
+        resp = self._resp(json_body={"status": "ok", "request_id": "r-1"})
+        with patch("popcorn_core.operations.httpx.post", return_value=resp) as post:
+            operations.send_webhook("https://hooks.popcorn.ai/ingest/tok-1", {"a": 1})
+        headers = post.call_args.kwargs["headers"]
+        assert headers == {"Content-Type": "application/json"}
+        assert not any(k.lower() == "authorization" for k in headers)
+
+    def test_send_posts_json_body(self):
+        resp = self._resp(json_body={"status": "ok", "request_id": "r-1"})
+        with patch("popcorn_core.operations.httpx.post", return_value=resp) as post:
+            result = operations.send_webhook("https://hooks.popcorn.ai/ingest/t", {"a": 1})
+        assert post.call_args[0][0] == "https://hooks.popcorn.ai/ingest/t"
+        assert json.loads(post.call_args.kwargs["content"]) == {"a": 1}
+        assert result == {
+            "url": "https://hooks.popcorn.ai/ingest/t",
+            "status": 200,
+            "response": {"status": "ok", "request_id": "r-1"},
+        }
+
+    def test_non_2xx_is_an_error_carrying_the_body(self):
+        resp = self._resp(status=422, json_body={"detail": "bad payload"}, text='{"detail":"bad"}')
+        with (
+            patch("popcorn_core.operations.httpx.post", return_value=resp),
+            pytest.raises(APIError) as exc,
+        ):
+            operations.send_webhook("https://hooks.popcorn.ai/ingest/t", {})
+        assert exc.value.status_code == 422
+        assert exc.value.exit_code != 0
+        assert "bad" in str(exc.value)
+
+    def test_non_json_body_falls_back_to_text(self):
+        resp = self._resp(status=200, json_body=None, text="accepted")
+        with patch("popcorn_core.operations.httpx.post", return_value=resp):
+            result = operations.send_webhook("https://hooks.popcorn.ai/ingest/t", {})
+        assert result["response"] == "accepted"
+
+    def test_timeout(self):
+        with (
+            patch(
+                "popcorn_core.operations.httpx.post",
+                side_effect=httpx.TimeoutException("timed out"),
+            ),
+            pytest.raises(APIError, match="timed out"),
+        ):
+            operations.send_webhook("https://hooks.popcorn.ai/ingest/t", {})
 
 
 class TestFlows:

@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 from unittest.mock import patch
 
 import pytest
 
 from popcorn_cli.cli import build_parser, cmd_webhook
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import EXIT_SERVER, APIError, PopcornError
 
 
 @pytest.fixture()
@@ -696,6 +697,146 @@ class TestWebhook:
     def test_webhook_event_types(self, parser):
         args = parser.parse_args(["webhook", "event-types"])
         assert args.webhook_command == "event-types"
+
+
+_SENT = {"url": "https://hooks.popcorn.ai/ingest/tok", "status": 200, "response": {"ok": 1}}
+
+
+class TestWebhookSend:
+    """`webhook send` resolves a target, then POSTs to the ingest host."""
+
+    def test_parses_target_payload_and_channel(self, parser):
+        args = parser.parse_args(["webhook", "send", "Intake", '{"a": 1}', "--channel", "#ops"])
+        assert args.webhook_command == "send"
+        assert args.target == "Intake"
+        assert args.payload == '{"a": 1}'
+        assert args.channel == "#ops"
+
+    def test_payload_and_channel_are_optional(self, parser):
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok"])
+        assert args.payload is None
+        assert args.channel is None
+
+    def test_url_target_sends_without_a_client(self, parser):
+        """An ingest URL needs no lookup and no credentials."""
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok"])
+        with (
+            patch("popcorn_cli.cli._get_client") as get_client,
+            patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send,
+        ):
+            cmd_webhook(args)
+        get_client.assert_not_called()
+        assert send.call_args[0] == ("https://hooks.popcorn.ai/ingest/tok", {})
+
+    def test_payload_defaults_to_empty_object(self, parser):
+        args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
+        with (
+            patch("popcorn_cli.cli._get_client"),
+            patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1"),
+            patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send,
+        ):
+            cmd_webhook(args)
+        assert send.call_args[0][1] == {}
+
+    def test_name_target_is_resolved_through_the_channel(self, parser):
+        args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
+        with (
+            patch("popcorn_cli.cli._get_client"),
+            patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1") as resolve,
+            patch("popcorn_core.operations.send_webhook", return_value=_SENT),
+        ):
+            cmd_webhook(args)
+        assert resolve.call_args[0][1:] == ("Intake", "#ops")
+
+    def test_file_payload(self, parser, tmp_path):
+        body = tmp_path / "lead.json"
+        body.write_text('{"from": "file"}')
+        args = parser.parse_args(
+            ["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", f"@{body}"]
+        )
+        with patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send:
+            cmd_webhook(args)
+        assert send.call_args[0][1] == {"from": "file"}
+
+    def test_stdin_payload(self, parser, monkeypatch):
+        import io
+
+        monkeypatch.setattr("sys.stdin", io.StringIO('{"from": "stdin"}'))
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", "@-"])
+        with patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send:
+            cmd_webhook(args)
+        assert send.call_args[0][1] == {"from": "stdin"}
+
+    def test_bad_payload_is_a_validation_error(self, parser):
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", "nope"])
+        with pytest.raises(PopcornError) as exc:
+            cmd_webhook(args)
+        assert exc.value.error_code == "validation"
+
+    def test_human_output_shows_status_and_body(self, parser, capsys):
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok"])
+        sent = {
+            "url": "https://hooks.popcorn.ai/ingest/tok",
+            "status": 202,
+            "response": {"status": "ok", "request_id": "req-9"},
+        }
+        with patch("popcorn_core.operations.send_webhook", return_value=sent):
+            cmd_webhook(args)
+        out = capsys.readouterr().out
+        assert "HTTP 202" in out
+        assert "req-9" in out
+
+    def test_json_output_carries_url_status_and_response(self, parser, capsys):
+        args = parser.parse_args(
+            ["--json", "webhook", "send", "https://hooks.popcorn.ai/ingest/tok"]
+        )
+        sent = {
+            "url": "https://hooks.popcorn.ai/ingest/tok",
+            "status": 200,
+            "response": {"status": "ok", "request_id": "req-9"},
+        }
+        with patch("popcorn_core.operations.send_webhook", return_value=sent):
+            cmd_webhook(args)
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["ok"] is True
+        assert payload["data"] == sent
+
+    def test_missing_channel_for_a_name_target_errors_helpfully(self, parser):
+        args = parser.parse_args(["webhook", "send", "Intake"])
+        with patch("popcorn_cli.cli._get_client"), pytest.raises(PopcornError) as exc:
+            cmd_webhook(args)
+        assert "--channel" in str(exc.value) or "channel" in str(exc.value).lower()
+        assert exc.value.error_code == "validation"
+
+    def test_non_2xx_exits_non_zero_with_the_body(self, parser):
+        args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok"])
+        err = APIError("Webhook send failed: HTTP 500\nboom", status_code=500, body="boom")
+        with (
+            patch("popcorn_core.operations.send_webhook", side_effect=err),
+            pytest.raises(APIError) as exc,
+        ):
+            cmd_webhook(args)
+        assert exc.value.exit_code == EXIT_SERVER
+        assert "boom" in exc.value.to_dict()["body"]
+
+    def test_send_reaches_both_completions(self, capsys):
+        """The subcommand list is hand-maintained in both shells — keep them in step."""
+        from popcorn_cli.cli import cmd_completion
+
+        for shell in ("bash", "zsh"):
+            cmd_completion(argparse.Namespace(shell=shell))
+            out = capsys.readouterr().out
+            assert "create deliveries event-types list send" in out, f"stale {shell} completion"
+
+    def test_send_reaches_the_help_listings(self, parser):
+        """The same list is restated in the epilog and the description dict."""
+        from popcorn_cli.cli import _COMMAND_DESCRIPTIONS
+
+        assert "send" in _COMMAND_DESCRIPTIONS["webhook"]
+        webhook_lines = [
+            ln for ln in parser.format_help().splitlines() if ln.strip().startswith("webhook ")
+        ]
+        assert webhook_lines and all("send" in ln for ln in webhook_lines)
 
 
 class TestChannelTemplates:

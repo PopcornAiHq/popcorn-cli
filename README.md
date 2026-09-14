@@ -123,6 +123,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn webhook list <conv>` | List webhooks |
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
+| `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |
 | **VM** | |
 | `popcorn vm monitor [--watch] [-n INTERVAL] [--raw]` | Show active workers and queue |
 | `popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]` | Token and cost analytics |
