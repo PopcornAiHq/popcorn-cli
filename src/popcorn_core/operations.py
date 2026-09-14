@@ -592,6 +592,86 @@ def list_webhooks(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.get("/api/webhooks/list", {"conversation": conv_id})
 
 
+def is_webhook_url(target: str) -> bool:
+    """True when a `webhook send` target is already an ingest URL."""
+    return target.startswith(("http://", "https://"))
+
+
+def resolve_webhook_url(
+    client: APIClient,
+    target: str,
+    conversation: str | None = None,
+) -> str:
+    """Turn a webhook reference into its ingest URL.
+
+    ``target`` is either an ingest URL (returned untouched), a webhook UUID, or
+    a webhook name matched case-insensitively. The last two need
+    ``conversation``: ``list_webhooks`` is the only lookup the API offers and it
+    is scoped to one conversation — there is no get-by-id.
+    """
+    if is_webhook_url(target):
+        return target
+    if not conversation:
+        raise PopcornError(
+            f"'{target}' is a webhook name or UUID, and looking one up needs a channel: "
+            "the API's only webhook lookup is scoped to a conversation. "
+            "Pass --channel, or give the full ingest URL instead.",
+            error_code="validation",
+            hint="popcorn webhook send <target> --channel '#my-channel'",
+        )
+    resp = list_webhooks(client, conversation)
+    hooks = resp if isinstance(resp, list) else resp.get("webhooks", [])
+    wanted = target.lower()
+    for hook in hooks:
+        if str(hook.get("id", "")) == target or str(hook.get("name", "")).lower() == wanted:
+            url = hook.get("url")
+            if not url:
+                raise PopcornError(
+                    f"Webhook '{target}' in {conversation} has no ingest URL to post to",
+                    error_code="not_found",
+                )
+            return str(url)
+    known = ", ".join(str(h.get("name", h.get("id", "?"))) for h in hooks) or "none"
+    raise PopcornError(
+        f"No webhook '{target}' in {conversation} (has: {known})",
+        error_code="not_found",
+        hint=f"popcorn webhook list {conversation}",
+    )
+
+
+def send_webhook(url: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+    """POST a payload to a webhook's ingest URL.
+
+    Deliberately not routed through ``APIClient``: the ingest host is not the
+    API host and the endpoint is unauthenticated, so the request carries a
+    content type and nothing else. Sending it through the client would attach
+    the caller's bearer token to a different host.
+    """
+    try:
+        resp = httpx.post(
+            url,
+            content=json.dumps(payload),
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+    except httpx.TimeoutException as e:
+        raise APIError(f"Webhook send timed out for {url}") from e
+    except httpx.HTTPError as e:
+        raise APIError(f"Webhook send network error: {e}") from e
+
+    if not 200 <= resp.status_code < 300:
+        raise APIError(
+            f"Webhook send failed: HTTP {resp.status_code}\n{resp.text[:1000]}",
+            status_code=resp.status_code,
+            body=resp.text,
+        )
+    try:
+        body: Any = resp.json()
+    except ValueError:
+        body = resp.text
+    return {"url": url, "status": resp.status_code, "response": body}
+
+
 def list_webhook_deliveries(
     client: APIClient,
     conversation: str,

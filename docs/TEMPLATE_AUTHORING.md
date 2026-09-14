@@ -700,8 +700,8 @@ a publish (§2a), so get the inner one clean first:
 popcorn channel templates                            # is my version installable?
 popcorn channel create '#chan' --template mytemplate # note the UUID — see below
 
-popcorn webhook list <id>                            # copyable URL
-curl -X POST <url> -d @fixtures/sample.json
+popcorn webhook list <id>                            # names and ids
+popcorn webhook send Intake @fixtures/sample.json --channel <id>
 
 popcorn flow runs list --channel <id>
 popcorn flow runs get <workflow-id> --channel <id> --include-errors

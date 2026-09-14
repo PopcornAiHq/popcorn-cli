@@ -1326,8 +1326,31 @@ def cmd_delete_channel(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
+def cmd_webhook_send(args: argparse.Namespace) -> None:
+    """Fire a webhook's ingest URL with a JSON payload.
+
+    The client is built only when the target needs resolving: an ingest URL
+    target posts to an unauthenticated host, so it must work without a login.
+    """
+    payload = _read_json_object(args.payload, "payload") if args.payload else {}
+    target = args.target
+    if operations.is_webhook_url(target):
+        url = target
+    else:
+        url = operations.resolve_webhook_url(
+            _get_client(args), target, getattr(args, "channel", None)
+        )
+    result = operations.send_webhook(url, payload)
+    body = result["response"]
+    rendered = json.dumps(body, indent=2) if isinstance(body, dict | list) else str(body)
+    _output(args, result, f"HTTP {result['status']} → {url}\n{rendered}")
+
+
 def cmd_webhook(args: argparse.Namespace) -> None:
     sub = getattr(args, "webhook_command", None)
+    if sub == "send":
+        cmd_webhook_send(args)
+        return
     client = _get_client(args)
 
     if sub == "create":
@@ -1385,7 +1408,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
                 lines.append(f"    payload: {preview}")
         _output(args, resp, "\n".join(lines))
     else:
-        raise PopcornError("Usage: popcorn webhook [create|deliveries|event-types|list]")
+        raise PopcornError("Usage: popcorn webhook [create|deliveries|event-types|list|send]")
 
 
 # ---------------------------------------------------------------------------
@@ -2701,7 +2724,7 @@ _popcorn_completions() {
             COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
             ;;
         webhook)
-            COMPREPLY=($(compgen -W "create deliveries event-types list" -- "$cur"))
+            COMPREPLY=($(compgen -W "create deliveries event-types list send" -- "$cur"))
             ;;
         vm)
             COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
@@ -2731,7 +2754,7 @@ _popcorn() {
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
-        'webhook:Webhook commands (create, deliveries, event-types, list)'
+        'webhook:Webhook commands (create, deliveries, event-types, list, send)'
         'whoami:Show current user and workspace'
         'workspace:Workspace commands (check-access, inbox, list, switch, users)'
 {registry_commands}    )
@@ -2753,7 +2776,7 @@ _popcorn() {
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
                 channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
-                webhook) _values 'subcommand' create deliveries event-types list ;;
+                webhook) _values 'subcommand' create deliveries event-types list send ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
@@ -2909,7 +2932,7 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
-    "webhook": "Webhook commands (create, deliveries, event-types, list)",
+    "webhook": "Webhook commands (create, deliveries, event-types, list, send)",
     "vm": "VM commands (monitor, usage)",
     "auth": "Auth commands (login, logout, status, token)",
     "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
@@ -3303,7 +3326,7 @@ Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)
 
 Webhooks:
-  webhook         Webhook commands (create, deliveries, event-types, list)
+  webhook         Webhook commands (create, deliveries, event-types, list, send)
 
 VM:
   vm              VM commands (monitor, usage)
@@ -3674,6 +3697,19 @@ Other:
     )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
+    wh_send = wh_sub.add_parser("send", help="Send a payload to a webhook's ingest URL")
+    wh_send.add_argument("target", help="Ingest URL, webhook UUID, or webhook name")
+    wh_send.add_argument(
+        "payload",
+        nargs="?",
+        default=None,
+        help="JSON body (default {}; '@-' reads stdin, '@path' reads a file)",
+    )
+    wh_send.add_argument(
+        "--channel",
+        type=str,
+        help="Channel name or UUID — required unless <target> is an ingest URL",
+    )
 
     # --- Escape hatch ---
 
