@@ -14,6 +14,7 @@ bundle layout, of which `tests/fixtures/bundles/alerttracker` is an example.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 from pathlib import Path
 from unittest.mock import patch
@@ -436,6 +437,53 @@ def _args(**over):
     return argparse.Namespace(**base)
 
 
+def _listing(*fork_names: str, app: str = "alerttracker", semver: str = "0.2.0") -> dict:
+    """An `app list` response: one product entry, one per fork line."""
+    return {
+        "apps": [
+            {"kind": "product", "app": app, "semver": "1.37.0"},
+            *({"kind": "fork", "app": app, "fork_name": n, "semver": semver} for n in fork_names),
+        ],
+        "channel": {"app": app, "kind": "product", "semver": "1.37.0"},
+    }
+
+
+class _ForkRecorder:
+    """Captures what fork was asked for, and answers plausibly."""
+
+    def __init__(self, **over):
+        self.calls: list[tuple] = []
+        self.response = {
+            "ok": True,
+            "status": "adopting",
+            "app": "alerttracker",
+            "semver": "0.2.0",
+        }
+        self.response.update(over)
+
+    def __call__(self, client, conversation, fork_name=None):
+        self.calls.append((conversation, fork_name))
+        return dict(self.response)
+
+
+@contextlib.contextmanager
+def _fork_env(rec: _ForkRecorder, listing: dict):
+    """Patched fork/list operations; the yielded dict records list calls."""
+    env: dict = {"listed": []}
+
+    def _list(client, conversation):
+        env["listed"].append(conversation)
+        return listing
+
+    with (
+        patch("popcorn_cli.cli._get_client", return_value=object()),
+        patch("popcorn_cli.cli._output"),
+        patch.object(operations, "list_channel_apps", _list),
+        patch.object(operations, "fork_channel_app", rec),
+    ):
+        yield env
+
+
 class _Recorder:
     """Captures what publish sent, and answers with a plausible response."""
 
@@ -629,7 +677,10 @@ class TestPublishCommand:
         rec = _Recorder()
         with pytest.raises(PopcornError) as exc:
             _run_publish(tmp_path, _files_response({}), rec, _args(directory=str(tmp_path)))
-        assert "app fork" in str(exc.value.hint or "")
+        # The one-command recovery (KEW-2362), not the old fork-then-checkout
+        # pair: `app checkout --fork` does both and cannot be half-done.
+        assert "app checkout" in str(exc.value.hint or "")
+        assert "--fork" in str(exc.value.hint or "")
         assert rec.calls == []
 
     def test_refuses_an_unbumped_version(self, tmp_path):
@@ -929,6 +980,105 @@ class TestForkAndApplyCommands:
         ):
             mod._app_fork(_args(channel="#alerts", name="experiment"))
         assert calls == [("#alerts", "experiment")]
+
+    def test_a_named_fork_does_not_ask_the_server_which_lines_exist(self):
+        """The extra round trip is only earned on the path that infers."""
+        rec = _ForkRecorder()
+        with _fork_env(rec, listing=_listing("default")) as env:
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts", name="experiment"))
+        assert env["listed"] == []
+        assert rec.calls == [("#alerts", "experiment")]
+
+
+class TestNamelessFork:
+    """A nameless fork adopts whatever single line exists, wherever it has got
+    to — 23 minor versions behind product, in the workspace that prompted
+    KEW-2362. So it discloses the line first, on every path."""
+
+    def test_discloses_and_confirms_the_line_it_would_adopt(self, capsys, tty):
+        rec = _ForkRecorder()
+        prompts = tty("y")
+        with _fork_env(rec, listing=_listing("default", semver="1.14.0")):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts"))
+
+        err = capsys.readouterr().err
+        assert "default" in err and "1.14.0" in err
+        assert prompts, "the inferred line must be confirmed, not just announced"
+        assert rec.calls == [("#alerts", None)]
+
+    def test_declining_forks_nothing(self, capsys, tty):
+        rec = _ForkRecorder()
+        tty("n")
+        with _fork_env(rec, listing=_listing("default")):
+            from popcorn_cli.commands import app as mod
+
+            with pytest.raises(PopcornError) as exc:
+                mod._app_fork(_args(channel="#alerts"))
+        assert "cancelled" in str(exc.value)
+        assert rec.calls == []
+
+    def test_yes_still_prints_the_line_it_adopted(self, capsys):
+        """`-y` answers the prompt; it must not silence the disclosure, which
+        is the half that helps the agents most exposed to this."""
+        rec = _ForkRecorder()
+        with _fork_env(rec, listing=_listing("default", semver="1.14.0")):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts", yes=True, quiet=True))
+
+        err = capsys.readouterr().err
+        assert "default" in err and "1.14.0" in err
+        assert rec.calls == [("#alerts", None)]
+
+    def test_non_interactive_without_yes_fails_rather_than_hangs(self):
+        """pytest's stdin is not a TTY, which is the case this covers."""
+        rec = _ForkRecorder()
+        with _fork_env(rec, listing=_listing("default")):
+            from popcorn_cli.commands import app as mod
+
+            with pytest.raises(PopcornError) as exc:
+                mod._app_fork(_args(channel="#alerts"))
+        assert "--yes" in str(exc.value)
+        assert rec.calls == []
+
+    def test_no_existing_line_needs_no_confirmation(self, capsys):
+        """Nothing is being adopted — the server mints 'default'."""
+        rec = _ForkRecorder()
+        with _fork_env(rec, listing=_listing()):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts"))
+        assert rec.calls == [("#alerts", None)]
+        assert "adopting" not in capsys.readouterr().err.lower()
+
+    def test_several_lines_are_left_to_the_server_to_refuse(self, capsys):
+        """The 2+ refusal already names every line. Duplicating it here would
+        be a second copy to drift out of step with the server's."""
+        rec = _ForkRecorder()
+        with _fork_env(rec, listing=_listing("default", "demo914")):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts"))
+        assert rec.calls == [("#alerts", None)]
+        assert capsys.readouterr().err == ""
+
+    def test_ignores_fork_lines_of_other_apps(self, capsys, tty):
+        """A workspace owns lines per app; only the channel's app is at stake,
+        so one line of it plus one of something else is still an inference."""
+        rec = _ForkRecorder()
+        listing = _listing("default")
+        listing["apps"].append({"kind": "fork", "app": "deploywatch", "fork_name": "other"})
+        prompts = tty("y")
+        with _fork_env(rec, listing=listing):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts"))
+        assert prompts and "default" in prompts[0]
+        assert "deploywatch" not in capsys.readouterr().err
 
     def test_apply_reads_the_channel_from_the_baseline(self, tmp_path):
         from popcorn_cli.commands import app as mod

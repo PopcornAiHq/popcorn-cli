@@ -2,11 +2,37 @@
 
 from __future__ import annotations
 
+import sys
 from unittest.mock import MagicMock
 
 import pytest
 
 from popcorn_core.config import Profile
+
+
+@pytest.fixture()
+def tty(monkeypatch):
+    """Script an interactive confirmation prompt.
+
+    pytest's own stdin is not a TTY, which is the branch `_confirm` and
+    `_confirm_force` take to raise rather than hang — so a test of the
+    PROMPT has to supply one. `prompts = tty("y")` installs a TTY stdin
+    answering "y" and hands back the list each prompt string lands in, so a
+    test can assert on what the user was actually asked.
+    """
+
+    def _install(reply: str) -> list[str]:
+        prompts: list[str] = []
+
+        class _Tty:
+            def isatty(self) -> bool:
+                return True
+
+        monkeypatch.setattr(sys, "stdin", _Tty())
+        monkeypatch.setattr("builtins.input", lambda p="": (prompts.append(p), reply)[1])
+        return prompts
+
+    return _install
 
 
 @pytest.fixture()

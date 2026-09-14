@@ -42,6 +42,13 @@ class Argument:
     # is always required). `is_required` below accounts for it, so the
     # commands --json schema does not claim such an argument is mandatory.
     nargs: str | None = None
+    # argparse `const`, which only means anything alongside `nargs="?"` on a
+    # FLAG: the value the flag takes when given with no value. Without it the
+    # bare and the absent form are indistinguishable (both `None`), which is
+    # the difference `app checkout --fork` turns on. `_sub_schema` leaves it
+    # out deliberately — `commands --json` is frozen at 1.0.0 (SPEC.md), and
+    # this is parser detail, not a new contract key.
+    const: str | None = None
 
     @property
     def is_required(self) -> bool:
@@ -65,6 +72,8 @@ class Argument:
                 kwargs["choices"] = self.choices
         if self.nargs:
             kwargs["nargs"] = self.nargs
+        if self.const is not None:
+            kwargs["const"] = self.const
         if self.positional:
             parser.add_argument(self.name, **kwargs)
         else:

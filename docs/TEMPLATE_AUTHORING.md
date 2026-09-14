@@ -110,18 +110,24 @@ A channel already running a bundle can be edited from the CLI, with no deploy
 and no intranet visit:
 
 ```bash
-popcorn app fork --channel '#chan'      # this workspace's own fork line
-popcorn app checkout --channel '#chan'  # the fork line's head, as files
+# fork onto this workspace's own line, then check its head out — one command
+popcorn app checkout --channel '#chan' --fork
 # ... edit, then bump version: in manifest.yaml
 popcorn template check ./<app>
 popcorn app publish ./<app> --changelog "what changed"
 popcorn app status ./<app>              # has the install landed?
 ```
 
-`fork` comes first and is not optional: a publish lands on a fork line **this
+The fork comes first and is not optional: a publish lands on a fork line **this
 workspace owns**, so publishing from a channel still bound to the shared
 product version is refused. `app publish` also starts the install that moves
 your channel onto the new version.
+
+`--fork` takes an optional line name (`--fork=experiment`); bare, it names the
+line it is about to use and asks, because a workspace's single existing line
+can be anywhere — one production line sat 23 minor versions behind product.
+`-y` answers that. `popcorn app fork` on its own is still there and does the
+same thing without the checkout.
 
 **This is also how you read a real bundle.** `app checkout` returns the whole
 tree — manifest, every flow, `AGENT.md`, `strings.yaml` — for the head of the
@@ -133,12 +139,14 @@ channel on it rather than looking for a copy in a repo:
 
 ```bash
 popcorn channel create '#scratch' --template alerttracker
-popcorn app fork --channel '#scratch'
-popcorn app checkout --channel '#scratch'
+popcorn app checkout --channel '#scratch'          # read it as it ships
+popcorn app checkout --channel '#scratch' --fork   # ... or to edit it
 ```
 
-Note what that costs: a fork line is permanent and cannot be deleted, so do it
-in a workspace you do not mind accumulating one in.
+Reading needs no fork — a fork-less checkout records `"kind": "product"` and
+publishing from it is refused, which is the point. Fork when you intend to
+edit, and note what that costs: a fork line is permanent and cannot be
+deleted, so do it in a workspace you do not mind accumulating one in.
 
 Three things about this loop that are easy to get wrong:
 
