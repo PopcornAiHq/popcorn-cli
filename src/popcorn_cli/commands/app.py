@@ -100,6 +100,7 @@ _DIRECTORY = Argument(
     "Checkout directory (default: .)",
     positional=True,
     nargs="?",
+    flag_alias="--dir",
 )
 
 
@@ -944,6 +945,7 @@ register(
                         "Target directory (default: ./<app>)",
                         positional=True,
                         nargs="?",
+                        flag_alias="--dir",
                     ),
                     Argument(
                         "fork",
@@ -951,8 +953,9 @@ register(
                         "optional line name; bare, it confirms the line it "
                         "infers. It cannot be told apart from the directory "
                         "positional, so '--fork mydir' names the LINE 'mydir' "
-                        "— write '--fork=<line>', or put the directory ahead "
-                        "of a bare --fork",
+                        "— write '--fork=<line>', spell the directory "
+                        "'--dir <path>', or put the directory ahead of a "
+                        "bare --fork",
                         nargs="?",
                         const="",
                     ),

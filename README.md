@@ -71,6 +71,11 @@ every command that acts on a channel, including the ones that take it only as a
 flag, so it is the form to reach for when you would otherwise have to look up
 which family this command belongs to.
 
+The same holds for the checkout or bundle directory: wherever the table shows
+it as a positional (`[dir]`, `<dir>`), `--dir <path>` does the same thing. On
+`popcorn app checkout` prefer the flag — a bare `--fork` cannot be told apart
+from the directory positional, so `--fork mydir` names the *line* `mydir`.
+
 | Command | Purpose |
 |---------|---------|
 | **Sites** | |

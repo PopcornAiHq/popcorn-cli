@@ -72,19 +72,41 @@ Positionals use `name` verbatim, so declare them with underscores
 either form: `Argument("page-token", …)` and `Argument("page_token", …)` both
 become `--page-token` with dest `page_token`.
 
-### The channel argument
+### Arguments with two spellings
 
-A registry family declares the channel as `Argument("channel", …)` — a
-`--channel` flag — and never as a positional: it puts its own positionals first
-(`table rows <table>`), where an optional leading positional could not be told
-apart from the ones after it.
+Some arguments answer to both a positional and a flag, so a caller's guess
+carried from one command to the next is always right. `registry.py —
+add_dual_spelled_argument` is the one mechanism: it declares the positional
+`nargs="?"` (which is what lets the flag stand in for it), declares the flag
+into a scratch dest prefixed `registry.FLAG_DEST_PREFIX`, and records a
+`DualSpelledArgument` spec on the parser. `cli.py —
+_fold_dual_spelled_arguments` resolves each spec into the positional's dest
+before any handler runs, so a handler reads one attribute and never learns
+which spelling produced it.
 
-The hand-written families in `cli.py` take the channel positionally and go
-through `cli.py — _add_channel_argument`, which adds `--channel` alongside it so
-the flag spelling works on every channel-taking command. `_fold_channel_argument`
-then resolves the two into the positional's dest before any handler runs.
-Declaring a bare `conversation`/`channel` positional instead re-splits the
-surface, and `tests/test_parser.py — TestChannelArgument` fails if you do.
+Because `nargs="?"` makes argparse treat the positional as optional, the
+requirement moves onto the spec and is enforced in the fold — which is also
+what `commands --json` reports, rather than argparse's answer.
+
+Two arguments use it:
+
+- **The channel.** The hand-written families in `cli.py` (`site`, `message`,
+  `channel`, `webhook`) take it positionally and go through `cli.py —
+  _add_channel_argument`. The registry families declare it as
+  `Argument("channel", …)` — a flag, never a positional: they put their own
+  positionals first (`table rows <table>`), where an optional leading
+  positional could not be told apart from the ones after it.
+- **The directory.** Declared in the registry as `Argument("directory", …,
+  positional=True, flag_alias="--dir")`, on the `app` commands and
+  `template check`.
+
+Declaring a bare `conversation`/`channel`/`directory` positional instead
+re-splits the surface, and `tests/test_parser.py` — `TestChannelArgument` and
+`TestDirectoryArgument` — fails if you do.
+
+A command declaring two dual-spelled arguments would work (specs accumulate in
+a tuple), but none does today: the channel families have no directory and the
+directory commands take the channel as a flag.
 
 ### Nesting and `dest`
 

@@ -105,7 +105,6 @@ import sys
 import time
 import webbrowser
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -2926,7 +2925,9 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
     # stand in for it; whether a caller may leave it out entirely is the
     # spec's answer, not argparse's. Reporting argparse's would tell an agent
     # the channel is optional on commands that cannot run without one.
-    channel_arg = parser.get_default("_channel_argument")
+    dual_spelled = {
+        spec.dest: spec for spec in (parser.get_default(registry.DUAL_SPELLED_DEST) or ())
+    }
     for action in parser._actions:
         if isinstance(
             action,
@@ -2941,8 +2942,8 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
         entry["required"] = (
             action.required if action.option_strings else action.nargs not in ("?", "*")
         )
-        if channel_arg is not None and action.dest == channel_arg.dest:
-            entry["required"] = channel_arg.required
+        if action.dest in dual_spelled and not action.option_strings:
+            entry["required"] = dual_spelled[action.dest].required
         if action.help and action.help != argparse.SUPPRESS:
             entry["help"] = action.help
         if action.type is not None:
@@ -3349,18 +3350,18 @@ class PopcornParser(argparse.ArgumentParser):
         args: Sequence[str] | None = None,
         namespace: argparse.Namespace | None = None,
     ) -> argparse.Namespace:
-        """Parse, then resolve the channel's two spellings into one attribute.
+        """Parse, then resolve each dual-spelled argument into one attribute.
 
         Folding here rather than in `main` means every caller of the parser —
         `main`, the tests — sees the same namespace, so a handler can never be
-        reached with the channel still split across two attributes.
+        reached with an argument still split across two attributes.
         """
         parsed = super().parse_args(args, namespace)
-        _fold_channel_argument(parsed)
+        _fold_dual_spelled_arguments(parsed)
         return parsed
 
 
-# --- The channel argument ---------------------------------------------------
+# --- Arguments with two spellings -------------------------------------------
 #
 # Every command that acts on a channel accepts `--channel`. The families that
 # grew up taking it positionally (site, message, channel, webhook) keep that
@@ -3370,26 +3371,9 @@ class PopcornParser(argparse.ArgumentParser):
 # flow, schedule, table) already take `--channel` and gain no positional: they
 # put the channel behind other positionals (`table rows <name>`), where an
 # optional leading positional could not be told apart from the ones after it.
-
-_CHANNEL_FLAG_DEST = "channel_flag"
-
-
-@dataclass
-class _ChannelArgument:
-    """Where one command's channel lands, and what it may be confused with.
-
-    `dest` is the positional's namespace attribute — `conversation` in the
-    message/channel/webhook families, `channel` in site. `trailing` names the
-    positionals declared after it that are themselves optional, which is what
-    `_fold_channel_argument` has to disentangle. `parser` is the subcommand's
-    own parser, so a usage error prints that subcommand's usage line rather
-    than the root's.
-    """
-
-    dest: str
-    required: bool
-    trailing: tuple[str, ...]
-    parser: argparse.ArgumentParser
+#
+# The same applies to the directory a checkout lives in, which `--dir` now
+# spells on the registry-declared commands that took it positionally.
 
 
 def _add_channel_argument(
@@ -3400,23 +3384,15 @@ def _add_channel_argument(
     required: bool = True,
     trailing: tuple[str, ...] = (),
 ) -> None:
-    """Declare a command's channel as a positional and as `--channel`.
-
-    The positional has to become `nargs="?"` for the flag form to parse at
-    all, which is why `required` moves out of argparse and into
-    `_fold_channel_argument` instead of staying an argparse guarantee.
-    """
-    parser.add_argument(dest, nargs="?", default=None, help=help_text)
-    parser.add_argument(
-        "--channel",
-        dest=_CHANNEL_FLAG_DEST,
-        metavar=dest.upper(),
-        help=f"{help_text} — the same argument, spelled the way every command accepts",
+    """Declare a command's channel as a positional and as `--channel`."""
+    registry.add_dual_spelled_argument(
+        parser, dest, help_text, flag="--channel", required=required, trailing=trailing
     )
-    parser.set_defaults(_channel_argument=_ChannelArgument(dest, required, tuple(trailing), parser))
 
 
-def _shift_trailing_positionals(args: argparse.Namespace, spec: _ChannelArgument) -> bool:
+def _shift_trailing_positionals(
+    args: argparse.Namespace, spec: registry.DualSpelledArgument
+) -> bool:
     """Move each positional along one slot, out of the channel's. False if full.
 
     argparse fills positionals left to right, so when `--channel` is given and
@@ -3434,7 +3410,7 @@ def _shift_trailing_positionals(args: argparse.Namespace, spec: _ChannelArgument
     return True
 
 
-def _fold_channel_argument(args: argparse.Namespace) -> None:
+def _fold_dual_spelled_arguments(args: argparse.Namespace) -> None:
     """Resolve the two spellings of the channel down to the positional's dest.
 
     Handlers read one attribute and never learn which spelling produced it.
@@ -3442,21 +3418,20 @@ def _fold_channel_argument(args: argparse.Namespace) -> None:
     an argparse-style usage error — same exit code as before this argument
     grew a second spelling.
     """
-    spec: _ChannelArgument | None = getattr(args, "_channel_argument", None)
-    if spec is None:
-        return
-    flag = getattr(args, _CHANNEL_FLAG_DEST, None)
-    positional = getattr(args, spec.dest, None)
-    if flag is not None and positional is not None:
-        if not _shift_trailing_positionals(args, spec):
-            spec.parser.error(
-                f"the channel was given twice: as {spec.dest} and as --channel. Pass one."
-            )
-        positional = None
-    resolved = flag if flag is not None else positional
-    if resolved is None and spec.required:
-        spec.parser.error(f"the following arguments are required: {spec.dest} (or --channel)")
-    setattr(args, spec.dest, resolved)
+    specs = getattr(args, registry.DUAL_SPELLED_DEST, None) or ()
+    for spec in specs:
+        flag = getattr(args, spec.flag_dest, None)
+        positional = getattr(args, spec.dest, None)
+        if flag is not None and positional is not None:
+            if not _shift_trailing_positionals(args, spec):
+                spec.parser.error(
+                    f"{spec.dest} was given twice: as a positional and as {spec.flag}. Pass one."
+                )
+            positional = None
+        resolved = flag if flag is not None else positional
+        if resolved is None and spec.required:
+            spec.parser.error(f"the following arguments are required: {spec.dest} (or {spec.flag})")
+        setattr(args, spec.dest, resolved)
 
 
 def build_parser() -> PopcornParser:
