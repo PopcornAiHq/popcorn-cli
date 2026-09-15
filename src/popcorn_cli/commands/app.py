@@ -38,16 +38,24 @@ import sys
 from pathlib import Path
 
 from popcorn_core import flow_rules, operations
+
+# `baseline_changelog` is app_checkout's `manifest_changelog`, aliased because
+# app_publish exports a same-named function doing a different job. This one
+# NORMALISES the note, so reflowing a block scalar is not read as an edit, and
+# it is what the baseline records for `template check` to compare against.
+# app_publish's returns the raw working-copy value, only ever to warn about it.
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
     Baseline,
     baseline_from_response,
     files_from_response,
-    manifest_changelog,
     occupied,
     read_baseline,
     write_baseline,
     write_tree,
+)
+from popcorn_core.app_checkout import (
+    manifest_changelog as baseline_changelog,
 )
 from popcorn_core.app_publish import (
     BUMP_PARTS,
@@ -506,7 +514,7 @@ def _app_publish(args: argparse.Namespace) -> None:
         conversation_id=baseline.conversation_id,
         # The note that just shipped, so the NEXT bump is measured against it
         # rather than against whatever the last `app checkout` saw.
-        changelog=manifest_changelog(local.files),
+        changelog=baseline_changelog(local.files),
     )
     write_baseline(directory, published)
 
