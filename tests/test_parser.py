@@ -1187,3 +1187,135 @@ class TestAppSurfaceListings:
         assert args.app_command == "status"
         assert args.channel == "#ops"
         assert args.directory is None
+
+
+# The channel a command acts on, spelled both ways. The pairs are the survey
+# behind KEW-2369: every command in the site/message/channel/webhook families
+# that names a channel, and for each the positional form callers already use
+# alongside the `--channel` form that now works everywhere.
+_CHANNEL_SPELLINGS = [
+    (["site", "cancel", "#site"], ["site", "cancel", "--channel", "#site"]),
+    (["site", "export", "#site"], ["site", "export", "--channel", "#site"]),
+    (["site", "log", "#site"], ["site", "log", "--channel", "#site"]),
+    (["site", "rollback", "#site"], ["site", "rollback", "--channel", "#site"]),
+    (["site", "status", "#site"], ["site", "status", "--channel", "#site"]),
+    (["site", "trace", "#site"], ["site", "trace", "--channel", "#site"]),
+    (["site", "trace", "#site", "item-1"], ["site", "trace", "--channel", "#site", "item-1"]),
+    (["message", "delete", "#c", "m-1"], ["message", "delete", "--channel", "#c", "m-1"]),
+    (
+        ["message", "edit", "#c", "m-1", "new text"],
+        ["message", "edit", "--channel", "#c", "m-1", "new text"],
+    ),
+    (["message", "list", "#c"], ["message", "list", "--channel", "#c"]),
+    (
+        ["message", "react", "#c", "m-1", "tada"],
+        ["message", "react", "--channel", "#c", "m-1", "tada"],
+    ),
+    (["message", "send", "#c"], ["message", "send", "--channel", "#c"]),
+    (["message", "send", "#c", "hi"], ["message", "send", "--channel", "#c", "hi"]),
+    (["message", "threads", "#c"], ["message", "threads", "--channel", "#c"]),
+    (["channel", "archive", "#c"], ["channel", "archive", "--channel", "#c"]),
+    (["channel", "delete", "#c"], ["channel", "delete", "--channel", "#c"]),
+    (["channel", "edit", "#c"], ["channel", "edit", "--channel", "#c"]),
+    (["channel", "info", "#c"], ["channel", "info", "--channel", "#c"]),
+    (["channel", "invite", "#c", "u-1,u-2"], ["channel", "invite", "--channel", "#c", "u-1,u-2"]),
+    (["channel", "join", "#c"], ["channel", "join", "--channel", "#c"]),
+    (["channel", "kick", "#c", "u-1"], ["channel", "kick", "--channel", "#c", "u-1"]),
+    (["channel", "leave", "#c"], ["channel", "leave", "--channel", "#c"]),
+    (["webhook", "create", "#c", "hook"], ["webhook", "create", "--channel", "#c", "hook"]),
+    (["webhook", "deliveries", "#c"], ["webhook", "deliveries", "--channel", "#c"]),
+    (["webhook", "list", "#c"], ["webhook", "list", "--channel", "#c"]),
+]
+
+
+def _leaf_parsers(parser, path=()):
+    """Every leaf subcommand parser, keyed by its command path."""
+    nested = [a for a in parser._actions if isinstance(a, argparse._SubParsersAction)]
+    if not nested:
+        yield path, parser
+        return
+    for action in nested:
+        for name, sub in action.choices.items():
+            yield from _leaf_parsers(sub, (*path, name))
+
+
+class TestChannelArgument:
+    """One channel, two spellings, one namespace attribute (KEW-2369).
+
+    The site/message/channel/webhook families take the channel positionally
+    and the registry families take `--channel`; the split is an artifact of
+    the order they were written. `--channel` now works on all of them, and the
+    positional keeps working because skills, scripts and the eval harness are
+    written that way.
+    """
+
+    @pytest.mark.parametrize("positional,flag", _CHANNEL_SPELLINGS, ids=lambda v: " ".join(v))
+    def test_both_spellings_parse_to_the_same_namespace(self, parser, positional, flag):
+        from_positional = vars(parser.parse_args(positional)).copy()
+        from_flag = vars(parser.parse_args(flag)).copy()
+        # The flag's own dest is scratch space the fold consumes; handlers
+        # read the positional's dest, which is what has to match.
+        from_positional.pop("channel_flag", None)
+        from_flag.pop("channel_flag", None)
+        assert from_positional == from_flag
+
+    def test_every_channel_positional_also_accepts_the_flag(self, parser):
+        """The guard for the next command someone adds.
+
+        A leaf declaring a bare `conversation`/`channel` positional instead of
+        going through `_add_channel_argument` reintroduces exactly the split
+        this ticket closed, and nothing else would notice.
+        """
+        missing = []
+        for path, leaf in _leaf_parsers(parser):
+            positionals = {a.dest for a in leaf._actions if not a.option_strings}
+            options = {opt for a in leaf._actions for opt in a.option_strings}
+            if positionals & {"conversation", "channel"} and "--channel" not in options:
+                missing.append(" ".join(path))
+        assert missing == [], f"channel positional without a --channel spelling: {missing}"
+
+    def test_the_flag_wins_where_the_checkout_supplies_a_default(self, parser):
+        """`site status` falls back to the checkout, so neither form is required."""
+        assert parser.parse_args(["site", "status"]).channel is None
+        assert parser.parse_args(["site", "status", "--channel", "#c"]).channel == "#c"
+
+    def test_a_required_channel_is_still_required(self, parser):
+        """`nargs="?"` moved the requirement out of argparse; it has to survive."""
+        with pytest.raises(SystemExit):
+            parser.parse_args(["message", "list"])
+        with pytest.raises(SystemExit):
+            parser.parse_args(["channel", "info"])
+
+    def test_giving_the_channel_twice_is_a_usage_error(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["message", "list", "#a", "--channel", "#b"])
+
+    def test_a_trailing_positional_is_not_swallowed_by_the_flag(self, parser):
+        """argparse fills positionals left to right, so `--channel` plus an
+        all-optional tail would otherwise land the tail in the channel slot."""
+        args = parser.parse_args(["site", "trace", "--channel", "#site", "item-1"])
+        assert (args.channel, args.item_id) == ("#site", "item-1")
+        args = parser.parse_args(["message", "send", "--channel", "#c", "hi"])
+        assert (args.conversation, args.message) == ("#c", "hi")
+
+    def test_the_schema_still_reports_the_channel_as_required(self):
+        """`commands --json` is what an agent reads instead of `--help`.
+
+        The positional is `nargs="?"` only so the flag can stand in for it —
+        reporting argparse's answer would tell an agent `message list` runs
+        without a channel.
+        """
+        from popcorn_cli.cli import _introspect_parser
+
+        leaves = dict(_leaf_parsers(build_parser()))
+        by_name = {
+            a.get("name") or a["flags"][0]: a
+            for a in _introspect_parser(leaves[("message", "list")])
+        }
+        assert by_name["conversation"]["required"] is True
+        assert by_name["--channel"]["required"] is False
+        optional = {
+            a.get("name") or a["flags"][0]: a
+            for a in _introspect_parser(leaves[("site", "status")])
+        }
+        assert optional["channel"]["required"] is False

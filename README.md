@@ -65,6 +65,12 @@ popcorn message list '#general' --watch
 
 Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page.
 
+Wherever the table below shows a channel as a positional (`<conv>`, `[channel]`),
+`--channel <name-or-uuid>` does the same thing. That spelling is accepted by
+every command that acts on a channel, including the ones that take it only as a
+flag, so it is the form to reach for when you would otherwise have to look up
+which family this command belongs to.
+
 | Command | Purpose |
 |---------|---------|
 | **Sites** | |

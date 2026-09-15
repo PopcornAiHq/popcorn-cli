@@ -72,6 +72,20 @@ Positionals use `name` verbatim, so declare them with underscores
 either form: `Argument("page-token", …)` and `Argument("page_token", …)` both
 become `--page-token` with dest `page_token`.
 
+### The channel argument
+
+A registry family declares the channel as `Argument("channel", …)` — a
+`--channel` flag — and never as a positional: it puts its own positionals first
+(`table rows <table>`), where an optional leading positional could not be told
+apart from the ones after it.
+
+The hand-written families in `cli.py` take the channel positionally and go
+through `cli.py — _add_channel_argument`, which adds `--channel` alongside it so
+the flag spelling works on every channel-taking command. `_fold_channel_argument`
+then resolves the two into the positional's dest before any handler runs.
+Declaring a bare `conversation`/`channel` positional instead re-splits the
+surface, and `tests/test_parser.py — TestChannelArgument` fails if you do.
+
 ### Nesting and `dest`
 
 Each level appends to the previous `dest`, so the namespace attribute is
