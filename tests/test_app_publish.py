@@ -1189,6 +1189,42 @@ class TestNamelessFork:
         assert prompts and "default" in prompts[0]
         assert "deploywatch" not in capsys.readouterr().err
 
+    def test_an_unreported_line_is_not_guessed_to_be_default(self, capsys, tty):
+        """The server is the only thing that knows the name. When it withholds
+        it, saying "default" is not a safe guess but a wrong answer on every
+        workspace that named its line — and right only by coincidence on the
+        first one, because "default" is what the backend mints (KEW-2375)."""
+        rec = _ForkRecorder()
+        listing = _listing()
+        listing["apps"].append({"kind": "fork", "app": "alerttracker", "semver": "1.14.0"})
+        prompts = tty("y")
+        with _fork_env(rec, listing=listing):
+            from popcorn_cli.commands import app as mod
+
+            mod._app_fork(_args(channel="#alerts"))
+
+        err = capsys.readouterr().err
+        assert "default" not in err
+        assert "no name" in err and "1.14.0" in err
+        assert prompts and "default" not in prompts[0]
+        assert rec.calls == [("#alerts", None)]
+
+    def test_declining_an_unreported_line_cannot_suggest_a_name(self, tty):
+        """The cancel hint's whole job is to hand back a name to re-run with.
+        With no name to hand back it must say so, not offer --name 'default'."""
+        rec = _ForkRecorder()
+        tty("n")
+        listing = _listing()
+        listing["apps"].append({"kind": "fork", "app": "alerttracker", "semver": "1.14.0"})
+        with _fork_env(rec, listing=listing):
+            from popcorn_cli.commands import app as mod
+
+            with pytest.raises(PopcornError) as exc:
+                mod._app_fork(_args(channel="#alerts"))
+        assert "default" not in str(exc.value.hint)
+        assert "--name" in str(exc.value.hint)
+        assert rec.calls == []
+
     def test_apply_reads_the_channel_from_the_baseline(self, tmp_path):
         from popcorn_cli.commands import app as mod
 
@@ -1656,6 +1692,30 @@ class TestApplyReadsAsRecovery:
         for status in ("blocked_app_updates_locked", "blocked_install_in_progress"):
             rendered = "\n".join(mod._install_lines({"install_status": status}))
             assert "popcorn app apply" in rendered, status
+
+    def test_an_unreported_line_is_not_rendered_as_default(self):
+        """`_ForkRecorder`'s response carries no fork_name on purpose: it is
+        what a server predating KEW-2375 returns on the already_fork path, and
+        agent mode reads exactly this rendering."""
+        from popcorn_cli.commands import app as mod
+
+        rendered = "\n".join(
+            mod._fork_lines({"status": "already_fork", "app": "a", "semver": "1.0.0"})
+        )
+        assert "default" not in rendered
+        assert "not reported" in rendered
+
+    def test_a_reported_line_is_still_named_plainly(self):
+        """The inverse guard — the caveat must not leak onto the happy path."""
+        from popcorn_cli.commands import app as mod
+
+        rendered = "\n".join(
+            mod._fork_lines(
+                {"status": "already_fork", "app": "a", "semver": "1.0.0", "fork_name": "demo914"}
+            )
+        )
+        assert "(line demo914)" in rendered
+        assert "not reported" not in rendered
 
     def test_the_adopting_note_points_at_status_not_a_list_poll(self):
         """`app list` was the old answer and is what callers grepped a semver
