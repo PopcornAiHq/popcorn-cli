@@ -507,21 +507,45 @@ class _Checker:
         if current != baseline.changelog:
             return
         if current is None:
-            self.warn(
-                "changelog-not-updated",
-                "manifest.yaml",
-                f"version moves to {raw} but manifest.yaml declares no 'changelog:'. "
-                "The note ships as bundle content and is what the next author reads to "
-                "learn what this version changed.",
-            )
+            lead = f"version moves to {raw} but manifest.yaml declares no 'changelog:'."
         else:
-            self.warn(
-                "changelog-not-updated",
-                "manifest.yaml",
+            lead = (
                 f"version moves to {raw} but 'changelog:' still reads exactly as it did "
                 f"at {baseline.semver}, so it describes the previous release. Rewrite it "
-                "to say what this version changes.",
+                "to say what this version changes."
             )
+        self.warn(
+            "changelog-not-updated",
+            "manifest.yaml",
+            f"{lead} {self._changelog_is_for(baseline.kind)}",
+        )
+
+    @staticmethod
+    def _changelog_is_for(kind: str) -> str:
+        """What the manifest's `changelog:` does for the line this checkout is on.
+
+        The two lines answer differently, and saying the fork answer on a
+        product checkout (or the reverse) is how `template check` ends up
+        telling an author to maintain a field the very next command calls
+        inert. On a fork line — every `popcorn app publish` — the server
+        records the REQUEST's changelog and never reads the manifest
+        (`backend:lib/app_bundles/services/fork.py — publish_fork_version`),
+        so the field is documentation that ships with the bundle and `-m` is
+        the note that reaches the registry. Publishing bundle source as a
+        product version is the path that does default to the manifest field
+        (`backend:lib/app_bundles/services/publish.py —
+        publish_registry_template`).
+        """
+        if kind == "fork":
+            return (
+                "The note ships as bundle content, for whoever edits this bundle next — "
+                "it is not what a publish records on the version; that comes from "
+                "'popcorn app publish -m'."
+            )
+        return (
+            "The note ships as bundle content, and a product publish records it as the "
+            "version's note."
+        )
 
     def _columns(self, table: Any) -> list[dict[str, Any]]:
         if not isinstance(table, dict):

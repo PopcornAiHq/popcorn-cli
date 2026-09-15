@@ -149,8 +149,12 @@ a `version-not-advanced` error offline instead of a server refusal after the
 upload. Rewriting `changelog:` in the same edit is a warning
 (`changelog-not-updated`) rather than an error, because the checkout arrives
 carrying the *previous* version's note — so keeping it is the default outcome,
-not an unlikely one. Both checks read the baseline `app checkout` wrote and are
-skipped entirely on a directory that is not a checkout.
+not an unlikely one. The warning says which job the field is doing for the line
+you are on: in a fork checkout it is documentation that ships with the bundle
+and `-m` is what records a note on the version, matching what `app publish`
+tells you rather than contradicting it. Both checks read the baseline
+`app checkout` wrote and are skipped entirely on a directory that is not a
+checkout.
 
 `app apply` is **not** a step in this loop. It is the retry for an install that
 did not land: the channel had app updates locked, another install held it, or
