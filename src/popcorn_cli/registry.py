@@ -49,6 +49,12 @@ class Argument:
     # out deliberately — `commands --json` is frozen at 1.0.0 (SPEC.md), and
     # this is parser detail, not a new contract key.
     const: str | None = None
+    # Extra option strings for the SAME dest — a short form (`-m`) and any
+    # renamed-away spelling kept alive as an alias (`--changelog`). Absent
+    # from `_sub_schema`, which is the whole-family view frozen at 1.0.0
+    # (SPEC.md) and keys on the canonical `name`; every spelling still
+    # reaches `commands --json`, which reads option strings off argparse.
+    flags: list[str] = field(default_factory=list)
 
     @property
     def is_required(self) -> bool:
@@ -79,7 +85,12 @@ class Argument:
         else:
             if self.required:
                 kwargs["required"] = True
-            parser.add_argument(f"--{self.name.replace('_', '-')}", **kwargs)
+            if self.flags:
+                # Pinned explicitly rather than left to argparse's "first long
+                # option wins": an alias must never be able to move the dest
+                # the handler reads.
+                kwargs["dest"] = self.name.replace("-", "_")
+            parser.add_argument(f"--{self.name.replace('_', '-')}", *self.flags, **kwargs)
 
 
 @dataclass

@@ -50,12 +50,18 @@ from popcorn_core.app_checkout import (
     write_tree,
 )
 from popcorn_core.app_publish import (
+    BUMP_PARTS,
+    bump_manifest_text,
     collect_tree,
     diff_tree,
     fork_line_reach,
     ignored_note,
     local_digest,
+    manifest_changelog,
+    manifest_file,
     manifest_version,
+    next_version,
+    parse_semver,
     preserved_note,
     publish_payload,
     require_bump,
@@ -352,6 +358,75 @@ def _app_fork(args: argparse.Namespace) -> None:
     _output(args, data, "\n".join(rendered))
 
 
+def _refuse_bump_over_a_hand_edit(version: str, base_semver: str, part: str) -> None:
+    """Refuse `--bump` when the manifest already advances past the baseline.
+
+    `--bump` counts from the fork line's head — "mint the next `part` after
+    what is published" — which is the only reading that does not depend on
+    the state of a file the author may have edited. When the manifest has
+    already been advanced by hand there are two answers and no way to tell
+    which was meant: counting from the head overwrites the author's number,
+    counting from the manifest skips whatever lies between and burns a
+    version on the line for nothing.
+
+    So neither happens. Both intentions are one keystroke away — drop the
+    flag to publish the hand-written version, or reset the line and re-run —
+    and the error names the two versions so the choice is made with them in
+    view. Raised before the round trip: nothing here needs the server.
+    """
+    if parse_semver(version) <= parse_semver(base_semver):
+        return
+    raise PopcornError(
+        f"the manifest already advances to {version} past the checked-out "
+        f"{base_semver}, so --bump {part} has two answers "
+        f"({next_version(base_semver, part)} from the line's head, "
+        f"{next_version(version, part)} from the manifest) — it picks neither",
+        error_code="validation",
+        hint=f"publish the version you wrote by dropping --bump, or reset "
+        f'manifest.yaml to version: "{base_semver}" and re-run with it',
+    )
+
+
+def _deprecated_changelog_used(argv: list[str] | None = None) -> bool:
+    """Whether this invocation spelled the message flag `--changelog`.
+
+    Read off argv because the alias shares `--message`'s dest — which is the
+    point of an alias, and leaves the parsed namespace with no trace of which
+    spelling was typed. An abbreviation argparse also accepts (`--changel`)
+    misses this and simply goes unwarned; the flag still works, so the cost
+    of the miss is a notice, not a failure.
+    """
+    words = sys.argv[1:] if argv is None else argv
+    return any(w == "--changelog" or w.startswith("--changelog=") for w in words)
+
+
+def _publish_message(args: argparse.Namespace, files: dict[str, str]) -> str | None:
+    """The message to record on this version, having said what it will be.
+
+    Precedence, read off the server rather than assumed: `/apps/publish`
+    records the request's `changelog` and nothing else. The fallback to the
+    manifest's own `changelog:` key lives on the product publish path
+    (`publish_registry_template`) and NOT on the fork path a CLI publish
+    takes (`publish_fork_version`), so `--message` does not merely win over
+    the manifest field — the manifest field is not read at all, and a
+    manifest that declares one while no flag is given records nothing.
+
+    That silence is the whole of KEW-2368's complaint, so it gets a line.
+    """
+    from ..cli import _status
+
+    message: str | None = args.message
+    if _deprecated_changelog_used():
+        _status("--changelog is deprecated and now spells --message/-m; it still works.")
+    declared = manifest_changelog(files)
+    if not message and declared:
+        _status(
+            "the manifest's 'changelog:' is not recorded by a publish — "
+            "pass -m to record a message on this version."
+        )
+    return message
+
+
 def _app_publish(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -383,17 +458,38 @@ def _app_publish(args: argparse.Namespace) -> None:
             hint=f"move each one under {flow_rules.CODE_SUBDIR}/<block>/, or delete it",
         )
     version = manifest_version(local.files)
+    bump = args.bump
+    if bump:
+        _refuse_bump_over_a_hand_edit(version, baseline.semver, bump)
+    message = _publish_message(args, local.files)
+
     resp = _fetch_base(client, conversation, baseline)
-    diff = diff_tree(files_from_response(resp), local.files)
-    if diff.empty:
+    base_files = files_from_response(resp)
+    # The emptiness check runs against the tree AS EDITED, before any bump is
+    # applied. Otherwise `--bump patch` on an untouched checkout would write a
+    # one-line manifest change and mint a version whose only content is its
+    # own number — the wasted version this pair of tickets is about.
+    if diff_tree(base_files, local.files).empty:
         raise PopcornError(
             f"nothing to publish — {directory} matches {baseline.app} {baseline.semver}",
             error_code="validation",
         )
+    manifest, _ = manifest_file(local.files)
+    if bump:
+        version = next_version(baseline.semver, bump)
+        local.files[manifest] = bump_manifest_text(local.files[manifest], version)
+    diff = diff_tree(base_files, local.files)
     require_bump(version, baseline.semver)
 
-    payload = publish_payload(baseline.base_version_id, diff, args.changelog)
+    payload = publish_payload(baseline.base_version_id, diff, message)
     result = operations.publish_channel_app(client, conversation, payload)
+
+    # Written only now, after the server accepted it: a publish that fails —
+    # a moved line, a rejected tree — leaves the working copy exactly as the
+    # author left it, so re-running the same `--bump patch` is the retry
+    # rather than a second bump on top of the first.
+    if bump:
+        (directory / manifest).write_text(local.files[manifest])
 
     # The working copy now corresponds to the PUBLISHED version — the line's
     # new head — so the baseline moves with it; otherwise the next edit needs
@@ -421,6 +517,16 @@ def _app_publish(args: argparse.Namespace) -> None:
         *diff.summary(),
         "",
     ]
+    # The only readback there is. No endpoint serves a published version's
+    # message — `/apps/list` returns lineage heads without one and there is no
+    # per-version endpoint at all — so this line is the single moment the
+    # author can see what landed, and it says the absent case out loud rather
+    # than leaving a blank to interpret.
+    rendered.append(
+        f"Message: {message}"
+        if message
+        else "No message recorded on this version — pass -m next time."
+    )
     if local.ignored:
         rendered.append(ignored_note(local.ignored))
     if diff.preserved:
@@ -429,7 +535,9 @@ def _app_publish(args: argparse.Namespace) -> None:
     if reach:
         rendered.append(reach)
     rendered += _install_lines(result)
-    _output(args, {**result, "diff": diff.summary()}, "\n".join(rendered))
+    # `message` rides into --json for the same reason it is printed: an agent
+    # has no other way to learn what text this publish recorded.
+    _output(args, {**result, "diff": diff.summary(), "message": message}, "\n".join(rendered))
 
 
 def _install_lines(result: dict) -> list[str]:
@@ -628,7 +736,20 @@ register(
                 _app_publish,
                 [
                     _DIRECTORY,
-                    Argument("changelog", "What changed, recorded on the version"),
+                    Argument(
+                        "message",
+                        "What changed, recorded on the version (-m, like git "
+                        "commit). --changelog is a deprecated alias",
+                        flags=["-m", "--changelog"],
+                    ),
+                    Argument(
+                        "bump",
+                        "Mint the next version off the fork line's head, "
+                        "writing manifest.yaml's 'version:' on a successful "
+                        "publish. Refused when the manifest already advances "
+                        "past the head",
+                        choices=list(BUMP_PARTS),
+                    ),
                     _CHANNEL_OPT,
                 ],
             ),

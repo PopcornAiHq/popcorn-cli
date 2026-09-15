@@ -46,6 +46,67 @@ _DOC_FILENAMES = ("AGENT.md", "README.md")
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
 
+# What `--bump` accepts, most significant first — also the order the choices
+# are offered in, since `patch` being last keeps the list reading like semver.
+BUMP_PARTS = ("major", "minor", "patch")
+
+# The manifest's own `version:` line, matched as TEXT rather than re-emitted
+# from a parsed document: a YAML round trip would drop every comment and
+# reflow the file, and the manifest is hand-authored source.
+#
+# The quote group is why this exists at all. A manifest writes
+# `version: "1.34.2"`, so the obvious `sed -E 's/^version: [0-9.]+/…/'`
+# matches nothing and no-ops in silence — the edit looks applied and only
+# `app publish` refusing the unchanged version says otherwise. Both quote
+# styles and the bare form are handled here, and a trailing comment survives.
+_VERSION_LINE_RE = re.compile(
+    r"""^(?P<lead>version:[ \t]*)(?P<q>["']?)(?P<value>[^"'\s#]*)(?P=q)(?P<rest>[ \t]*(?:\#.*)?)$""",
+    re.MULTILINE,
+)
+
+
+
+def next_version(current: str, part: str) -> str:
+    """The version `--bump <part>` mints on top of `current`.
+
+    Ordinary semver arithmetic: a bump zeroes everything less significant, so
+    `1.4.7` minor is `1.5.0` and not `1.5.7`.
+    """
+    major, minor, patch = parse_semver(current)
+    if part == "major":
+        return f"{major + 1}.0.0"
+    if part == "minor":
+        return f"{major}.{minor + 1}.0"
+    if part == "patch":
+        return f"{major}.{minor}.{patch + 1}"
+    raise PopcornError(
+        f"{part!r} is not one of {', '.join(BUMP_PARTS)}",
+        error_code="validation",
+    )
+
+
+def bump_manifest_text(text: str, new_version: str) -> str:
+    """`text` with its top-level `version:` set to `new_version`.
+
+    Anchored at column zero, so a `version:` nested under some other key is
+    left alone — only the document's own version is the one a publish mints.
+
+    An unquoted value is quoted on the way out, never the reverse. The float
+    trap `parse_semver` guards (`version: 1.0` is a float, `version: 1.0.0` a
+    string) is invisible in the file, and writing the quoted form is what the
+    rest of this module tells authors to do.
+    """
+    match = _VERSION_LINE_RE.search(text)
+    if match is None:
+        raise PopcornError(
+            "could not find a top-level 'version:' line to rewrite",
+            error_code="validation",
+            hint=f'edit the manifest by hand: version: "{new_version}"',
+        )
+    quote = match.group("q") or '"'
+    replacement = f"{match.group('lead')}{quote}{new_version}{quote}{match.group('rest')}"
+    return text[: match.start()] + replacement + text[match.end() :]
+
 
 def _is_bundle_file(filename: str) -> bool:
     """Whether a ROOT-level filename is installable bundle content."""
@@ -228,11 +289,13 @@ def _read_text(path: Path) -> str:
         ) from None
 
 
-def manifest_version(files: dict[str, str]) -> str:
-    """The working copy's manifest `version:`.
+def manifest_file(files: dict[str, str]) -> tuple[str, dict[str, Any]]:
+    """The working copy's manifest, as `(filename, parsed document)`.
 
     `manifest.yaml` wins over the legacy `config.yaml` when both exist, the
-    same precedence `template_from_tree` applies.
+    same precedence `template_from_tree` applies. Returned as a pair because
+    every caller needs the NAME as well as the contents — to rewrite the
+    right file, and to say which file a complaint is about.
     """
     for name in MANIFEST_FILENAMES:
         if name not in files:
@@ -246,25 +309,52 @@ def manifest_version(files: dict[str, str]) -> str:
                 f"{name}: top-level YAML must be a mapping",
                 error_code="validation",
             )
-        if "version" not in doc:
-            raise PopcornError(
-                f"{name} declares no 'version:' — a publish must name the version it is minting",
-                error_code="validation",
-            )
-        raw = doc["version"]
-        if not isinstance(raw, str):
-            # `version: 1.0` unquoted is a float; `version: 1.0.0` is a str.
-            raise PopcornError(
-                f"{name}: version must be a quoted MAJOR.MINOR.PATCH string, "
-                f'got {raw!r} — write version: "1.0.1"',
-                error_code="validation",
-            )
-        parse_semver(raw)
-        return raw
+        return name, doc
     raise PopcornError(
         "no manifest.yaml in the working copy — is this an app checkout?",
         error_code="not_found",
     )
+
+
+def manifest_version(files: dict[str, str]) -> str:
+    """The working copy's manifest `version:`."""
+    name, doc = manifest_file(files)
+    if "version" not in doc:
+        raise PopcornError(
+            f"{name} declares no 'version:' — a publish must name the version it is minting",
+            error_code="validation",
+        )
+    raw = doc["version"]
+    if not isinstance(raw, str):
+        # `version: 1.0` unquoted is a float; `version: 1.0.0` is a str.
+        raise PopcornError(
+            f"{name}: version must be a quoted MAJOR.MINOR.PATCH string, "
+            f'got {raw!r} — write version: "1.0.1"',
+            error_code="validation",
+        )
+    parse_semver(raw)
+    return raw
+
+
+def manifest_changelog(files: dict[str, str]) -> str | None:
+    """The working copy's manifest `changelog:`, if it declares one.
+
+    Read only to WARN about it. `/apps/publish` records the request's
+    changelog verbatim and never falls back to the manifest — that fallback
+    exists on the product/registry publish path
+    (`backend:lib/app_bundles/services/publish.py —
+    publish_registry_template`) and not on the fork path a CLI publish takes
+    (`publish_fork_version`). So a manifest `changelog:` with no `--message`
+    records nothing at all, silently, which is worth one line of output.
+    """
+    try:
+        _, doc = manifest_file(files)
+    except PopcornError:
+        return None
+    raw = doc.get("changelog")
+    if not raw:
+        return None
+    return str(raw).strip() or None
 
 
 @dataclass
@@ -404,6 +494,12 @@ def publish_payload(base_version_id: int, diff: TreeDiff, changelog: str | None)
     it is the optimistic-concurrency token for the tree the edits were
     computed against, so re-reading it from the server would defeat the check
     it exists to make.
+
+    `changelog` is the wire name of what the CLI now calls `--message`, and
+    it is the ONLY source the server reads on this path — see
+    `manifest_changelog` for why the manifest's own key does not apply here.
+    Omitted when empty rather than sent as `null`, so an older API that
+    predates the field is unaffected.
     """
     body: dict[str, Any] = {
         "base_version_id": base_version_id,

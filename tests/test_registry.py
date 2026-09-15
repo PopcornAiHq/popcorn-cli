@@ -879,3 +879,78 @@ class TestFlowImportIsFenced:
         monkeypatch.setattr(cli, "_get_client", boom)
         code, _ = self._err(monkeypatch, capsys)
         assert code != 0
+
+
+class TestArgumentAliases:
+    """`Argument.flags` — extra option strings on one dest (KEW-2368)."""
+
+    def test_every_spelling_lands_on_the_declared_dest(self):
+        p = argparse.ArgumentParser()
+        registry.Argument("message", "why", flags=["-m", "--changelog"]).add_to(p)
+        for argv in (["-m", "x"], ["--message", "x"], ["--changelog", "x"]):
+            assert p.parse_args(argv).message == "x"
+
+    def test_an_alias_creates_no_second_dest(self):
+        """Otherwise a handler reading `args.message` would silently miss the
+        value a caller passed as `--changelog`."""
+        p = argparse.ArgumentParser()
+        registry.Argument("message", "why", flags=["-m", "--changelog"]).add_to(p)
+        assert not hasattr(p.parse_args(["--changelog", "x"]), "changelog")
+
+    def test_the_family_view_keys_on_the_canonical_name(self):
+        """`registry.schema()` is the whole-family view, frozen at 1.0.0
+        (SPEC.md), so it keys on `name` alone. The option strings reach
+        `commands --json` from argparse instead — see `TestAppPublishFlags`."""
+        sub = registry.Subcommand(
+            "publish", "p", lambda a: None, [registry.Argument("message", "why", flags=["-m"])]
+        )
+        names = [a["name"] for a in registry._sub_schema(sub)["arguments"]]
+        assert names == ["message"]
+
+
+class TestAppPublishFlags:
+    """`app publish --bump` (KEW-2367) and `--message`/`-m` (KEW-2368)."""
+
+    @pytest.mark.parametrize("flag", ["-m", "--message", "--changelog"])
+    def test_all_three_message_spellings_parse(self, parser, flag):
+        args = parser.parse_args(["app", "publish", flag, "why"])
+        assert args.message == "why"
+
+    def test_the_deprecated_alias_stays_discoverable(self, parser, capsys):
+        """Kept working AND kept listed — someone who typed `--changelog`
+        needs `--help` to tell them what it is called now."""
+        with pytest.raises(SystemExit):
+            parser.parse_args(["app", "publish", "--help"])
+        out = capsys.readouterr().out
+        assert "--changelog" in out
+        assert "-m" in out and "--message" in out
+
+    @pytest.mark.parametrize("part", ["patch", "minor", "major"])
+    def test_bump_takes_each_semver_part(self, parser, part):
+        assert parser.parse_args(["app", "publish", "--bump", part]).bump == part
+
+    def test_bump_refuses_anything_else(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["app", "publish", "--bump", "build"])
+
+    def test_both_default_to_none(self, parser):
+        args = parser.parse_args(["app", "publish"])
+        assert (args.message, args.bump) == (None, None)
+
+    def test_both_flags_reach_the_commands_schema(self, capsys):
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        schema = json.loads(capsys.readouterr().out)
+        publish = next(
+            s
+            for c in schema["commands"]
+            if c["name"] == "app"
+            for s in c["subcommands"]
+            if s["name"] == "publish"
+        )
+        by_flag = {tuple(a.get("flags", ())): a for a in publish["arguments"]}
+        # Every spelling is discoverable, the deprecated one included — an
+        # agent holding an old script needs to find out what replaced it.
+        assert ("--message", "-m", "--changelog") in by_flag
+        assert by_flag[("--bump",)]["choices"] == ["major", "minor", "patch"]
