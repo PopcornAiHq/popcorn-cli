@@ -65,7 +65,6 @@ _VERSION_LINE_RE = re.compile(
 )
 
 
-
 def next_version(current: str, part: str) -> str:
     """The version `--bump <part>` mints on top of `current`.
 
