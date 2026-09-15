@@ -572,6 +572,13 @@ class _Checker:
         The OR-probe behind `any_of` only queries the text index, so a
         non-string or unindexed merge key never matches and every upsert
         inserts a new row instead of merging.
+
+        Three spellings satisfy "indexed", matching what the store accepts in
+        `SchemaDef._validate_merge_key`: `unique`, `index`, or `computed`. A
+        computed column is projected into the record index by definition —
+        `project_record` always emits a row for it — so it needs no flag of
+        its own, and demanding `unique` on one would change the merge grain
+        into a uniqueness constraint rather than fixing anything.
         """
         merge_key = table.get("merge_key") if isinstance(table, dict) else None
         if not isinstance(merge_key, dict):
@@ -595,12 +602,12 @@ class _Checker:
                     f"merge_key column '{name}' is type:{col.get('type')}. The OR-probe only "
                     "queries the text index, so a non-string key silently never matches.",
                 )
-            if not (col.get("unique") or col.get("indexed")):
+            if not (col.get("unique") or col.get("index") or col.get("computed")):
                 self.err(
                     "merge-key-not-indexed",
                     where,
-                    f"merge_key column '{name}' is not indexed. Add `unique: true` — an "
-                    "unindexed merge key silently never matches.",
+                    f"merge_key column '{name}' is not indexed. Add `unique: true` or "
+                    "`index: true` — an unindexed merge key silently never matches.",
                 )
 
     def _check_manifest_references(self) -> None:
