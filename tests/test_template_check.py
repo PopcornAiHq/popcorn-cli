@@ -632,6 +632,38 @@ def test_merge_key_must_be_indexed(tmp_path):
     assert "merge-key-not-indexed" in codes(write_bundle(tmp_path / "b", manifest=manifest))
 
 
+def test_merge_key_on_a_computed_column_is_indexed(tmp_path):
+    """A computed column is projected into the record index by definition.
+
+    The store accepts `computed` wherever it accepts `unique` / `index` for a
+    merge key (`SchemaDef._validate_merge_key`), and `project_record` always
+    emits an index row for one. Demanding `unique` here would be a false
+    positive against every bundle keyed on a computed tuple — and taking the
+    advice would turn the merge grain into a uniqueness constraint.
+    """
+    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
+    table = manifest["tables"]["widgets"]
+    for col in table["columns"]:
+        if col["name"] == "Fingerprint":
+            col.pop("unique")
+            col["computed"] = {"fn": "tuple", "from": ["Title", "Status"]}
+    assert "merge-key-not-indexed" not in codes(write_bundle(tmp_path / "b", manifest=manifest))
+
+
+def test_merge_key_on_an_index_true_column_is_indexed(tmp_path):
+    """`index: true` is the store's spelling — the schema has no `indexed` key.
+
+    A plain index satisfies the OR-probe just as `unique` does; the difference
+    is whether duplicates are refused, which the merge grain does not need.
+    """
+    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
+    for col in manifest["tables"]["widgets"]["columns"]:
+        if col["name"] == "Fingerprint":
+            col.pop("unique")
+            col["index"] = True
+    assert "merge-key-not-indexed" not in codes(write_bundle(tmp_path / "b", manifest=manifest))
+
+
 def test_merge_key_naming_an_unknown_column(tmp_path):
     manifest = json.loads(json.dumps(CLEAN_MANIFEST))
     manifest["tables"]["widgets"]["merge_key"]["any_of"] = ["Nope"]
