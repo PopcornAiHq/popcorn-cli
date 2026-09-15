@@ -302,6 +302,30 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
         print(formatted)
 
 
+def _hint_line(hint: str) -> str:
+    """Label a `PopcornError` hint by what it actually is (KEW-2373).
+
+    The label used to be a flat ``Run:``, which was wrong in both directions.
+    Hints that carry their own verb printed it twice — ``Run: run: popcorn app
+    checkout …`` was the reported one — and hints that are instructions rather
+    than commands ("pass --force to overwrite them") were read out as though
+    they were something to type.
+
+    A hint is a command when it starts with ``popcorn``; that is the whole
+    test, because every hint on this surface that names a command names this
+    one. Anything else is advice and says so.
+    """
+    text = hint.strip()
+    # Tolerated, not expected: a hint should not carry its own verb. The
+    # tests hold the source hints to that, and this keeps a reintroduced one
+    # from printing the duplicate rather than merely reading oddly.
+    for verb in ("run:", "Run:"):
+        if text.startswith(verb):
+            text = text[len(verb) :].strip()
+            break
+    return f"Run: {text}" if text.startswith("popcorn") else f"Hint: {text}"
+
+
 def _assume_yes(args: argparse.Namespace) -> bool:
     """Return True if the user has opted into auto-confirmation.
 
@@ -1383,9 +1407,19 @@ def cmd_webhook(args: argparse.Namespace) -> None:
     elif sub == "list":
         resp = operations.list_webhooks(client, args.conversation)
         hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
+        show_url = getattr(args, "show_url", False)
         lines = [f"Webhooks for {args.conversation} ({len(hooks)}):"]
         for h in hooks:
             lines.append(f"  {h.get('id', '?')}  {h.get('name', '?')}")
+            if show_url and h.get("url"):
+                lines.append(f"    {h['url']}")
+        # The ingest URL's token IS the credential — anyone holding it can post
+        # to the channel — so it is opt-in rather than printed by default, and
+        # the footer is what stops that decision from sending people back to
+        # `--json` to find it (KEW-2373).
+        if not show_url and any(h.get("url") for h in hooks):
+            lines.append("")
+            lines.append("Ingest URLs hidden (they carry a secret token) — pass --show-url.")
         _output(args, resp, "\n".join(lines))
     elif sub == "deliveries":
         resp = operations.list_webhook_deliveries(
@@ -3319,7 +3353,7 @@ Templates:
   template        Channel-template commands (check)
 
 Apps:
-  app             App-bundle commands (list, checkout, fork, publish, apply, status)
+  app             App-bundle commands (list, lines, checkout, fork, publish, apply, status)
   channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:
@@ -3697,6 +3731,12 @@ Other:
     )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
     wh_list.add_argument("conversation", help="Channel name or UUID")
+    wh_list.add_argument(
+        "--show-url",
+        action="store_true",
+        help="Print each webhook's ingest URL — it embeds a secret token, so it "
+        "is hidden by default",
+    )
     wh_send = wh_sub.add_parser("send", help="Send a payload to a webhook's ingest URL")
     wh_send.add_argument("target", help="Ingest URL, webhook UUID, or webhook name")
     wh_send.add_argument(
@@ -4023,7 +4063,7 @@ def main() -> None:
         else:
             msg = f"Error: {e}"
             if e.hint:
-                msg += f"\n  Run: {e.hint}"
+                msg += f"\n  {_hint_line(e.hint)}"
             print(msg, file=sys.stderr)
         sys.exit(e.exit_code)
     except KeyboardInterrupt:

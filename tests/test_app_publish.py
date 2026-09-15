@@ -1443,3 +1443,225 @@ class TestDeprecatedChangelogAlias:
         assert "--changelog is deprecated" in err and "--message" in err
         # Deprecated, not broken: the message still reaches the wire.
         assert rec.calls[0][1]["changelog"] == "why"
+
+
+# ---------------------------------------------------------------------------
+# KEW-2370 — `app status --channel`, with no checkout
+# ---------------------------------------------------------------------------
+
+
+def _tree_response(**over) -> dict:
+    """An `/apps/tree?ref=head` response: the line's head plus the binding."""
+    payload = {
+        "ok": True,
+        "app": "alerttracker",
+        "kind": "fork",
+        "version_id": 7,
+        "semver": "0.2.0",
+        "ref": "head",
+        "bound_version_id": 7,
+        "bound_semver": "0.2.0",
+        "paths": ["manifest.yaml"],
+    }
+    payload.update(over)
+    return payload
+
+
+def _binding(**over) -> dict:
+    payload = {
+        "ok": True,
+        "apps": [],
+        "channel": {
+            "app": "alerttracker",
+            "kind": "fork",
+            "fork_name": "demo914",
+            "version_id": 7,
+            "semver": "0.2.0",
+        },
+    }
+    payload.update(over)
+    return payload
+
+
+class TestChannelScopedStatus:
+    """ "Has my publish landed?" answered without a checkout.
+
+    Before this, `app status` required one, so every caller polled
+    `app list --channel` and string-matched a semver out of its prose.
+    """
+
+    def _run(self, args, listing=None, tree=None):
+        from popcorn_cli.commands import app as mod
+
+        captured = {}
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "list_channel_apps", return_value=listing or _binding()),
+            patch.object(operations, "get_channel_app_tree", return_value=tree or _tree_response()),
+        ):
+            mod._app_status(args)
+        return captured
+
+    def test_a_landed_install_reads_as_current(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        assert out["data"]["install_state"] == "current"
+        assert out["data"]["channel_behind"] is False
+        assert out["data"]["channel_version_id"] == out["data"]["head_version_id"] == 7
+        assert "CURRENT" in out["rendered"]
+
+    def test_a_channel_behind_its_line_reads_as_pending(self, tmp_path):
+        out = self._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            tree=_tree_response(bound_version_id=5, bound_semver="0.1.0"),
+        )
+        assert out["data"]["install_state"] == "pending"
+        assert out["data"]["channel_behind"] is True
+        assert (out["data"]["channel_semver"], out["data"]["head_semver"]) == ("0.1.0", "0.2.0")
+        assert "PENDING" in out["rendered"]
+        assert "popcorn app apply --channel #chan" in out["rendered"]
+
+    def test_pending_says_the_job_status_is_not_readable(self, tmp_path):
+        """The honest half of KEW-2370: the API exposes no status for the
+        install job, so a failed install and a running one look the same and
+        the output must not imply otherwise."""
+        out = self._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            tree=_tree_response(bound_version_id=5, bound_semver="0.1.0"),
+        )
+        assert "not readable from the API" in out["rendered"]
+
+    def test_it_reads_the_line_head_not_the_bound_version(self, tmp_path):
+        from popcorn_cli.commands import app as mod
+
+        refs = []
+
+        def _tree(client, conversation, ref="bound"):
+            refs.append(ref)
+            return _tree_response()
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch("popcorn_cli.cli._output"),
+            patch.object(operations, "list_channel_apps", return_value=_binding()),
+            patch.object(operations, "get_channel_app_tree", _tree),
+        ):
+            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+        assert refs == ["head"], "a status that reads ref=bound can never see a pending install"
+
+    def test_it_names_the_fork_line(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        assert out["data"]["fork_name"] == "demo914"
+        assert "line demo914" in out["rendered"]
+
+    def test_a_channel_with_no_bundle_says_so(self, tmp_path):
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch.object(operations, "list_channel_apps", return_value=_binding(channel=None)),
+            pytest.raises(PopcornError) as exc,
+        ):
+            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+        assert exc.value.error_code == "not_found"
+        assert "does not run an app bundle" in str(exc.value)
+
+    def test_an_older_api_without_bound_fields_falls_back_to_the_binding(self, tmp_path):
+        """popcorn-backend before #1985 sends no `bound_*`; then the served
+        version IS the bound one and the channel cannot read as behind."""
+        tree = _tree_response()
+        del tree["bound_version_id"]
+        del tree["bound_semver"]
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"), tree=tree)
+        assert out["data"]["install_state"] == "current"
+        assert out["data"]["channel_semver"] == "0.2.0"
+
+    def test_no_checkout_and_no_channel_points_at_the_flag(self, tmp_path):
+        from popcorn_cli.commands import app as mod
+
+        with pytest.raises(PopcornError) as exc:
+            mod._app_status(_args(directory=str(tmp_path)))
+        assert exc.value.error_code == "not_found"
+        # Not merely that the hint mentions `--channel` — the old one did too,
+        # while pointing at `app checkout`. It has to offer the checkout-free
+        # read, which is the thing that did not exist before.
+        assert "without a checkout" in (exc.value.hint or "")
+
+    def test_a_checkout_keeps_its_own_behaviour_when_channel_is_passed(self, tmp_path):
+        """MUST NOT CHANGE: inside a checkout `--channel` still names the
+        channel to compare the working copy against — the one case a v1
+        baseline (0.19.0, no channel recorded) depends on. This test passes
+        with the feature reverted, which is the point of it."""
+        from popcorn_cli.commands import app as mod
+
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base, conversation_id=None)
+        captured = {}
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+        ):
+            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+        # The checkout view, not the channel view: it carries the working copy.
+        assert "dirty" in captured["data"]
+        assert "install_state" not in captured["data"]
+
+
+class TestApplyReadsAsRecovery:
+    """KEW-2373: publish → install converged on the first poll across roughly
+    a dozen publishes, and `apply` was never needed once. Documenting it as a
+    routine step in the loop is what invites it into scripts."""
+
+    def _subcommand(self, name):
+        from popcorn_cli.registry import COMMANDS
+
+        app = next(c for c in COMMANDS if c.name == "app")
+        return next(s for s in app.subcommands if s.name == name)
+
+    def test_the_apply_help_names_it_as_a_retry(self):
+        help_text = self._subcommand("apply").help.lower()
+        assert "recovery" in help_text or "retry" in help_text
+        assert "did not land" in help_text
+
+    def test_the_documented_loop_does_not_end_in_apply(self):
+        from popcorn_cli.commands import app as mod
+
+        loop = next(
+            ln for ln in (mod.__doc__ or "").splitlines() if ln.strip().startswith("app fork")
+        )
+        assert "app publish" in loop
+        assert "app apply" not in loop
+
+    def test_a_started_install_is_not_presented_as_an_outstanding_step(self):
+        """It says how to confirm, not what to do next — nothing is required
+        of the caller once the install is running."""
+        from popcorn_cli.commands import app as mod
+
+        rendered = "\n".join(mod._install_lines({"install_status": "started", "wf": None}))
+        assert "Next:" not in rendered
+        assert "converges on its own" in rendered
+
+    def test_a_blocked_install_still_points_at_apply(self):
+        """The inverse guard: apply is genuinely the fix here, and softening
+        every mention of it would lose that."""
+        from popcorn_cli.commands import app as mod
+
+        for status in ("blocked_app_updates_locked", "blocked_install_in_progress"):
+            rendered = "\n".join(mod._install_lines({"install_status": status}))
+            assert "popcorn app apply" in rendered, status
+
+    def test_the_adopting_note_points_at_status_not_a_list_poll(self):
+        """`app list` was the old answer and is what callers grepped a semver
+        out of (KEW-2370)."""
+        from popcorn_cli.commands import app as mod
+
+        rendered = "\n".join(mod._fork_lines({"status": "adopting", "app": "a", "semver": "1.0.0"}))
+        assert "popcorn app status --channel" in rendered
+        assert "popcorn app list" not in rendered

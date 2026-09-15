@@ -1073,3 +1073,117 @@ class TestNewFlags:
     def test_if_not_exists_flag(self, parser):
         args = parser.parse_args(["channel", "create", "test-ch", "--if-not-exists"])
         assert args.if_not_exists is True
+
+
+_WEBHOOKS = {
+    "webhooks": [
+        {
+            "id": "6e453d05-efaf-4aa6-bc39-76e4bafb69c7",
+            "name": "Intake",
+            "url": "https://hooks.popcorn.ai/ingest/s3cr3t-token",
+        }
+    ]
+}
+
+
+class TestWebhookListUrl:
+    """KEW-2373: the ingest URL was reachable only through `--json`.
+
+    The token in that URL is the credential — holding it is enough to post to
+    the channel — so the decision here was to keep it out of default human
+    output and make it opt-in, rather than printing it for everyone who lists
+    their webhooks in a shared terminal.
+    """
+
+    def _run(self, parser, argv, capsys):
+        from popcorn_cli.cli import cmd_webhook
+
+        args = parser.parse_args(argv)
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch("popcorn_core.operations.list_webhooks", return_value=_WEBHOOKS),
+        ):
+            cmd_webhook(args)
+        return capsys.readouterr().out
+
+    def test_the_token_is_not_printed_by_default(self, parser, capsys):
+        out = self._run(parser, ["webhook", "list", "#ops"], capsys)
+        assert "s3cr3t-token" not in out
+        assert "Intake" in out
+
+    def test_the_default_output_says_the_url_is_available(self, parser, capsys):
+        """Hiding it without saying so just sends people back to `--json`."""
+        out = self._run(parser, ["webhook", "list", "#ops"], capsys)
+        assert "--show-url" in out
+
+    def test_show_url_prints_it(self, parser, capsys):
+        out = self._run(parser, ["webhook", "list", "#ops", "--show-url"], capsys)
+        assert "https://hooks.popcorn.ai/ingest/s3cr3t-token" in out
+        assert "--show-url" not in out, "the footer is pointless once the URLs are shown"
+
+    def test_json_still_carries_the_url_untouched(self, parser, capsys):
+        out = self._run(parser, ["--json", "webhook", "list", "#ops"], capsys)
+        payload = json.loads(out)
+        assert payload["data"]["webhooks"][0]["url"].endswith("s3cr3t-token")
+
+    def test_no_footer_when_the_api_returned_no_urls(self, parser, capsys):
+        from popcorn_cli.cli import cmd_webhook
+
+        args = parser.parse_args(["webhook", "list", "#ops"])
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_core.operations.list_webhooks",
+                return_value={"webhooks": [{"id": "x", "name": "Intake"}]},
+            ),
+        ):
+            cmd_webhook(args)
+        assert "--show-url" not in capsys.readouterr().out
+
+
+class TestAppSurfaceListings:
+    """`app lines` must reach every restatement of the app subcommand list.
+
+    Mirrors the webhook guards above. The app family is registry-driven, so
+    both shell completions derive from one declaration — the epilog is the
+    one place still hand-maintained, and the one this catches.
+    """
+
+    def test_lines_reaches_both_completions(self, capsys):
+        from popcorn_cli.cli import cmd_completion
+
+        for shell in ("bash", "zsh"):
+            cmd_completion(argparse.Namespace(shell=shell))
+            out = capsys.readouterr().out
+            assert "apply checkout fork lines list publish status" in out, (
+                f"stale {shell} completion"
+            )
+
+    def test_lines_reaches_the_help_listing(self, parser):
+        app_lines = [
+            ln for ln in parser.format_help().splitlines() if ln.strip().startswith("app ")
+        ]
+        assert app_lines and all("lines" in ln for ln in app_lines)
+
+    def test_the_epilog_lists_every_registered_app_subcommand(self, parser):
+        """The epilog is hand-written, so it drifts from the registry silently.
+        Checked as a set, so the next subcommand is caught too."""
+        from popcorn_cli.registry import completion_words
+
+        epilog_line = next(
+            ln for ln in parser.format_help().splitlines() if ln.strip().startswith("app ")
+        )
+        missing = [name for name in completion_words("app") if name not in epilog_line]
+        assert missing == [], f"app subcommands missing from the epilog: {missing}"
+
+    def test_lines_is_dispatchable(self, parser):
+        args = parser.parse_args(["app", "lines", "--channel", "#ops"])
+        assert args.command == "app"
+        assert args.app_command == "lines"
+        assert args.channel == "#ops"
+
+    def test_status_takes_a_channel_without_a_directory(self, parser):
+        args = parser.parse_args(["app", "status", "--channel", "#ops"])
+        assert args.app_command == "status"
+        assert args.channel == "#ops"
+        assert args.directory is None

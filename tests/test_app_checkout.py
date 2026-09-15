@@ -254,9 +254,22 @@ class TestOperations:
         )
 
     def test_tree_sends_conversation_id(self, mock_client):
+        """`ref` defaults to "bound", which is also the endpoint's own default
+        — so the version this serves is the one it always served."""
         mock_client.get.return_value = {"paths": []}
         operations.get_channel_app_tree(mock_client, _CONV)
-        mock_client.get.assert_called_once_with("/api/apps/tree", {"conversation_id": _CONV})
+        mock_client.get.assert_called_once_with(
+            "/api/apps/tree", {"conversation_id": _CONV, "ref": "bound"}
+        )
+
+    def test_tree_can_ask_for_the_line_head(self, mock_client):
+        """`app status --channel` needs the head alongside the binding, and
+        the tree read is the cheapest response carrying both."""
+        mock_client.get.return_value = {"paths": []}
+        operations.get_channel_app_tree(mock_client, _CONV, ref="head")
+        mock_client.get.assert_called_once_with(
+            "/api/apps/tree", {"conversation_id": _CONV, "ref": "head"}
+        )
 
     def test_file_sends_path_too(self, mock_client):
         mock_client.get.return_value = {"path": "a", "content": "b"}

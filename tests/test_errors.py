@@ -198,3 +198,59 @@ class TestErrorCode:
 
     def test_api_error_network(self):
         assert APIError("x").error_code == "network_error"
+
+
+class TestHintRendering:
+    """KEW-2373: the hint label used to be a flat "Run:", which was wrong both
+    ways — it doubled up on hints carrying their own verb, and it told people
+    to type things that are not commands."""
+
+    def test_a_command_hint_says_run(self):
+        from popcorn_cli.cli import _hint_line
+
+        assert _hint_line("popcorn auth login") == "Run: popcorn auth login"
+
+    def test_advice_is_not_labelled_as_a_command(self):
+        from popcorn_cli.cli import _hint_line
+
+        assert _hint_line("pass --force to overwrite them") == (
+            "Hint: pass --force to overwrite them"
+        )
+
+    def test_a_self_prefixed_hint_does_not_print_the_verb_twice(self):
+        """The reported bug: `Run: run: popcorn app checkout …`."""
+        from popcorn_cli.cli import _hint_line
+
+        rendered = _hint_line("run: popcorn app checkout --channel '#your-channel'")
+        assert rendered == "Run: popcorn app checkout --channel '#your-channel'"
+        assert "run: run:" not in rendered.lower()
+
+    def test_no_hint_in_the_source_carries_its_own_verb(self):
+        """The renderer tolerates a self-prefixed hint; the source must not
+        write one. Grepped rather than spot-checked, because fixing only the
+        one that was reported is how the next copy gets added."""
+        import re
+        from pathlib import Path
+
+        import popcorn_cli
+        import popcorn_core
+
+        offenders = []
+        roots = {Path(popcorn_cli.__file__).parent, Path(popcorn_core.__file__).parent}
+        for root in roots:
+            for path in root.rglob("*.py"):
+                for match in re.finditer(r"""hint=f?["']([^"']*)""", path.read_text()):
+                    if match.group(1).strip().lower().startswith("run:"):
+                        offenders.append(f"{path.name}: {match.group(1)}")
+        assert offenders == [], f"hints carrying their own 'run:' prefix: {offenders}"
+
+    def test_the_main_loop_renders_through_the_labeller(self):
+        """Guards the wiring, not the function: an un-labelled f-string in
+        `main` would pass every test above."""
+        import inspect
+
+        from popcorn_cli import cli
+
+        source = inspect.getsource(cli.main)
+        assert "_hint_line(e.hint)" in source
+        assert "Run: {e.hint}" not in source
