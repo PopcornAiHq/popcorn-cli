@@ -112,7 +112,7 @@ and no intranet visit:
 ```bash
 # fork onto this workspace's own line, then check its head out — one command
 popcorn app checkout --channel '#chan' --fork
-# ... edit, then bump version: in manifest.yaml
+# ... edit, then bump version: and rewrite changelog: in manifest.yaml
 popcorn template check ./<app>
 popcorn app publish ./<app> --changelog "what changed"
 popcorn app status ./<app>              # has the install landed?
@@ -122,6 +122,16 @@ The fork comes first and is not optional: a publish lands on a fork line **this
 workspace owns**, so publishing from a channel still bound to the shared
 product version is refused. `app publish` also starts the install that moves
 your channel onto the new version.
+
+The bump is not optional either, and inside a checkout `template check` is
+where you find that out. A published version is immutable, so `version:` must
+strictly advance past the one the checkout came from; leaving it alone gets you
+a `version-not-advanced` error offline instead of a server refusal after the
+upload. Rewriting `changelog:` in the same edit is a warning
+(`changelog-not-updated`) rather than an error, because the checkout arrives
+carrying the *previous* version's note — so keeping it is the default outcome,
+not an unlikely one. Both checks read the baseline `app checkout` wrote and are
+skipped entirely on a directory that is not a checkout.
 
 `--fork` takes an optional line name (`--fork=experiment`); bare, it names the
 line it is about to use and asks, because a workspace's single existing line

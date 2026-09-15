@@ -21,6 +21,7 @@ from popcorn_core.app_checkout import (
     Baseline,
     baseline_from_response,
     files_from_response,
+    manifest_changelog,
     occupied,
     read_baseline,
     tree_digest,
@@ -168,6 +169,39 @@ class TestBaseline:
         files = {"manifest.yaml": "v: 1\n"}
         b = baseline_from_response(_files_response(files), files)
         assert b.tree_digest == tree_digest(files)
+
+
+class TestBaselineChangelog:
+    """The served manifest's `changelog:`, recorded so `template check` can
+    tell this version's note from the previous version's left in place."""
+
+    def test_checkout_records_the_served_note(self, tmp_path):
+        files = {"manifest.yaml": 'version: "0.2.0"\nchangelog: >-\n  Dedupe by fingerprint.\n'}
+        b = baseline_from_response(_files_response(files), files)
+        assert b.changelog == "Dedupe by fingerprint."
+        write_baseline(tmp_path, b)
+        assert read_baseline(tmp_path).changelog == "Dedupe by fingerprint."
+
+    def test_a_manifest_without_one_records_none(self, tmp_path):
+        files = {"manifest.yaml": 'version: "0.2.0"\n'}
+        b = baseline_from_response(_files_response(files), files)
+        assert b.changelog is None
+        assert b.changelog_recorded
+
+    def test_an_older_baseline_did_not_record_it(self, tmp_path):
+        (tmp_path / BASELINE_FILE).write_text(
+            json.dumps({"version": 2, "app": "x", "semver": "0.2.0", "base_version_id": 7})
+        )
+        back = read_baseline(tmp_path)
+        assert back.changelog is None
+        assert not back.changelog_recorded
+
+    def test_the_legacy_manifest_filename_is_read_too(self):
+        assert manifest_changelog({"config.yaml": "changelog: note\n"}) == "note"
+
+    def test_an_unparseable_manifest_is_simply_no_note(self):
+        assert manifest_changelog({"manifest.yaml": "a: [\n"}) is None
+        assert manifest_changelog({}) is None
 
 
 class TestFilesFromResponse:

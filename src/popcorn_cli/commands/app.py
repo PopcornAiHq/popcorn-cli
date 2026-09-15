@@ -43,6 +43,7 @@ from popcorn_core.app_checkout import (
     Baseline,
     baseline_from_response,
     files_from_response,
+    manifest_changelog,
     occupied,
     read_baseline,
     write_baseline,
@@ -407,6 +408,9 @@ def _app_publish(args: argparse.Namespace) -> None:
         tree_digest=local_digest(local.files),
         fork_name=baseline.fork_name,
         conversation_id=baseline.conversation_id,
+        # The note that just shipped, so the NEXT bump is measured against it
+        # rather than against whatever the last `app checkout` saw.
+        changelog=manifest_changelog(local.files),
     )
     write_baseline(directory, published)
 

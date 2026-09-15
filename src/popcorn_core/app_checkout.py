@@ -15,17 +15,89 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import flow_rules
 from .errors import PopcornError
 
 BASELINE_FILE = ".popcorn-app.json"
-# 2 added `conversation_id`. A v1 baseline still parses — every field is read
-# with a default — and its commands fall back to an explicit --channel rather
-# than being rewritten underneath the user.
-_VERSION = 2
+# 2 added `conversation_id`. 3 added `changelog`. An older baseline still
+# parses — every field is read with a default — and each command degrades to
+# what it can still answer rather than rewriting the file underneath the user:
+# a v1 falls back to an explicit --channel, and a v1/v2 simply has no recorded
+# changelog for `template check` to compare against.
+_VERSION = 3
+# The first baseline version that captured the checked-out manifest's
+# `changelog:`. Below it, absence of the field means "not recorded", which is
+# not the same answer as "the manifest had none".
+CHANGELOG_VERSION = 3
+
+_SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+
+def semver_key(version: str) -> tuple[int, int, int] | None:
+    """`"2.4.0"` → `(2, 4, 0)`; None for anything not MAJOR.MINOR.PATCH.
+
+    Tuple ordering is the point: `1.10.0` must sort above `1.9.0`, which
+    string comparison gets backwards.
+    """
+    match = _SEMVER_RE.match(version.strip())
+    if match is None:
+        return None
+    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+
+def parse_semver(version: str) -> tuple[int, int, int]:
+    """`semver_key`, raising instead of returning None.
+
+    Strict for a reason the YAML makes non-obvious: an unquoted
+    `version: 1.0` parses as the float 1.0 and `version: 1.0.0` as a string,
+    so the two look identical in the file. Rejecting the float here is what
+    stops `"1.0"` reaching the registry.
+    """
+    key = semver_key(version)
+    if key is None:
+        raise PopcornError(
+            f"{version!r} is not MAJOR.MINOR.PATCH",
+            error_code="validation",
+        )
+    return key
+
+
+def changelog_of(manifest: dict[str, Any]) -> str | None:
+    """A manifest's `changelog:` as a comparable string, or None when absent.
+
+    Read from the PARSED document rather than the file's bytes so that
+    re-indenting a block scalar, or switching `>-` for `|`, is not mistaken
+    for a rewrite. None and `""` both mean "no note"; the distinction that
+    matters is recorded-vs-not, which `Baseline.changelog_recorded` carries.
+    """
+    value = manifest.get("changelog")
+    if not isinstance(value, str):
+        return None
+    return value.strip() or None
+
+
+def manifest_changelog(files: dict[str, str]) -> str | None:
+    """`changelog_of` the manifest inside a `{path: content}` bundle tree.
+
+    Lenient everywhere `manifest_version` is strict: this feeds a warning, so
+    an unparseable or absent manifest is simply nothing to record.
+    """
+    import yaml
+
+    for name in flow_rules.MANIFEST_FILENAMES:
+        if name not in files:
+            continue
+        try:
+            doc = yaml.safe_load(files[name])
+        except yaml.YAMLError:
+            return None
+        return changelog_of(doc) if isinstance(doc, dict) else None
+    return None
 
 
 @dataclass
@@ -52,7 +124,17 @@ class Baseline:
     # accepts either and a UUID survives a channel rename. None in a v1
     # baseline.
     conversation_id: str | None = None
+    # The checked-out manifest's `changelog:`, so `template check` can tell a
+    # note rewritten for this version from the previous version's left in
+    # place. None means the manifest declared none — NOT that the baseline
+    # predates the field; `changelog_recorded` is what separates those.
+    changelog: str | None = None
     version: int = _VERSION
+
+    @property
+    def changelog_recorded(self) -> bool:
+        """Whether `changelog` was captured at checkout and so is comparable."""
+        return self.version >= CHANGELOG_VERSION
 
     def to_dict(self) -> dict[str, Any]:
         d: dict[str, Any] = {
@@ -67,6 +149,8 @@ class Baseline:
             d["fork_name"] = self.fork_name
         if self.conversation_id:
             d["conversation_id"] = self.conversation_id
+        if self.changelog:
+            d["changelog"] = self.changelog
         return d
 
 
@@ -170,6 +254,7 @@ def read_baseline(directory: Path) -> Baseline | None:
         kind=data.get("kind", "product"),
         fork_name=data.get("fork_name"),
         conversation_id=data.get("conversation_id"),
+        changelog=data.get("changelog"),
         version=data.get("version", 1),
     )
 
@@ -185,5 +270,6 @@ def baseline_from_response(
         semver=resp.get("semver", ""),
         base_version_id=resp.get("version_id", 0),
         conversation_id=conversation_id,
+        changelog=manifest_changelog(files),
         tree_digest=tree_digest(files),
     )

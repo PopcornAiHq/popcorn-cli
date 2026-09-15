@@ -18,10 +18,9 @@ a better message, never to decide. Two of them are worth naming:
   reject the ordinary bundle layout the CLI's own docs teach.
   `unrecognized_tree_paths` — the server's refusal — applies to a tree
   already sent, which is never what this builds.
-- `parse_semver` is strict for a reason the YAML makes non-obvious: an
-  unquoted `version: 1.0` parses as the float 1.0 and `version: 1.0.0` as a
-  string, so the two look identical in the file. Rejecting the float here is
-  what stops `"1.0"` reaching the registry.
+- `require_bump` is the ordering rule, not the parser: `parse_semver` lives in
+  `app_checkout` beside the baseline it compares against, so `template check`
+  can predict this refusal offline without importing the publish path.
 """
 
 from __future__ import annotations
@@ -34,7 +33,7 @@ from typing import Any
 import yaml
 
 from . import flow_rules
-from .app_checkout import BASELINE_FILE, tree_digest
+from .app_checkout import BASELINE_FILE, parse_semver, tree_digest
 from .errors import PopcornError
 
 # One level under these seeds a channel_parameter of the same name. Read from
@@ -46,19 +45,6 @@ MANIFEST_FILENAMES = ("manifest.yaml", "config.yaml")
 _DOC_FILENAMES = ("AGENT.md", "README.md")
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
-
-_SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
-
-
-def parse_semver(version: str) -> tuple[int, int, int]:
-    """`"2.4.0"` → `(2, 4, 0)`. Raises on anything else, including `"1.0"`."""
-    match = _SEMVER_RE.match(version.strip())
-    if match is None:
-        raise PopcornError(
-            f"{version!r} is not MAJOR.MINOR.PATCH",
-            error_code="validation",
-        )
-    return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
 def _is_bundle_file(filename: str) -> bool:
