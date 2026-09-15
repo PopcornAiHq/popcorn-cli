@@ -1,8 +1,13 @@
 """`popcorn app` — author an app bundle from a checkout of it.
 
 ```
-app fork → app checkout → edit → template check → app publish → app apply
+app fork → app checkout → edit → template check → app publish
 ```
+
+`apply` is NOT a step in that loop. `publish` starts the install itself and it
+converges on its own; `apply` is the retry for the cases where it did not —
+the channel was locked, another install held it, or the install failed. Run it
+when `app status` says the channel is still behind its line, not by habit.
 
 `fork` leads even though a checkout is what you edit: publishing needs a
 checkout of a version this workspace OWNS, so `publish` from a product
@@ -20,12 +25,18 @@ happens; `status` shows both versions.
 
 Two groups of commands, split by what they act on:
 
-- `list` and `fork` act on a CHANNEL, so they take `--channel`. `list` takes
-  it too, which is not an oversight: the reads require `conversation_id`
-  because that is the field the API authorizes against (popcorn-backend#1801).
+- `list`, `lines` and `fork` act on a CHANNEL, so they take `--channel`.
+  `list` takes it too, which is not an oversight: the reads require
+  `conversation_id` because that is the field the API authorizes against
+  (popcorn-backend#1801). `lines` reports the WORKSPACE's fork lines and
+  needs the channel only for that authorization.
 - `checkout`, `publish`, `apply` and `status` act on a checkout DIRECTORY and
   read the channel out of its baseline. `--channel` stays accepted there for
   baselines written by 0.19.0, which predate the field.
+
+`status` is the one command in both groups: with a checkout it compares the
+working copy against the line and the channel, and with `--channel` outside
+one it answers "has my publish landed here?" from server state alone.
 
 Handlers import `..cli` helpers inside the function body: cli.py imports this
 package at module load to build the parser, so a module-level import cycles.
@@ -131,6 +142,96 @@ def _app_list(args: argparse.Namespace) -> None:
     _output(args, data, _render_list(data))
 
 
+# How many channels ride each line is the safety information `app lines`
+# exists to give, and the API does not carry it: `/apps/list` returns lineage
+# heads only, and the backend's own per-line channel count
+# (`_count_converging_channels`) lives behind `publish` and is exposed
+# nowhere. The CLI could approximate it by listing channels and reading each
+# one's binding, and deliberately does not: that enumerates only the channels
+# the CALLER can see, so it under-counts exactly when the answer matters and
+# would report "no channels" for a line another member's channel is bound to.
+# An undercount presented as a safety check is worse than an honest gap, so
+# the command names the gap instead. KEW-2371 carries the backend half.
+_NO_CHANNEL_COUNT = (
+    "How many channels ride each line is not shown: the API reports lineage "
+    "heads only, with no per-line channel count."
+)
+
+# Deleting a fork line has no API behind it either — the whole `/apps`
+# surface is list, tree, file, files, fork, publish and apply — so `app lines
+# delete` is not implemented rather than shipped as a command that dead-ends.
+_NO_DELETE = (
+    "Deleting a fork line is not possible yet: the API has no endpoint for "
+    "it. Lines accumulate until it does (KEW-2371)."
+)
+
+
+def _render_lines(lines_data: list[dict], channel: str) -> str:
+    from ..formatting import format_timestamp
+
+    if not lines_data:
+        return (
+            f"This workspace owns no fork lines of any app visible to {channel}.\n"
+            "\n"
+            "'popcorn app checkout --channel <channel> --fork' makes the first one."
+        )
+
+    rendered = [f"{'LINE':<30} {'APP':<24} {'HEAD':<10} PUBLISHED"]
+    for item in lines_data:
+        rendered.append(
+            f"{item.get('fork_name') or 'default':<30} "
+            f"{item.get('app', ''):<24} "
+            f"{item.get('semver', ''):<10} "
+            f"{format_timestamp(item.get('published_at'))}"
+        )
+    count = len(lines_data)
+    rendered += [
+        "",
+        f"{count} fork line{'s' if count != 1 else ''} in this workspace.",
+        _NO_CHANNEL_COUNT,
+        _NO_DELETE,
+    ]
+    return "\n".join(rendered)
+
+
+def _app_lines(args: argparse.Namespace) -> None:
+    """This workspace's fork lines, across apps — not this channel's.
+
+    `app list` answers a per-channel question (what does THIS channel run, and
+    what could it run) and buries the line inventory in it, one row per line
+    mixed with product entries and each row's flow list. Six throwaway lines
+    in one workspace is a routine afternoon (KEW-2371) and nothing listed them
+    on their own.
+
+    `--channel` is required and is not a filter: `/apps/list` authorizes
+    against `conversation_id` (popcorn-backend#1801), so a workspace-level
+    read still has to name a channel it can reach. The lines that come back
+    are the workspace's.
+    """
+    from ..cli import _get_client, _output
+
+    client = _get_client(args)
+    data = operations.list_channel_apps(client, args.channel)
+    wanted = getattr(args, "app", None)
+    lines_data = sorted(
+        (
+            item
+            for item in (data.get("apps") or [])
+            if item.get("kind") == "fork" and (not wanted or item.get("app") == wanted)
+        ),
+        key=lambda i: (str(i.get("app") or ""), str(i.get("fork_name") or "")),
+    )
+    payload = {
+        "channel": args.channel,
+        "lines": lines_data,
+        # Stated on the wire too, so a script reading --json is told the count
+        # is absent rather than inferring zero from a missing key.
+        "channel_counts_available": False,
+        "delete_supported": False,
+    }
+    _output(args, payload, _render_lines(lines_data, str(args.channel)))
+
+
 def _app_checkout(args: argparse.Namespace) -> None:
     from ..cli import _confirm_force, _get_client, _output
 
@@ -234,7 +335,8 @@ def _require_baseline(directory: Path) -> Baseline:
         raise PopcornError(
             f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
             error_code="not_found",
-            hint="run: popcorn app checkout --channel '#your-channel'",
+            # No "run:" prefix — the renderer supplies the verb (KEW-2373).
+            hint="popcorn app checkout --channel '#your-channel'",
         )
     return baseline
 
@@ -351,7 +453,11 @@ def _fork_lines(data: dict) -> list[str]:
         rendered.append(str(data["message"]))
     if status == "adopting":
         rendered.append(
-            "The install is asynchronous — 'popcorn app list' shows when the channel has moved."
+            # `app list` was the old answer and is a bad one: it prints the
+            # binding inside a prose line, so callers grepped a semver out of
+            # it. `status --channel` reports the same thing as a field.
+            "The install is asynchronous — 'popcorn app status --channel "
+            "<channel>' says when the channel has moved."
         )
     return rendered
 
@@ -559,7 +665,14 @@ def _install_lines(result: dict) -> list[str]:
     status = str(result.get("install_status") or "")
     workflow_id = result.get("install_workflow_id")
     if status == "started" or (not status and workflow_id):
-        return [f"Installing on this channel: {workflow_id}", "Next: popcorn app status"]
+        # Not "Next:" — nothing further is required of the caller here. The
+        # install converges on its own; status is how you CONFIRM it, and
+        # presenting it as a mandatory step is what made the loop read as
+        # more manual than it is (KEW-2373).
+        return [
+            f"Installing on this channel: {workflow_id}",
+            "It converges on its own — 'popcorn app status' confirms it landed.",
+        ]
     if status == "blocked_app_updates_locked":
         return [
             "Not applied to this channel: app updates are locked here — ask a "
@@ -605,11 +718,104 @@ def _app_apply(args: argparse.Namespace) -> None:
     _output(args, data, "\n".join(lines))
 
 
+def _channel_status(args: argparse.Namespace, conversation: str) -> None:
+    """ "Has my publish landed on this channel?", from server state alone.
+
+    The question the publish loop actually raises, and before this it had no
+    direct answer: `status` needed a checkout, so callers polled `app list`
+    and grepped a semver out of its prose (KEW-2370). Two version IDs from
+    `/apps/tree?ref=head` settle it — `bound_version_id` is what the channel
+    runs, `version_id` is the line's head — and `install_state` puts the
+    answer in one machine-readable field so nothing has to parse rendering.
+
+    `install_state` is deliberately NOT the install job's status. `publish`
+    prints a workflow id (`channel-install:<uuid>`) but the API exposes no
+    endpoint that reads it: the whole `/apps` surface is list, tree, file,
+    files, fork, publish, apply, and the one place the backend describes that
+    workflow is a private helper behind publish and apply. So a channel
+    behind its line reads as "pending" whether the install is still running
+    or has failed, and this cannot tell the two apart until the backend
+    exposes the job. `apply` is the retry either way, which is why "pending"
+    points there.
+    """
+    from ..cli import _get_client, _output
+
+    client = _get_client(args)
+    listing = operations.list_channel_apps(client, conversation)
+    binding = listing.get("channel")
+    if not binding:
+        raise PopcornError(
+            f"{conversation} does not run an app bundle — there is no install to report",
+            error_code="not_found",
+            hint=f"popcorn app list --channel '{conversation}'",
+        )
+
+    tree = operations.get_channel_app_tree(client, conversation, ref="head")
+    head_id = tree.get("version_id")
+    head_semver = tree.get("semver")
+    # An API older than popcorn-backend #1985 sends no `bound_*`; then the
+    # served version IS the bound one, so the binding's own fields answer.
+    channel_id = tree.get("bound_version_id", binding.get("version_id"))
+    channel_semver = tree.get("bound_semver", binding.get("semver"))
+    behind = channel_id != head_id
+    line = binding.get("fork_name")
+
+    data = {
+        "channel": conversation,
+        "app": binding.get("app"),
+        "kind": binding.get("kind"),
+        "fork_name": line,
+        "channel_semver": channel_semver,
+        "channel_version_id": channel_id,
+        "head_semver": head_semver,
+        "head_version_id": head_id,
+        "channel_behind": behind,
+        "install_state": "pending" if behind else "current",
+    }
+
+    lines = [
+        f"{binding.get('app')} {channel_semver} ({binding.get('kind')}"
+        + (f", line {line}" if line else "")
+        + f") on {conversation}",
+    ]
+    if behind:
+        lines += [
+            f"Fork line head: {head_semver} (version {head_id})",
+            "",
+            f"Install: PENDING — the channel still runs {channel_semver} (version {channel_id}).",
+            "The install job's own status is not readable from the API, so a "
+            "failed install looks the same as one still running.",
+            f"Re-run this to re-check, or 'popcorn app apply --channel "
+            f"{conversation}' to retry it.",
+        ]
+    else:
+        lines += [
+            f"Fork line head: {head_semver} (version {head_id})",
+            "",
+            f"Install: CURRENT — the channel runs the line's head (version {head_id}).",
+        ]
+    _output(args, data, "\n".join(lines))
+
+
 def _app_status(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     directory = _directory(args)
-    baseline = _require_baseline(directory)
+    # `--channel` outside a checkout is the channel-scoped read; inside one it
+    # keeps its older meaning — the channel to compare the working copy
+    # against, which a v1 baseline (0.19.0) cannot supply on its own. Branching
+    # on the baseline rather than on the flag is what keeps that intact.
+    baseline = read_baseline(directory)
+    if baseline is None:
+        if getattr(args, "channel", None):
+            _channel_status(args, str(args.channel))
+            return
+        raise PopcornError(
+            f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
+            error_code="not_found",
+            hint="pass --channel '#your-channel' to report that channel's "
+            "install without a checkout",
+        )
     client = _get_client(args)
     conversation = _channel_of(args, baseline)
 
@@ -696,6 +902,21 @@ register(
                 [_CHANNEL],
             ),
             Subcommand(
+                "lines",
+                "List this workspace's fork lines — name, head, published_at",
+                _app_lines,
+                [
+                    Argument(
+                        "channel",
+                        "Any channel you can reach — the API authorizes this "
+                        "read against a conversation; the lines listed are "
+                        "the workspace's, not the channel's",
+                        required=True,
+                    ),
+                    Argument("app", "Only this app's lines (default: every app)"),
+                ],
+            ),
+            Subcommand(
                 "checkout",
                 "Write the fork line's head to disk, with a baseline",
                 _app_checkout,
@@ -763,15 +984,25 @@ register(
             ),
             Subcommand(
                 "apply",
-                "Bring the channel up to its fork line's head",
+                "Recovery only: retry an install that did not land. 'publish' "
+                "starts one and it normally converges on its own",
                 _app_apply,
                 [_DIRECTORY, _CHANNEL_OPT],
             ),
             Subcommand(
                 "status",
-                "Compare a checkout against the fork line's head and the channel",
+                "Has the publish landed? With a checkout, also what differs "
+                "from the fork line's head",
                 _app_status,
-                [_DIRECTORY, _CHANNEL_OPT],
+                [
+                    _DIRECTORY,
+                    Argument(
+                        "channel",
+                        "Channel to act on (default: the checkout's baseline). "
+                        "Outside a checkout this reports that channel's bound "
+                        "version, its line's head and the install state",
+                    ),
+                ],
             ),
         ],
     )

@@ -120,7 +120,7 @@ Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page
 | `popcorn table audit --channel <conv> [--limit N] [--cursor C]` | Recent data-store audit entries |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-id ID]` | Create a webhook |
-| `popcorn webhook list <conv>` | List webhooks |
+| `popcorn webhook list <conv>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
 | `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |

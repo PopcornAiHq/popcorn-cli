@@ -139,7 +139,8 @@ chance to see what landed.
 The fork comes first and is not optional: a publish lands on a fork line **this
 workspace owns**, so publishing from a channel still bound to the shared
 product version is refused. `app publish` also starts the install that moves
-your channel onto the new version.
+your channel onto the new version, and that install converges on its own —
+`app status` confirms it rather than causing it.
 
 The bump is not optional either, and inside a checkout `template check` is
 where you find that out. A published version is immutable, so `version:` must
@@ -150,6 +151,25 @@ upload. Rewriting `changelog:` in the same edit is a warning
 carrying the *previous* version's note — so keeping it is the default outcome,
 not an unlikely one. Both checks read the baseline `app checkout` wrote and are
 skipped entirely on a directory that is not a checkout.
+
+`app apply` is **not** a step in this loop. It is the retry for an install that
+did not land: the channel had app updates locked, another install held it, or
+it failed. Run it when `app status` says the channel is still behind its line,
+not by habit.
+
+**From outside a checkout**, `app status --channel <channel>` answers the same
+question against server state alone — no working copy needed:
+
+```bash
+popcorn app status --channel '#chan'
+popcorn app status --channel '#chan' --json | jq -r '.data.install_state'
+```
+
+`install_state` is `current` (the channel runs its fork line's head) or
+`pending` (it does not). Poll that field rather than grepping a semver out of
+`app list` output. One caveat worth knowing: the API exposes no status for the
+install job itself, so `pending` cannot distinguish an install still running
+from one that failed — `app apply --channel <channel>` is the retry for both.
 
 `--fork` takes an optional line name (`--fork=experiment`); bare, it names the
 line it is about to use and asks, because a workspace's single existing line
@@ -175,6 +195,7 @@ Reading needs no fork — a fork-less checkout records `"kind": "product"` and
 publishing from it is refused, which is the point. Fork when you intend to
 edit, and note what that costs: a fork line is permanent and cannot be
 deleted, so do it in a workspace you do not mind accumulating one in.
+`popcorn app lines --channel <id>` is how you see what has accumulated.
 
 Three things about this loop that are easy to get wrong:
 
@@ -707,9 +728,18 @@ whenever the app already exists. No deploy, no intranet, seconds per turn:
 ```bash
 popcorn app publish ./<app> --bump patch -m "..."    # mint the next version
 popcorn app status ./<app>                           # has the install landed?
+popcorn app lines --channel <id>                     # what lines exist?
 popcorn channel-config show --channel <id> --strict  # is the channel wired up?
 popcorn flow runs list --channel <id>
 ```
+
+`app lines` is the fork-line inventory — name, head semver, and when that head
+was published — and it is worth a look before forking, because a nameless
+`app fork` adopts whatever single line exists and the server refuses outright
+once there are two. `--channel` there is the API's authorization handle, not a
+filter: the lines listed are the workspace's. Two things it cannot tell you,
+both because the API does not carry them: how many channels ride each line,
+and how to delete one. Lines accumulate until the backend grows those.
 
 `channel-config show` is worth running the first time a bundle installs: it
 diffs every `$channel.*` reference your flows make against what the channel
@@ -729,6 +759,7 @@ popcorn channel templates                            # is my version installable
 popcorn channel create '#chan' --template mytemplate # note the UUID — see below
 
 popcorn webhook list <id>                            # names and ids
+popcorn webhook list <id> --show-url                 # + the ingest URL
 popcorn webhook send Intake @fixtures/sample.json --channel <id>
 
 popcorn flow runs list --channel <id>

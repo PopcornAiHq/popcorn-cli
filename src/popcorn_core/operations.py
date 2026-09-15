@@ -1373,10 +1373,23 @@ def list_channel_apps(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.get("/api/apps/list", {"conversation_id": conv_id})
 
 
-def get_channel_app_tree(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Every file path in the channel's bound version (`paths`)."""
+def get_channel_app_tree(
+    client: APIClient, conversation: str, ref: str = "bound"
+) -> dict[str, Any]:
+    """Every file path in the selected version (`paths`).
+
+    `ref` picks the version the same way `get_channel_app_files` does, and the
+    response carries both sides of it: `version_id`/`semver` for the version
+    served, `bound_version_id`/`bound_semver` for what the channel runs. That
+    pair is the cheapest read that answers "has the publish landed here?" —
+    the files endpoint answers it too, but ships every file's content to do so.
+
+    Defaults to "bound" rather than "head" so an existing caller keeps the
+    version it already got; the files reader defaults the other way because
+    its caller is a checkout, which must be based on the head.
+    """
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/apps/tree", {"conversation_id": conv_id})
+    return client.get("/api/apps/tree", {"conversation_id": conv_id, "ref": ref})
 
 
 def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dict[str, Any]:
