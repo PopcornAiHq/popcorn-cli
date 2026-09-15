@@ -407,6 +407,16 @@ def _inferred_fork_line(client, conversation: str) -> dict | None:
     return lines[0] if len(lines) == 1 else None
 
 
+# A fork always has a line name: bundle_version's CHECK constraint ties
+# `fork_name` and `owner_workspace_id` together, so a fork row cannot carry a
+# NULL name. An absent field is therefore the server declining to report it,
+# never an unnamed line — which is why neither site below may fall back to
+# "default". That is merely the name the backend mints for a workspace's FIRST
+# line, so the guess reads as correct everywhere until someone names theirs,
+# and then states the wrong line confidently (KEW-2375).
+_LINE_UNREPORTED = "not reported by this server"
+
+
 def _fork(args: argparse.Namespace, client, conversation: str, name: str | None) -> dict:
     """Fork, disclosing and confirming first when the line is being INFERRED.
 
@@ -424,17 +434,24 @@ def _fork(args: argparse.Namespace, client, conversation: str, name: str | None)
     if not name:
         line = _inferred_fork_line(client, conversation)
         if line is not None:
-            label = line.get("fork_name") or "default"
+            named = line.get("fork_name")
+            label = f" '{named}'" if named else ""
+            caveat = "" if named else " This server reported no name for it."
             print(
-                f"No --name given: adopting this workspace's existing fork line "
-                f"'{label}' of {line.get('app')}, at {line.get('semver')}.",
+                f"No --name given: adopting this workspace's existing fork line"
+                f"{label} of {line.get('app')}, at {line.get('semver')}.{caveat}",
                 file=sys.stderr,
             )
-            if not _confirm(args, f"Adopt fork line '{label}'?"):
+            if not _confirm(args, f"Adopt fork line{label}?"):
                 raise PopcornError(
                     "fork cancelled — no line was adopted",
                     error_code="validation",
-                    hint=f"name the line to be sure: --name '{label}'",
+                    hint=(
+                        f"name the line to be sure: --name '{named}'"
+                        if named
+                        else "the server did not name the line; pass --name "
+                        "<line> to say which one you mean"
+                    ),
                 )
     return operations.fork_channel_app(client, conversation, name)
 
@@ -447,7 +464,7 @@ def _fork_lines(data: dict) -> list[str]:
         "already_fork": "Already on this workspace's fork of",
         "adopting": "Adopting this workspace's existing fork of",
     }.get(str(status), f"{status}:")
-    line = data.get("fork_name") or "default"
+    line = data.get("fork_name") or _LINE_UNREPORTED
     rendered = [f"{headline} {data.get('app')} {data.get('semver')} (line {line})"]
     if data.get("message"):
         rendered.append(str(data["message"]))
