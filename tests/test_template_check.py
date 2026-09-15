@@ -1343,6 +1343,49 @@ def test_a_bumped_version_with_no_changelog_at_all_warns(tmp_path):
     assert "changelog-not-updated" in codes(root)
 
 
+def changelog_warning(root: Path) -> str:
+    findings = [f for f in check_bundle(root).findings if f.code == "changelog-not-updated"]
+    assert len(findings) == 1
+    return findings[0].message
+
+
+def test_a_fork_checkout_is_told_the_manifest_note_is_not_what_publishes(tmp_path):
+    """The reconciliation this check needed. `publish_fork_version` records the
+    request's changelog and never reads the manifest, so telling a fork author
+    to rewrite `changelog:` without saying that is the advice `app publish`
+    then contradicts — it warns that the same field records nothing and to
+    pass `-m`."""
+    root = write_bundle(
+        tmp_path / "b", manifest=versioned_manifest("1.35.0", "Dedupe alerts by fingerprint.")
+    )
+    write_baseline_file(root, "1.34.2", changelog="Dedupe alerts by fingerprint.")
+    message = changelog_warning(root)
+    assert "popcorn app publish -m" in message
+    assert "not what a publish records" in message
+
+
+def test_a_fork_checkout_with_no_note_is_told_the_same_thing(tmp_path):
+    """The no-`changelog:` branch is the one a fresh fork of a bundle that
+    never declared one lands on, so it carries the same correction."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.35.0"))
+    write_baseline_file(root, "1.34.2")
+    assert "popcorn app publish -m" in changelog_warning(root)
+
+
+def test_a_product_checkout_is_not_told_to_pass_a_message(tmp_path):
+    """The other half: on the product line the manifest's `changelog:` IS the
+    note a publish records (`publish_registry_template` defaults to it), and
+    `-m` belongs to a fork publish this checkout cannot make. Pointing a
+    product checkout at the flag would be the mirror of the bug."""
+    root = write_bundle(
+        tmp_path / "b", manifest=versioned_manifest("1.35.0", "Dedupe alerts by fingerprint.")
+    )
+    write_baseline_file(root, "1.34.2", kind="product", changelog="Dedupe alerts by fingerprint.")
+    message = changelog_warning(root)
+    assert "-m" not in message
+    assert "a product publish records it" in message
+
+
 def test_a_pre_changelog_baseline_says_nothing_about_the_changelog(tmp_path):
     """A v2 baseline has no `changelog` key because checkout never wrote one,
     which is indistinguishable from a checkout whose manifest carried no note.

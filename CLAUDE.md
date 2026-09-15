@@ -159,7 +159,13 @@ has none, so neither check applies there rather than failing open or closed,
 and the backend owns the equivalent rule for its own tree in
 `check_bundle_version.py`. The changelog comparison additionally needs a v3
 baseline, which is the first that captured the served note; an older checkout
-gets the version check and silence on the changelog.
+gets the version check and silence on the changelog. Its wording is
+fork-aware, off `Baseline.kind`: only the product publish path reads the
+manifest's `changelog:` (`backend:lib/app_bundles/services/publish.py —
+publish_registry_template`), so on a fork line the note is bundle
+documentation and `app publish -m` is what the registry records. Saying the
+product answer to a fork author is what made this check contradict the very
+next command (KEW-2381).
 
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,
