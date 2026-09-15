@@ -112,11 +112,29 @@ and no intranet visit:
 ```bash
 # fork onto this workspace's own line, then check its head out — one command
 popcorn app checkout --channel '#chan' --fork
-# ... edit, then bump version: and rewrite changelog: in manifest.yaml
+# ... edit
 popcorn template check ./<app>
-popcorn app publish ./<app> --changelog "what changed"
+popcorn app publish ./<app> --bump patch -m "what changed"
 popcorn app status ./<app>              # has the install landed?
 ```
+
+`--bump patch|minor|major` writes `version:` in `manifest.yaml` for you, off
+the fork line's head, and only once the publish has been accepted — so a
+publish that fails leaves the working copy untouched and re-running the same
+command is the retry. Editing `version:` by hand still works; `--bump` is
+refused when the manifest already advances past the head, because counting
+from the head would overwrite that number and counting from the manifest
+would skip the versions in between. Reach for the flag or the hand edit, not
+both in one publish.
+
+`-m` records what changed on the version, exactly like `git commit -m`
+(`--changelog` is the deprecated spelling and still works). **Note what it
+does not do:** `manifest.yaml`'s own `changelog:` key is not read by a fork
+publish — the server records the request's message and nothing else — so a
+manifest that declares one while you pass no `-m` records nothing at all, and
+publish says so. Nor is there any command that reads a published version's
+message back: no endpoint serves it. The line `app publish` prints is the one
+chance to see what landed.
 
 The fork comes first and is not optional: a publish lands on a fork line **this
 workspace owns**, so publishing from a channel still bound to the shared
@@ -687,7 +705,7 @@ The **middle** loop is the fork loop from §2b, and it is the one to reach for
 whenever the app already exists. No deploy, no intranet, seconds per turn:
 
 ```bash
-popcorn app publish ./<app> --changelog "..."        # mint the next version
+popcorn app publish ./<app> --bump patch -m "..."    # mint the next version
 popcorn app status ./<app>                           # has the install landed?
 popcorn channel-config show --channel <id> --strict  # is the channel wired up?
 popcorn flow runs list --channel <id>

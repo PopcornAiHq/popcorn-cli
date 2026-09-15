@@ -16,6 +16,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import re
+import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -29,10 +31,13 @@ from popcorn_core.app_checkout import (
     write_baseline,
 )
 from popcorn_core.app_publish import (
+    bump_manifest_text,
     collect_tree,
     diff_tree,
     fork_line_reach,
+    manifest_changelog,
     manifest_version,
+    next_version,
     parse_semver,
     publish_payload,
     require_bump,
@@ -361,6 +366,95 @@ class TestRequireBump:
 
 
 # ---------------------------------------------------------------------------
+# --bump: the arithmetic, and the manifest rewrite
+# ---------------------------------------------------------------------------
+
+
+class TestNextVersion:
+    @pytest.mark.parametrize(
+        ("part", "expected"),
+        [("patch", "1.4.8"), ("minor", "1.5.0"), ("major", "2.0.0")],
+    )
+    def test_bumps_and_zeroes_everything_below(self, part, expected):
+        assert next_version("1.4.7", part) == expected
+
+    def test_carries_past_nine(self):
+        assert next_version("1.9.9", "patch") == "1.9.10"
+
+    def test_refuses_a_part_it_does_not_know(self):
+        with pytest.raises(PopcornError):
+            next_version("1.0.0", "build")
+
+    def test_refuses_a_version_it_cannot_parse(self):
+        with pytest.raises(PopcornError):
+            next_version("1.0", "patch")
+
+
+class TestBumpManifestText:
+    """The rewrite, and the `sed` trap that is the reason it exists."""
+
+    def test_the_naive_sed_pattern_matches_nothing(self):
+        """KEW-2367's sharp edge, pinned so nobody "simplifies" back to it.
+
+        A manifest quotes its version, so the obvious
+        `sed -E 's/^version: [0-9.]+/…/'` matches no line and exits 0 —
+        the bump looks applied, and only `app publish` refusing the unchanged
+        version says otherwise, a round trip later.
+        """
+        text = 'app_type: alerttracker\nversion: "1.34.2"\n'
+        assert re.search(r"^version: [0-9.]+$", text, re.MULTILINE) is None
+        assert 'version: "1.34.3"' in bump_manifest_text(text, "1.34.3")
+
+    def test_preserves_double_quotes(self):
+        assert bump_manifest_text('version: "1.0.0"\n', "1.0.1") == 'version: "1.0.1"\n'
+
+    def test_preserves_single_quotes(self):
+        assert bump_manifest_text("version: '1.0.0'\n", "1.0.1") == "version: '1.0.1'\n"
+
+    def test_quotes_a_bare_value_on_the_way_out(self):
+        """`version: 1.0` is a float and `version: 1.0.0` a string, and the
+        file cannot show you which — so the rewrite always emits the quoted
+        form the rest of this module tells authors to write."""
+        assert bump_manifest_text("version: 1.0.0\n", "1.1.0") == 'version: "1.1.0"\n'
+
+    def test_keeps_a_trailing_comment(self):
+        assert (
+            bump_manifest_text('version: "1.0.0"  # bumped by hand\n', "1.0.1")
+            == 'version: "1.0.1"  # bumped by hand\n'
+        )
+
+    def test_leaves_the_rest_of_the_document_alone(self):
+        text = 'app_type: alerttracker\nversion: "0.2.0"\n\n# a comment\ntables:\n  - alerts\n'
+        out = bump_manifest_text(text, "0.3.0")
+        assert out == text.replace('"0.2.0"', '"0.3.0"')
+
+    def test_ignores_a_nested_version_key(self):
+        """Only the document's own version is the one a publish mints."""
+        text = 'version: "0.2.0"\ndeps:\n  version: "9.9.9"\n'
+        out = bump_manifest_text(text, "0.2.1")
+        assert out == 'version: "0.2.1"\ndeps:\n  version: "9.9.9"\n'
+
+    def test_raises_when_there_is_no_version_line(self):
+        with pytest.raises(PopcornError) as exc:
+            bump_manifest_text("app_type: alerttracker\n", "0.1.0")
+        assert "version:" in str(exc.value)
+
+
+class TestManifestChangelog:
+    def test_reads_the_declared_field(self):
+        files = {"manifest.yaml": 'version: "1.0.0"\nchangelog: last release\n'}
+        assert manifest_changelog(files) == "last release"
+
+    def test_none_when_undeclared(self):
+        assert manifest_changelog({"manifest.yaml": 'version: "1.0.0"\n'}) is None
+
+    def test_none_rather_than_raising_without_a_manifest(self):
+        """Read only to warn, so it must never be the thing that fails a
+        publish — `manifest_version` owns that refusal and says it better."""
+        assert manifest_changelog({}) is None
+
+
+# ---------------------------------------------------------------------------
 # publish_payload
 # ---------------------------------------------------------------------------
 
@@ -427,7 +521,12 @@ def _args(**over):
     base = {
         "channel": None,
         "directory": None,
-        "changelog": None,
+        # `--changelog` is the deprecated ALIAS of this dest, not a second
+        # one: the parser folds both spellings into `message`, so a namespace
+        # that still carried `changelog` would be testing a shape the CLI
+        # cannot produce. `test_parser` pins the folding itself.
+        "message": None,
+        "bump": None,
         "name": None,
         "json": False,
         "quiet": True,
@@ -1112,3 +1211,235 @@ class TestNamelessFork:
         ):
             mod._app_apply(_args(directory=str(tmp_path)))
         assert calls == [_CONV]
+
+
+# ---------------------------------------------------------------------------
+# `app publish --bump` (KEW-2367)
+# ---------------------------------------------------------------------------
+
+
+class TestPublishBump:
+    """`--bump` writes the manifest so no scripted loop has to.
+
+    Every manifest here is the quoted form a real one uses, which is the
+    shape the hand-rolled `sed` in every authoring script fails on.
+    """
+
+    def _edited(self, tmp_path, version="0.2.0"):
+        """A checkout at `version` with one real edit and no version bump."""
+        base = {"manifest.yaml": _manifest(version), "alert.yaml": "name: alert\n"}
+        _checkout(tmp_path, base)
+        (tmp_path / "alert.yaml").write_text("name: alert\nnew: yes\n")
+        return base
+
+    @pytest.mark.parametrize(
+        ("part", "expected"),
+        [("patch", "0.2.1"), ("minor", "0.3.0"), ("major", "1.0.0")],
+    )
+    def test_mints_the_next_version_off_the_lines_head(self, tmp_path, part, expected):
+        base = self._edited(tmp_path)
+        rec = _Recorder(semver=expected)
+        _run_publish(
+            tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), bump=part)
+        )
+
+        payload = rec.calls[0][1]
+        assert f'version: "{expected}"' in payload["files"]["manifest.yaml"]
+        assert read_baseline(tmp_path).semver == expected
+
+    def test_writes_the_bumped_manifest_to_disk(self, tmp_path):
+        """The working copy must match what published, or the next `--bump`
+        would count from a version the line has already moved past."""
+        base = self._edited(tmp_path)
+        _run_publish(
+            tmp_path,
+            _files_response(base),
+            _Recorder(semver="0.2.1"),
+            _args(directory=str(tmp_path), bump="patch"),
+        )
+        assert (tmp_path / "manifest.yaml").read_text() == _manifest("0.2.1")
+
+    def test_leaves_the_manifest_alone_when_the_publish_fails(self, tmp_path):
+        """So re-running the same `--bump patch` is the retry, not a second
+        bump stacked on the first."""
+        from popcorn_core.errors import APIError
+
+        base = self._edited(tmp_path)
+        before = (tmp_path / "manifest.yaml").read_text()
+
+        def _refuse(client, conversation, payload):
+            raise APIError("nope", status_code=500)
+
+        with pytest.raises(PopcornError):
+            _run_publish(
+                tmp_path,
+                _files_response(base),
+                _refuse,
+                _args(directory=str(tmp_path), bump="patch"),
+            )
+        assert (tmp_path / "manifest.yaml").read_text() == before
+
+    def test_an_untouched_checkout_still_publishes_nothing(self, tmp_path):
+        """`--bump` on a clean working copy must not mint a version whose
+        only content is its own number — the wasted version KEW-2368 is
+        about. Emptiness is judged before the bump, never after."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), bump="patch")
+            )
+        assert "nothing to publish" in str(exc.value)
+        assert rec.calls == []
+        assert (tmp_path / "manifest.yaml").read_text() == _manifest("0.2.0")
+
+    def test_refuses_when_the_manifest_already_advances(self, tmp_path):
+        """Two answers, no way to tell which was meant — so neither is taken.
+
+        The error names both candidates and the two one-keystroke ways out.
+        """
+        base = self._edited(tmp_path)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.5.0"))
+
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), bump="patch")
+            )
+        assert "0.5.0" in str(exc.value) and "0.2.0" in str(exc.value)
+        assert "0.2.1" in str(exc.value) and "0.5.1" in str(exc.value)
+        assert "--bump" in str(exc.value.hint or "")
+        # Refused before the round trip: nothing about this needs the server.
+        assert rec.calls == []
+
+    def test_a_hand_edited_version_publishes_without_the_flag(self, tmp_path):
+        """The refusal above is about `--bump` only — editing by hand stays
+        the supported path, since that is what KEW-2366 still has to catch."""
+        base = self._edited(tmp_path)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.5.0"))
+        rec = _Recorder(semver="0.5.0")
+        _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+        assert read_baseline(tmp_path).semver == "0.5.0"
+
+    def test_bumps_over_a_stale_manifest_that_never_advanced(self, tmp_path):
+        """The case the ticket opens with: the `sed` no-opped, so the manifest
+        still holds the published version. `--bump` is exactly the fix."""
+        base = self._edited(tmp_path)
+        assert (tmp_path / "manifest.yaml").read_text() == _manifest("0.2.0")
+        rec = _Recorder(semver="0.2.1")
+        _run_publish(
+            tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), bump="patch")
+        )
+        assert 'version: "0.2.1"' in rec.calls[0][1]["files"]["manifest.yaml"]
+
+
+# ---------------------------------------------------------------------------
+# `app publish --message` / `-m` (KEW-2368)
+# ---------------------------------------------------------------------------
+
+
+class TestPublishMessage:
+    def _edited(self, tmp_path, manifest=None):
+        base = {"manifest.yaml": manifest or _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        return base
+
+    def test_the_message_reaches_the_wire_field(self, tmp_path):
+        """The flag is `--message`; the API field stays `changelog`."""
+        base = self._edited(tmp_path)
+        rec = _Recorder()
+        _run_publish(
+            tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), message="why")
+        )
+        assert rec.calls[0][1]["changelog"] == "why"
+
+    def test_no_message_sends_no_field(self, tmp_path):
+        base = self._edited(tmp_path)
+        rec = _Recorder()
+        _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+        assert "changelog" not in rec.calls[0][1]
+
+    def test_the_output_reads_the_recorded_message_back(self, tmp_path):
+        """The only readback there is: no endpoint serves a published
+        version's message, so this line is the whole of it."""
+        base = self._edited(tmp_path)
+        captured = {}
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            patch.object(operations, "publish_channel_app", _Recorder()),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path), message="dedupe by fingerprint"))
+
+        assert "Message: dedupe by fingerprint" in captured["rendered"]
+        # And for an agent, which cannot read the rendered text.
+        assert captured["data"]["message"] == "dedupe by fingerprint"
+
+    def test_the_output_says_so_when_nothing_was_recorded(self, tmp_path):
+        out = _run_publish_captured(tmp_path, _Recorder())
+        assert "No message recorded on this version" in out["rendered"]
+        assert out["data"]["message"] is None
+
+    def test_warns_that_a_manifest_changelog_records_nothing(self, tmp_path, capsys):
+        """`/apps/publish` records the request's changelog and never falls
+        back to the manifest on the fork path, so a manifest `changelog:`
+        with no `-m` lands nowhere. Silent before this."""
+        manifest = 'app_type: alerttracker\nversion: "0.2.0"\nchangelog: the previous release\n'
+        base = self._edited(tmp_path, manifest=manifest)
+        (tmp_path / "manifest.yaml").write_text(manifest.replace("0.2.0", "0.2.1"))
+
+        _run_publish(tmp_path, _files_response(base), _Recorder(), _args(directory=str(tmp_path)))
+        assert "is not recorded by a publish" in capsys.readouterr().err
+
+    def test_quiet_when_the_flag_supplies_the_message(self, tmp_path, capsys):
+        manifest = 'app_type: alerttracker\nversion: "0.2.0"\nchangelog: the previous release\n'
+        base = self._edited(tmp_path, manifest=manifest)
+        (tmp_path / "manifest.yaml").write_text(manifest.replace("0.2.0", "0.2.1"))
+
+        _run_publish(
+            tmp_path,
+            _files_response(base),
+            _Recorder(),
+            _args(directory=str(tmp_path), message="what actually changed"),
+        )
+        assert "is not recorded" not in capsys.readouterr().err
+
+
+class TestDeprecatedChangelogAlias:
+    """`--changelog` still works, and says it has been renamed."""
+
+    def test_detects_the_old_spelling(self):
+        from popcorn_cli.commands.app import _deprecated_changelog_used
+
+        assert _deprecated_changelog_used(["app", "publish", "--changelog", "why"])
+        assert _deprecated_changelog_used(["app", "publish", "--changelog=why"])
+
+    def test_ignores_the_new_spelling(self):
+        from popcorn_cli.commands.app import _deprecated_changelog_used
+
+        assert not _deprecated_changelog_used(["app", "publish", "-m", "why"])
+        assert not _deprecated_changelog_used(["app", "publish", "--message", "why"])
+
+    def test_the_notice_names_the_replacement(self, tmp_path, capsys):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+
+        rec = _Recorder()
+        with patch.object(sys, "argv", ["popcorn", "app", "publish", "--changelog", "why"]):
+            _run_publish(
+                tmp_path, _files_response(base), rec, _args(directory=str(tmp_path), message="why")
+            )
+
+        err = capsys.readouterr().err
+        assert "--changelog is deprecated" in err and "--message" in err
+        # Deprecated, not broken: the message still reaches the wire.
+        assert rec.calls[0][1]["changelog"] == "why"
