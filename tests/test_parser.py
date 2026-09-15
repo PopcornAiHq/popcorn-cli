@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+from popcorn_cli import registry
 from popcorn_cli.cli import build_parser, cmd_webhook
 from popcorn_core.errors import EXIT_SERVER, APIError, PopcornError
 
@@ -1239,6 +1240,84 @@ def _leaf_parsers(parser, path=()):
             yield from _leaf_parsers(sub, (*path, name))
 
 
+_DIRECTORY_SPELLINGS = [
+    (["app", "status", "/tmp/co"], ["app", "status", "--dir", "/tmp/co"]),
+    (["app", "publish", "/tmp/co"], ["app", "publish", "--dir", "/tmp/co"]),
+    (["app", "apply", "/tmp/co"], ["app", "apply", "--dir", "/tmp/co"]),
+    (["template", "check", "/tmp/co"], ["template", "check", "--dir", "/tmp/co"]),
+    (
+        ["app", "checkout", "--channel", "#c", "/tmp/co"],
+        ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co"],
+    ),
+]
+
+
+class TestDirectoryArgument:
+    """One directory, two spellings, one namespace attribute (KEW-2369).
+
+    The channel half of the ticket shipped first; this is the remainder. The
+    machinery is shared — `registry.add_dual_spelled_argument` — so these
+    guard the wiring and the cases the channel's own tests cannot reach: a
+    REQUIRED positional (`template check`), and the `--fork` collision.
+    """
+
+    @pytest.mark.parametrize("positional,flag", _DIRECTORY_SPELLINGS, ids=lambda v: " ".join(v))
+    def test_both_spellings_parse_to_the_same_namespace(self, parser, positional, flag):
+        def strip(ns: dict) -> dict:
+            return {k: v for k, v in ns.items() if not k.startswith(registry.FLAG_DEST_PREFIX)}
+
+        assert strip(vars(parser.parse_args(positional))) == strip(vars(parser.parse_args(flag)))
+
+    def test_every_directory_positional_also_accepts_the_flag(self, parser):
+        """The guard for the next command someone adds.
+
+        `flow import` is exempt: it is a removed command that only prints
+        where bundles install from now, so its directory is accepted and
+        ignored rather than read.
+        """
+        missing = []
+        for path, leaf in _leaf_parsers(parser):
+            if path == ("flow", "import"):
+                continue
+            positionals = {a.dest for a in leaf._actions if not a.option_strings}
+            options = {opt for a in leaf._actions for opt in a.option_strings}
+            if "directory" in positionals and "--dir" not in options:
+                missing.append(" ".join(path))
+        assert missing == [], f"directory positional without a --dir spelling: {missing}"
+
+    def test_an_optional_directory_stays_optional(self, parser):
+        """`app status` defaults to the cwd checkout, so neither form is required."""
+        assert parser.parse_args(["app", "status"]).directory is None
+        assert parser.parse_args(["app", "status", "--dir", "/tmp/co"]).directory == "/tmp/co"
+
+    def test_a_required_directory_is_still_required(self, parser):
+        """`template check` takes no default, and `nargs="?"` moved the
+        requirement out of argparse, so it has to survive the fold."""
+        with pytest.raises(SystemExit):
+            parser.parse_args(["template", "check"])
+
+    def test_the_required_error_names_both_spellings(self, parser, capsys):
+        """A caller who omitted it should not have to guess which form exists."""
+        with pytest.raises(SystemExit):
+            parser.parse_args(["template", "check"])
+        err = capsys.readouterr().err
+        assert "directory" in err and "--dir" in err
+
+    def test_giving_the_directory_twice_is_a_usage_error(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["app", "status", "/tmp/a", "--dir", "/tmp/b"])
+
+    def test_dir_disentangles_the_checkout_fork_collision(self, parser):
+        """`app checkout`'s own help documents that a bare `--fork` cannot be
+        told apart from the directory positional, so `--fork mydir` names the
+        LINE. Spelling the directory as a flag removes the collision instead
+        of working around it."""
+        args = parser.parse_args(
+            ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co", "--fork"]
+        )
+        assert (args.directory, args.fork) == ("/tmp/co", "")
+
+
 class TestChannelArgument:
     """One channel, two spellings, one namespace attribute (KEW-2369).
 
@@ -1253,11 +1332,14 @@ class TestChannelArgument:
     def test_both_spellings_parse_to_the_same_namespace(self, parser, positional, flag):
         from_positional = vars(parser.parse_args(positional)).copy()
         from_flag = vars(parser.parse_args(flag)).copy()
-        # The flag's own dest is scratch space the fold consumes; handlers
-        # read the positional's dest, which is what has to match.
-        from_positional.pop("channel_flag", None)
-        from_flag.pop("channel_flag", None)
-        assert from_positional == from_flag
+
+        # A flag's own dest is scratch space the fold consumes; handlers read
+        # the positional's dest, which is what has to match. Dropped by prefix
+        # rather than by name so a new dual-spelled flag needs no edit here.
+        def strip(ns: dict) -> dict:
+            return {k: v for k, v in ns.items() if not k.startswith(registry.FLAG_DEST_PREFIX)}
+
+        assert strip(from_positional) == strip(from_flag)
 
     def test_every_channel_positional_also_accepts_the_flag(self, parser):
         """The guard for the next command someone adds.

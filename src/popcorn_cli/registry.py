@@ -21,6 +21,79 @@ from typing import Any
 _DEST_SUFFIX = "_command"
 
 
+DUAL_SPELLED_DEST = "_dual_spelled_arguments"
+# Prefix for the scratch dest a dual-spelled argument's FLAG form lands in.
+# Exposed so consumers can recognise the holding dests generically instead of
+# naming each one, which would have to be revisited per new flag.
+FLAG_DEST_PREFIX = "_flag_"
+
+
+def _flag_dest(flag: str) -> str:
+    """Where a dual-spelled argument's FLAG form lands before folding.
+
+    Never the argument's own dest: both spellings would then write the same
+    attribute and the doubled-argument error could not be told from a single
+    one. Prefixed so it cannot collide with a declared argument's name.
+    """
+    return f"{FLAG_DEST_PREFIX}{flag.lstrip('-').replace('-', '_')}"
+
+
+@dataclass
+class DualSpelledArgument:
+    """Where one command's dual-spelled argument lands, and what it may be
+    confused with.
+
+    `dest` is the positional's namespace attribute. `trailing` names the
+    positionals declared after it that are themselves optional, which is what
+    folding has to disentangle — empty when nothing follows, as for a
+    directory, where every later argument is a flag. `parser` is the
+    subcommand's own parser, so a usage error prints that subcommand's usage
+    line rather than the root's.
+    """
+
+    dest: str
+    flag: str
+    required: bool
+    trailing: tuple[str, ...]
+    parser: argparse.ArgumentParser
+
+    @property
+    def flag_dest(self) -> str:
+        return _flag_dest(self.flag)
+
+
+def add_dual_spelled_argument(
+    parser: argparse.ArgumentParser,
+    dest: str,
+    help_text: str,
+    *,
+    flag: str,
+    required: bool = True,
+    trailing: tuple[str, ...] = (),
+) -> None:
+    """Declare one argument as a positional AND as `flag`.
+
+    The positional has to become `nargs="?"` for the flag form to parse at
+    all, which is why `required` moves out of argparse and into the fold
+    instead of staying an argparse guarantee.
+
+    Specs accumulate in a tuple rather than a single default: two dual-spelled
+    arguments on one command would otherwise overwrite each other silently,
+    and the survivor would fold while the other stayed split across two
+    attributes.
+    """
+    parser.add_argument(dest, nargs="?", default=None, help=help_text)
+    parser.add_argument(
+        flag,
+        dest=_flag_dest(flag),
+        metavar=dest.upper(),
+        help=f"{help_text} — the same argument, spelled the way every command accepts",
+    )
+    existing: tuple[DualSpelledArgument, ...] = parser.get_default(DUAL_SPELLED_DEST) or ()
+    spec = DualSpelledArgument(dest, flag, required, tuple(trailing), parser)
+    parser.set_defaults(**{DUAL_SPELLED_DEST: (*existing, spec)})
+
+
 @dataclass
 class Argument:
     """One argparse argument, declared once.
@@ -55,6 +128,12 @@ class Argument:
     # (SPEC.md) and keys on the canonical `name`; every spelling still
     # reaches `commands --json`, which reads option strings off argparse.
     flags: list[str] = field(default_factory=list)
+    # A flag spelling for a POSITIONAL, so one argument answers to both. The
+    # families that grew up taking an argument positionally keep that
+    # spelling — scripts and skills are written that way — so this is an
+    # additional spelling, never a replacement. Only meaningful with
+    # `positional`; `add_to` routes it through `add_dual_spelled_argument`.
+    flag_alias: str | None = None
 
     @property
     def is_required(self) -> bool:
@@ -81,6 +160,15 @@ class Argument:
         if self.const is not None:
             kwargs["const"] = self.const
         if self.positional:
+            if self.flag_alias:
+                add_dual_spelled_argument(
+                    parser,
+                    self.name,
+                    self.help,
+                    flag=self.flag_alias,
+                    required=self.is_required,
+                )
+                return
             parser.add_argument(self.name, **kwargs)
         else:
             if self.required:

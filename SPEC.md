@@ -241,6 +241,14 @@ Some families (`site`, `message`, `channel`, `webhook`) also take the channel as
 
 The registry families (`app`, `channel-config`, `flow`, `schedule`, `table`) take `--channel` only. They put other positionals ahead of the channel — `table rows <table>` — where a second optional positional could not be told apart from the ones after it.
 
+### The directory argument
+
+**`--dir <path>` is accepted by every command that takes a checkout or bundle directory** — `app status`, `app publish`, `app apply`, `app checkout` and `template check`. Each still takes the directory as its first positional, and always will, for the same reason the channel does.
+
+The two spellings behave identically, and passing both is a usage error. Whether the directory may be omitted is per command: the `app` commands fall back to the cwd checkout, while `template check` requires one.
+
+On `app checkout` the flag also removes a real ambiguity. Its `--fork` takes an optional line name, which argparse cannot tell apart from the directory positional, so `app checkout --fork mydir` names the *line* `mydir`. Spelling the directory `--dir <path>` leaves `--fork` unambiguous.
+
 ---
 
 ## Authentication

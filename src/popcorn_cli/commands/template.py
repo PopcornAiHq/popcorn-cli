@@ -83,7 +83,12 @@ register(
                 "Check a bundle's structure offline — no channel, no server",
                 _template_check,
                 [
-                    Argument("directory", "Bundle directory", positional=True),
+                    Argument(
+                        "directory",
+                        "Bundle directory",
+                        positional=True,
+                        flag_alias="--dir",
+                    ),
                     Argument(
                         "strict",
                         "Exit non-zero on warnings as well as errors",
