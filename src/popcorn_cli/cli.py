@@ -76,7 +76,10 @@ For agents and scripts:
 
 Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
        -e/--env, --no-color, --workspace UUID, -y/--yes (skip prompts)
-Conversations can be specified as #channel-name or UUID.
+Conversations can be specified as #channel-name or UUID. Wherever a command
+takes one positionally it also accepts --channel <name-or-uuid>; that spelling
+works on every channel-taking command, so it is the one to reach for when you
+do not want to remember which family this command belongs to.
 
 `popcorn api` --data supports @-/@file (curl/gh-style):
     echo '{...}' | popcorn api /path -X POST -d @-
@@ -101,7 +104,8 @@ import shutil
 import sys
 import time
 import webbrowser
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -2918,6 +2922,11 @@ def _describe_subcommands(parser: argparse.ArgumentParser) -> list[dict[str, Any
 def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
     """Extract argument metadata from an argparse parser."""
     args_out: list[dict[str, Any]] = []
+    # A channel positional is declared `nargs="?"` only so `--channel` can
+    # stand in for it; whether a caller may leave it out entirely is the
+    # spec's answer, not argparse's. Reporting argparse's would tell an agent
+    # the channel is optional on commands that cannot run without one.
+    channel_arg = parser.get_default("_channel_argument")
     for action in parser._actions:
         if isinstance(
             action,
@@ -2932,6 +2941,8 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
         entry["required"] = (
             action.required if action.option_strings else action.nargs not in ("?", "*")
         )
+        if channel_arg is not None and action.dest == channel_arg.dest:
+            entry["required"] = channel_arg.required
         if action.help and action.help != argparse.SUPPRESS:
             entry["help"] = action.help
         if action.type is not None:
@@ -3333,6 +3344,120 @@ class PopcornParser(argparse.ArgumentParser):
                 message = f'unknown command "{bad}". Run "popcorn --help" for available commands.'
         super().error(message)
 
+    def parse_args(  # type: ignore[override]
+        self,
+        args: Sequence[str] | None = None,
+        namespace: argparse.Namespace | None = None,
+    ) -> argparse.Namespace:
+        """Parse, then resolve the channel's two spellings into one attribute.
+
+        Folding here rather than in `main` means every caller of the parser —
+        `main`, the tests — sees the same namespace, so a handler can never be
+        reached with the channel still split across two attributes.
+        """
+        parsed = super().parse_args(args, namespace)
+        _fold_channel_argument(parsed)
+        return parsed
+
+
+# --- The channel argument ---------------------------------------------------
+#
+# Every command that acts on a channel accepts `--channel`. The families that
+# grew up taking it positionally (site, message, channel, webhook) keep that
+# spelling — the plugin skills, the eval harness and people's scripts are all
+# written that way — so the flag is an additional spelling, never a
+# replacement. The families declared in the registry (app, channel-config,
+# flow, schedule, table) already take `--channel` and gain no positional: they
+# put the channel behind other positionals (`table rows <name>`), where an
+# optional leading positional could not be told apart from the ones after it.
+
+_CHANNEL_FLAG_DEST = "channel_flag"
+
+
+@dataclass
+class _ChannelArgument:
+    """Where one command's channel lands, and what it may be confused with.
+
+    `dest` is the positional's namespace attribute — `conversation` in the
+    message/channel/webhook families, `channel` in site. `trailing` names the
+    positionals declared after it that are themselves optional, which is what
+    `_fold_channel_argument` has to disentangle. `parser` is the subcommand's
+    own parser, so a usage error prints that subcommand's usage line rather
+    than the root's.
+    """
+
+    dest: str
+    required: bool
+    trailing: tuple[str, ...]
+    parser: argparse.ArgumentParser
+
+
+def _add_channel_argument(
+    parser: argparse.ArgumentParser,
+    dest: str,
+    help_text: str,
+    *,
+    required: bool = True,
+    trailing: tuple[str, ...] = (),
+) -> None:
+    """Declare a command's channel as a positional and as `--channel`.
+
+    The positional has to become `nargs="?"` for the flag form to parse at
+    all, which is why `required` moves out of argparse and into
+    `_fold_channel_argument` instead of staying an argparse guarantee.
+    """
+    parser.add_argument(dest, nargs="?", default=None, help=help_text)
+    parser.add_argument(
+        "--channel",
+        dest=_CHANNEL_FLAG_DEST,
+        metavar=dest.upper(),
+        help=f"{help_text} — the same argument, spelled the way every command accepts",
+    )
+    parser.set_defaults(_channel_argument=_ChannelArgument(dest, required, tuple(trailing), parser))
+
+
+def _shift_trailing_positionals(args: argparse.Namespace, spec: _ChannelArgument) -> bool:
+    """Move each positional along one slot, out of the channel's. False if full.
+
+    argparse fills positionals left to right, so when `--channel` is given and
+    every positional after the channel is optional too, the first value lands
+    in the channel's slot: `site trace --channel '#a' ITEM` parses ITEM as the
+    channel. Shifting restores the grammar the caller meant. Where the last
+    trailing slot is already occupied there is nowhere to shift to, and the
+    channel really was given twice.
+    """
+    if not spec.trailing or getattr(args, spec.trailing[-1], None) is not None:
+        return False
+    values = [getattr(args, spec.dest)] + [getattr(args, d) for d in spec.trailing[:-1]]
+    for dest, value in zip(spec.trailing, values, strict=True):
+        setattr(args, dest, value)
+    return True
+
+
+def _fold_channel_argument(args: argparse.Namespace) -> None:
+    """Resolve the two spellings of the channel down to the positional's dest.
+
+    Handlers read one attribute and never learn which spelling produced it.
+    Failures go through `parser.error`, so a missing or doubled channel stays
+    an argparse-style usage error — same exit code as before this argument
+    grew a second spelling.
+    """
+    spec: _ChannelArgument | None = getattr(args, "_channel_argument", None)
+    if spec is None:
+        return
+    flag = getattr(args, _CHANNEL_FLAG_DEST, None)
+    positional = getattr(args, spec.dest, None)
+    if flag is not None and positional is not None:
+        if not _shift_trailing_positionals(args, spec):
+            spec.parser.error(
+                f"the channel was given twice: as {spec.dest} and as --channel. Pass one."
+            )
+        positional = None
+    resolved = flag if flag is not None else positional
+    if resolved is None and spec.required:
+        spec.parser.error(f"the following arguments are required: {spec.dest} (or --channel)")
+    setattr(args, spec.dest, resolved)
+
 
 def build_parser() -> PopcornParser:
     epilog = """\
@@ -3459,7 +3584,7 @@ Other:
     site_sub = site_parser.add_subparsers(dest="site_command")
 
     site_cancel_p = site_sub.add_parser("cancel", help="Cancel active agent task")
-    site_cancel_p.add_argument("channel", help="Channel/site name")
+    _add_channel_argument(site_cancel_p, "channel", "Channel/site name")
     site_cancel_p.add_argument(
         "--item",
         type=str,
@@ -3487,7 +3612,7 @@ Other:
     )
 
     site_export_p = site_sub.add_parser("export", help="Export site code from VM")
-    site_export_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    _add_channel_argument(site_export_p, "channel", "Channel name or UUID", required=False)
     site_export_p.add_argument(
         "--version", type=str, default=None, help="Version number or commit hash"
     )
@@ -3507,19 +3632,19 @@ Other:
     site_export_p.add_argument("--revert", action="store_true", help="Revert to pre-export backup")
 
     site_log_p = site_sub.add_parser("log", help="Show site version history")
-    site_log_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    _add_channel_argument(site_log_p, "channel", "Channel name or UUID", required=False)
     site_log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
     site_log_p.add_argument(
         "--target", type=str, help="Named deploy target from .popcorn.local.json"
     )
 
     site_rollback_p = site_sub.add_parser("rollback", help="Roll back site to previous version")
-    site_rollback_p.add_argument("channel", help="Channel/site name")
+    _add_channel_argument(site_rollback_p, "channel", "Channel/site name")
     site_rollback_p.add_argument("--version", type=int, help="Target version (default: previous)")
     site_rollback_p.add_argument("--raw", action="store_true", help="Output raw JSON")
 
     site_status_p = site_sub.add_parser("status", help="Show site deployment status")
-    site_status_p.add_argument("channel", nargs="?", default=None, help="Channel name or UUID")
+    _add_channel_argument(site_status_p, "channel", "Channel name or UUID", required=False)
     site_status_p.add_argument(
         "--target", type=str, help="Named deploy target from .popcorn.local.json"
     )
@@ -3527,7 +3652,7 @@ Other:
     site_sub.add_parser("targets", help="List deploy targets from .popcorn.local.json")
 
     site_trace_p = site_sub.add_parser("trace", help="Show agent execution trace")
-    site_trace_p.add_argument("channel", help="Channel/site name")
+    _add_channel_argument(site_trace_p, "channel", "Channel/site name", trailing=("item_id",))
     site_trace_p.add_argument("item_id", nargs="?", default=None, help="Specific item ID")
     site_trace_p.add_argument("--list", action="store_true", help="List recent items")
     site_trace_p.add_argument("--watch", action="store_true", help="Tail live trace")
@@ -3550,7 +3675,7 @@ Other:
     msg_sub = msg_parser.add_subparsers(dest="message_command")
 
     msg_del_p = msg_sub.add_parser("delete", help="Delete a message")
-    msg_del_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(msg_del_p, "conversation", "Channel name (#general) or UUID")
     msg_del_p.add_argument("message_id", help="Message UUID")
 
     msg_dl_p = msg_sub.add_parser("download", help="Download a file attachment")
@@ -3560,7 +3685,7 @@ Other:
     )
 
     msg_edit_p = msg_sub.add_parser("edit", help="Edit a message")
-    msg_edit_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(msg_edit_p, "conversation", "Channel name (#general) or UUID")
     msg_edit_p.add_argument("message_id", help="Message UUID")
     msg_edit_p.add_argument("content", help="New message content")
 
@@ -3568,7 +3693,7 @@ Other:
     msg_get_p.add_argument("message_id", help="Message UUID")
 
     msg_list_p = msg_sub.add_parser("list", help="Read message history")
-    msg_list_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(msg_list_p, "conversation", "Channel name (#general) or UUID")
     msg_list_p.add_argument("--thread", type=str, help="Thread ID to read replies")
     msg_list_p.add_argument("--limit", type=int, help="Max messages (default 25)")
     msg_list_p.add_argument("--before", type=str, help="Message ID — show messages before this")
@@ -3588,7 +3713,7 @@ Other:
     )
 
     msg_react_p = msg_sub.add_parser("react", help="React to a message")
-    msg_react_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(msg_react_p, "conversation", "Channel name (#general) or UUID")
     msg_react_p.add_argument("message_id", help="Message UUID")
     msg_react_p.add_argument("emoji", help='Emoji (e.g. "thumbs up")')
     msg_react_p.add_argument(
@@ -3601,8 +3726,12 @@ Other:
     msg_search_p.add_argument("--offset", type=int, help="Pagination offset")
 
     msg_send_p = msg_sub.add_parser("send", help="Send a message")
-    msg_send_p.add_argument(
-        "conversation", nargs="?", default=None, help="Channel name (#general) or UUID"
+    _add_channel_argument(
+        msg_send_p,
+        "conversation",
+        "Channel name (#general) or UUID",
+        required=False,
+        trailing=("message",),
     )
     msg_send_p.add_argument(
         "message", nargs="?", default=None, help='Message text (use "-" for stdin)'
@@ -3621,7 +3750,7 @@ Other:
     )
 
     msg_threads_p = msg_sub.add_parser("threads", help="List threads in a channel")
-    msg_threads_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(msg_threads_p, "conversation", "Channel name (#general) or UUID")
     msg_threads_p.add_argument("--limit", type=int, help="Max threads (default 50)")
     msg_threads_p.add_argument("--offset", type=int, help="Pagination offset")
 
@@ -3631,7 +3760,7 @@ Other:
     ch_sub = ch_parser.add_subparsers(dest="channel_command")
 
     ch_archive_p = ch_sub.add_parser("archive", help="Archive or unarchive a channel")
-    ch_archive_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_archive_p, "conversation", "Channel name (#general) or UUID")
     ch_archive_p.add_argument("--undo", action="store_true", help="Unarchive instead")
 
     ch_create_p = ch_sub.add_parser("create", help="Create a channel")
@@ -3655,29 +3784,29 @@ Other:
     )
 
     ch_del_p = ch_sub.add_parser("delete", help="Delete a channel")
-    ch_del_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_del_p, "conversation", "Channel name (#general) or UUID")
 
     ch_edit_p = ch_sub.add_parser("edit", help="Update channel name or description")
-    ch_edit_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_edit_p, "conversation", "Channel name (#general) or UUID")
     ch_edit_p.add_argument("--name", type=str, help="New name")
     ch_edit_p.add_argument("--description", type=str, help="New description")
 
     ch_info_p = ch_sub.add_parser("info", help="Show channel info and members")
-    ch_info_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_info_p, "conversation", "Channel name (#general) or UUID")
 
     ch_invite_p = ch_sub.add_parser("invite", help="Invite users to a channel")
-    ch_invite_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_invite_p, "conversation", "Channel name (#general) or UUID")
     ch_invite_p.add_argument("user_ids", help="Comma-separated user IDs")
 
     ch_join_p = ch_sub.add_parser("join", help="Join a channel")
-    ch_join_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_join_p, "conversation", "Channel name (#general) or UUID")
 
     ch_kick_p = ch_sub.add_parser("kick", help="Remove a user from a channel")
-    ch_kick_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_kick_p, "conversation", "Channel name (#general) or UUID")
     ch_kick_p.add_argument("user_id", help="User UUID to remove")
 
     ch_leave_p = ch_sub.add_parser("leave", help="Leave a channel")
-    ch_leave_p.add_argument("conversation", help="Channel name (#general) or UUID")
+    _add_channel_argument(ch_leave_p, "conversation", "Channel name (#general) or UUID")
 
     ch_list_p = ch_sub.add_parser("list", help="List channels")
     ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
@@ -3690,7 +3819,7 @@ Other:
     wh_parser = sub.add_parser("webhook", help=_h)
     wh_sub = wh_parser.add_subparsers(dest="webhook_command")
     wh_create = wh_sub.add_parser("create", help="Create a webhook")
-    wh_create.add_argument("conversation", help="Channel name or UUID")
+    _add_channel_argument(wh_create, "conversation", "Channel name or UUID")
     wh_create.add_argument("name", help="Webhook name")
     wh_create.add_argument("--description", type=str, help="Webhook description")
     wh_create.add_argument("--avatar-url", type=str, help="Avatar URL")
@@ -3717,7 +3846,7 @@ Other:
     )
     wh_sub.add_parser("event-types", help="List valid webhook sources and action modes")
     wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
-    wh_del.add_argument("conversation", help="Channel name or UUID")
+    _add_channel_argument(wh_del, "conversation", "Channel name or UUID")
     wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
     wh_del.add_argument("--since", type=str, help="ISO timestamp — deliveries after this")
     wh_del.add_argument(
@@ -3730,7 +3859,7 @@ Other:
         help="Comma-separated optional fields to hydrate (e.g. payload_raw)",
     )
     wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
-    wh_list.add_argument("conversation", help="Channel name or UUID")
+    _add_channel_argument(wh_list, "conversation", "Channel name or UUID")
     wh_list.add_argument(
         "--show-url",
         action="store_true",

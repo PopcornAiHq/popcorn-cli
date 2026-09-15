@@ -233,6 +233,14 @@ The format ID is `ndjson`, surfaced in `popcorn commands --json` under `envelope
 - `popcorn commands --json --groups=message,channel` filters to specific command groups.
 - Command families declared in the CLI's command registry (`flow`, `table`) have their `subcommands` / `arguments` entries **generated** from that single declaration rather than hand-maintained, so the schema cannot drift from the commands it describes. The emitted shape is identical either way.
 
+### The channel argument
+
+**`--channel <name-or-uuid>` is accepted by every command that acts on a channel** — prefer it, and an agent never has to remember which family spells the argument which way.
+
+Some families (`site`, `message`, `channel`, `webhook`) also take the channel as their first positional, and always will: scripts and skills are written that way. Those commands report both spellings in the schema — a positional (`conversation`, or `channel` under `site`) whose `required` says whether the command can run without a channel at all, plus a `--channel` flag that is never marked required because it is the same argument under another name. Passing both is a usage error.
+
+The registry families (`app`, `channel-config`, `flow`, `schedule`, `table`) take `--channel` only. They put other positionals ahead of the channel — `table rows <table>` — where a second optional positional could not be told apart from the ones after it.
+
 ---
 
 ## Authentication
