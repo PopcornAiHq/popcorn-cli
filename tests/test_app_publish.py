@@ -563,6 +563,16 @@ class TestPublishCommand:
         moved = read_baseline(tmp_path)
         assert (moved.semver, moved.base_version_id) == ("0.2.1", 9)
 
+    def test_the_moved_baseline_records_the_note_that_just_shipped(self, tmp_path):
+        """So the NEXT bump is measured against what was published, not
+        against whatever the last `app checkout` happened to see."""
+        base = {"manifest.yaml": _manifest("0.2.0") + "changelog: The old note.\n"}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1") + "changelog: The new note.\n")
+
+        _run_publish(tmp_path, _files_response(base), _Recorder(), _args(directory=str(tmp_path)))
+        assert read_baseline(tmp_path).changelog == "The new note."
+
     def test_sends_a_deletion(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0"), "old.yaml": "name: old\n"}
         _checkout(tmp_path, base)

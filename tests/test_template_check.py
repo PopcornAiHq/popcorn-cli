@@ -1201,3 +1201,143 @@ def test_a_real_collision_inside_one_block_is_still_reported(tmp_path):
     write_code(root, {"code/calc/main.py": "print(1)\n"})
     (root / "main.py").write_text("print(3)\n")
     assert "basename-collision" not in codes(root)
+
+
+# ── the checkout baseline ─────────────────────────────────────────────
+#
+# `version:`/`changelog:` are the only checks that need to know where the
+# bundle CAME FROM, and the only source of that offline is the
+# `.popcorn-app.json` an `app checkout` writes. Every test here therefore
+# comes in two halves: what a checkout reports, and the proof that bundle
+# source without a baseline reports the same as it always did.
+
+
+def write_baseline_file(root: Path, semver: str, **extra: Any) -> Path:
+    """The baseline an `app checkout` of `semver` would have left behind."""
+    payload: dict[str, Any] = {
+        "version": 3,
+        "app": "widgets",
+        "kind": "fork",
+        "semver": semver,
+        "base_version_id": 41,
+        "tree_digest": "deadbeef",
+        **extra,
+    }
+    target = root / ".popcorn-app.json"
+    target.write_text(json.dumps(payload, indent=2) + "\n")
+    return target
+
+
+def versioned_manifest(version: str, changelog: str | None = None) -> dict[str, Any]:
+    manifest = {**CLEAN_MANIFEST, "version": version}
+    if changelog is not None:
+        manifest["changelog"] = changelog
+    return manifest
+
+
+def test_version_equal_to_the_baseline_is_an_error(tmp_path):
+    """The reported bug: a checkout whose version was never bumped checked
+    clean and then failed server-side at publish."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.34.2"))
+    write_baseline_file(root, "1.34.2")
+    findings = [f for f in check_bundle(root).findings if f.code == "version-not-advanced"]
+    assert [f.level for f in findings] == ["error"]
+    assert "1.34.2" in findings[0].message
+
+
+def test_version_below_the_baseline_is_an_error(tmp_path):
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.33.0"))
+    write_baseline_file(root, "1.34.2")
+    assert "version-not-advanced" in codes(root)
+
+
+def test_version_above_the_baseline_is_clean(tmp_path):
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.34.3", "Bump the sweep."))
+    write_baseline_file(root, "1.34.2", changelog="Dedupe alerts by fingerprint.")
+    assert check_bundle(root).findings == []
+
+
+def test_ordering_is_semver_not_string(tmp_path):
+    """`"1.10.0" < "1.9.0"` as strings, which would report a real bump as a
+    regression — the one comparison bug this check could plausibly ship."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.10.0", "Tenth minor."))
+    write_baseline_file(root, "1.9.0", changelog="Ninth minor.")
+    assert check_bundle(root).findings == []
+
+
+def test_a_version_that_is_not_semver_is_an_error(tmp_path):
+    """`version: 1.0` unquoted is a YAML float, and looks identical in the
+    file to the `1.0.0` that would have worked."""
+    root = write_bundle(tmp_path / "b", manifest={**CLEAN_MANIFEST, "version": 1.0})
+    write_baseline_file(root, "0.9.0")
+    assert "manifest-version-invalid" in codes(root)
+
+
+def test_a_bumped_version_with_the_same_changelog_warns(tmp_path):
+    """A checkout arrives carrying the PREVIOUS version's note, so leaving it
+    alone is the default outcome, not an unlikely one."""
+    root = write_bundle(
+        tmp_path / "b", manifest=versioned_manifest("1.35.0", "Dedupe alerts by fingerprint.")
+    )
+    write_baseline_file(root, "1.34.2", changelog="Dedupe alerts by fingerprint.")
+    findings = [f for f in check_bundle(root).findings if f.code == "changelog-not-updated"]
+    assert [f.level for f in findings] == ["warning"]
+    assert "1.34.2" in findings[0].message
+
+
+def test_a_bumped_version_with_a_rewritten_changelog_is_clean(tmp_path):
+    root = write_bundle(
+        tmp_path / "b", manifest=versioned_manifest("1.35.0", "Sweep now closes stale rows.")
+    )
+    write_baseline_file(root, "1.34.2", changelog="Dedupe alerts by fingerprint.")
+    assert check_bundle(root).findings == []
+
+
+def test_a_reflowed_changelog_is_still_the_same_note(tmp_path):
+    """The comparison reads the PARSED scalar, so re-wrapping a `>-` block or
+    trimming its trailing newline is not a rewrite."""
+    root = write_bundle(
+        tmp_path / "b", manifest=versioned_manifest("1.35.0", "Dedupe alerts by fingerprint.\n")
+    )
+    write_baseline_file(root, "1.34.2", changelog="Dedupe alerts by fingerprint.")
+    assert "changelog-not-updated" in codes(root)
+
+
+def test_a_bumped_version_with_no_changelog_at_all_warns(tmp_path):
+    """Baseline recorded no note and the manifest still declares none: the
+    bundle ships a version nothing describes."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.35.0"))
+    write_baseline_file(root, "1.34.2")
+    assert "changelog-not-updated" in codes(root)
+
+
+def test_a_pre_changelog_baseline_says_nothing_about_the_changelog(tmp_path):
+    """A v2 baseline has no `changelog` key because checkout never wrote one,
+    which is indistinguishable from a checkout whose manifest carried no note.
+    Reading absence as "unchanged" would warn on every bump made from an older
+    checkout — so the comparison is skipped, and the version check is not."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.35.0"))
+    write_baseline_file(root, "1.34.2", version=2)
+    assert "changelog-not-updated" not in codes(root)
+    root2 = write_bundle(tmp_path / "c", manifest=versioned_manifest("1.34.2"))
+    write_baseline_file(root2, "1.34.2", version=2)
+    assert "version-not-advanced" in codes(root2)
+
+
+def test_bundle_source_without_a_baseline_is_unaffected(tmp_path):
+    """`template check` runs on the backend's `lib/apps/<app>/` and on the
+    fixture trees, neither of which is a checkout. With no baseline there is
+    no previous version on disk, so neither check applies — including on a
+    manifest whose version would fail every one of them."""
+    root = write_bundle(tmp_path / "b", manifest={**CLEAN_MANIFEST, "version": 1.0})
+    assert check_bundle(root).findings == []
+    root2 = write_bundle(tmp_path / "c", manifest=versioned_manifest("0.0.1"))
+    assert check_bundle(root2).findings == []
+
+
+def test_a_corrupt_baseline_reads_as_no_checkout(tmp_path):
+    """`read_baseline` treats unreadable as absent so a bad file sends you to
+    `app checkout`, not into a wall of findings."""
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.0.0"))
+    (root / ".popcorn-app.json").write_text("{not json")
+    assert check_bundle(root).findings == []

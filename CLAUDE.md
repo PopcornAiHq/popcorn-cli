@@ -104,10 +104,10 @@ what `foundation.store.upsert_rows` takes.
 
 **The shape is generated, not authored.** `src/popcorn_core/flow_rules.py` is a
 snapshot of `GET /customer-flows/schema`, written by
-`scripts/sync_flow_rules.py`; the checker imports it and nothing else beyond
-stdlib, so `template check` stays offline — no server, no channel, no
-credentials, identical findings on every machine, which is what `--strict` in
-CI has to guarantee.
+`scripts/sync_flow_rules.py`; the checker imports it, `app_checkout` (for the
+on-disk baseline) and nothing else beyond stdlib, so `template check` stays
+offline — no server, no channel, no credentials, identical findings on every
+machine, which is what `--strict` in CI has to guarantee.
 
 ```
 backend: lib/temporal/dsl/schema.py — flow_document_schema
@@ -147,6 +147,19 @@ A hidden entry below a block (`code/calc/.env`) gets the tree refused too, but
 `app_publish.collect_tree` applies the same filter when reading a working copy,
 so the CLI would never have uploaded it. That symmetry is the reason there is no
 finding for it — not an oversight.
+
+**The checkout baseline is the fourth input** (`_check_checkout_version`).
+`.popcorn-app.json` names the version the working copy came from, so the
+checker can predict `app_publish.require_bump` offline: `version-not-advanced`
+is an error because a published version is immutable and the server refuses the
+publish outright, `changelog-not-updated` a warning because the stale note
+ships as content rather than blocking anything. Both are gated on the baseline
+existing — bundle SOURCE (`backend:lib/apps/<app>/`, `tests/fixtures/bundles/`)
+has none, so neither check applies there rather than failing open or closed,
+and the backend owns the equivalent rule for its own tree in
+`check_bundle_version.py`. The changelog comparison additionally needs a v3
+baseline, which is the first that captured the served note; an older checkout
+gets the version check and silence on the changelog.
 
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,
