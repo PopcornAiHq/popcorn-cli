@@ -795,7 +795,9 @@ def list_webhook_deliveries(
     each delivery. Currently supported: ``payload_raw``.
     """
     conv_id = resolve_conversation(client, conversation)
-    params: dict[str, Any] = {"conversation": conv_id, "limit": limit}
+    params: dict[str, Any] = {"conversation": conv_id}
+    if limit is not None:
+        params["limit"] = limit
     if since:
         params["since"] = since
     if after:
