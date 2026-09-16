@@ -1,13 +1,17 @@
 """`popcorn schedule` — a channel's live scheduled flows (read-only).
 
-Read-only on purpose. The write half of the API
-(`create`/`update`/`delete`) is real and equally permissioned, but pausing
-and re-cadencing a channel's schedules is owned by the `set_app_mode` bundle
-flow, which pairs every change with a note marker (`auto-paused: app_mode
-off` / `auto-resumed: set_app_mode`) that channel archive/unarchive reads to
-decide what it may resume. A CLI write that skipped those markers would land
-outside that scheme, so exposing one is a decision in its own right rather
-than the other half of this command — see KEW-2307.
+Read-only because there is no write half to wrap. A schedule is app-bundle
+content: the manifest's `schedules:` list declares it and the installer
+reconciles the channel's Temporal schedules to that list on every install.
+Changing a cadence therefore means editing the manifest and publishing a
+version, the same path as any other change to what a channel does. The
+user-token `create`/`update`/`delete` this command was once expected to grow
+into were deleted outright, not deprecated (popcorn-backend#2024), and no
+`create` or `delete` survives on the agent surface either. The one remaining
+`update` is a live PATCH owned by the `set_app_mode` bundle flow, which
+refuses any schedule the bound manifest does not declare and is re-applied
+over by the next install — so a CLI write on top of it would be transient
+even where it was reachable. KEW-2307 recorded that decision and is closed.
 
 Handlers import their `..cli` helpers *inside* the function body: cli.py
 imports this package at module load to build the parser, so a module-level
