@@ -3353,7 +3353,7 @@ Tables:
 
 Webhooks:
   webhook         Webhook commands (create, list, get, update, delete,
-                  rotate-secret, override-rules, deliveries, event-types, send)
+                  override-rules, deliveries, event-types, send)
 
 VM:
   vm              VM commands (monitor, usage)

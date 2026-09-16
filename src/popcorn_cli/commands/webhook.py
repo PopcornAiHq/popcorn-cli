@@ -200,8 +200,9 @@ def _webhook_update(args: argparse.Namespace) -> None:
     if enforce_hmac and not hook.get("enforce_hmac"):
         lines.append("")
         lines.append(
-            "HMAC enforcement did NOT take: this webhook has no secret yet. "
-            "Run `popcorn webhook rotate-secret` first, then set it again."
+            "HMAC enforcement did NOT take: this webhook has no HMAC secret, "
+            "and the server writes enforcement back as off rather than failing. "
+            "The secret has to be created before this flag does anything."
         )
     _output(args, resp, "\n".join(lines))
 
@@ -239,39 +240,6 @@ def _webhook_delete(args: argparse.Namespace) -> None:
         return
     resp = operations.delete_webhook(client, webhook_id)
     _output(args, resp, f"Deleted webhook '{name}' ({webhook_id})")
-
-
-def _webhook_rotate_secret(args: argparse.Namespace) -> None:
-    from ..cli import _confirm, _get_client, _output
-
-    client = _get_client(args)
-    webhook_id = _resolve_id(args, client)
-    hook = (operations.get_webhook(client, webhook_id) or {}).get("webhook") or {}
-    name = hook.get("name", args.webhook)
-    enforcing = hook.get("enforce_hmac")
-    warning = (
-        "Every sender signing with the old secret starts failing immediately."
-        if enforcing
-        else "Nothing breaks today — this webhook does not enforce signatures yet."
-    )
-    if not _confirm(args, f"Rotate the HMAC secret for '{name}' ({webhook_id})? {warning}"):
-        _output(args, {"ok": False, "cancelled": True}, "Cancelled.")
-        return
-    resp = operations.rotate_webhook_secret(client, webhook_id)
-    secret = resp.get("secret")
-    lines = [
-        f"Rotated the HMAC secret for '{name}' ({webhook_id})",
-        "",
-        f"  {secret}",
-        "",
-        "Store it now — the server does not return it again.",
-    ]
-    if not enforcing:
-        lines.append(
-            "Rotation does not turn verification on. To start rejecting unsigned "
-            f"posts: popcorn webhook update {webhook_id} --enforce-hmac"
-        )
-    _output(args, resp, "\n".join(lines))
 
 
 def _webhook_rules_get(args: argparse.Namespace) -> None:
@@ -333,7 +301,7 @@ register(
         name="webhook",
         category="webhooks",
         description=(
-            "Webhook commands (create, list, get, update, delete, rotate-secret, "
+            "Webhook commands (create, list, get, update, delete, "
             "override-rules get/set, deliveries, event-types, send)"
         ),
         subcommands=[
@@ -424,8 +392,8 @@ register(
                     ),
                     Argument(
                         "enforce-hmac",
-                        "Reject posts without a valid signature (needs a secret — "
-                        "see `popcorn webhook rotate-secret`)",
+                        "Reject posts without a valid signature — only takes effect "
+                        "once the webhook has an HMAC secret",
                         action="store_true",
                     ),
                     Argument(
@@ -442,12 +410,6 @@ register(
                 "delete",
                 "Delete a webhook (prompts; --yes to skip)",
                 _webhook_delete,
-                [_WEBHOOK, _WEBHOOK_CHANNEL],
-            ),
-            Subcommand(
-                "rotate-secret",
-                "Replace a webhook's HMAC secret (prompts; --yes to skip)",
-                _webhook_rotate_secret,
                 [_WEBHOOK, _WEBHOOK_CHANNEL],
             ),
             Subcommand(

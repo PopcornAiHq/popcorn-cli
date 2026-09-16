@@ -1,4 +1,4 @@
-"""`popcorn webhook` lifecycle: get, update, delete, rotate-secret, override rules.
+"""`popcorn webhook` lifecycle: get, update, delete, override rules.
 
 The parser-level assertions for the older subcommands live in `test_parser.py`;
 this module is about what the lifecycle half *does* — which requests it sends,
@@ -127,7 +127,7 @@ class TestUpdate:
             _run(parser, ["webhook", "update", WEBHOOK_ID, "--enforce-hmac"])
         out = capsys.readouterr().out
         assert "did NOT take" in out
-        assert "rotate-secret" in out
+        assert "has to be created" in out
 
     def test_enforce_hmac_that_took_says_nothing_extra(self, parser, client, capsys):
         with patch(
@@ -174,53 +174,6 @@ class TestDelete:
             _run(parser, ["webhook", "delete", WEBHOOK_ID])
         delete.assert_not_called()
         assert exc.value.error_code == "validation"
-
-
-_ROTATED = {"webhook": _HOOK, "secret": "whsec_abcdef"}
-
-
-class TestRotateSecret:
-    def test_prompts_before_rotating(self, parser, client, tty):
-        prompts = tty("n")
-        with (
-            patch("popcorn_core.operations.get_webhook", return_value={"webhook": _HOOK}),
-            patch("popcorn_core.operations.rotate_webhook_secret") as rotate,
-        ):
-            _run(parser, ["webhook", "rotate-secret", WEBHOOK_ID])
-        rotate.assert_not_called()
-        assert "Intake" in prompts[0]
-
-    def test_the_prompt_says_whether_senders_break(self, parser, client, tty):
-        """Rotation is only disruptive where signatures are actually enforced."""
-        prompts = tty("n")
-        with (
-            patch(
-                "popcorn_core.operations.get_webhook",
-                return_value={"webhook": {**_HOOK, "enforce_hmac": True}},
-            ),
-            patch("popcorn_core.operations.rotate_webhook_secret"),
-        ):
-            _run(parser, ["webhook", "rotate-secret", WEBHOOK_ID])
-        assert "starts failing immediately" in prompts[0]
-
-    def test_prints_the_secret_and_that_it_is_not_retrievable(self, parser, client, capsys):
-        with (
-            patch("popcorn_core.operations.get_webhook", return_value={"webhook": _HOOK}),
-            patch("popcorn_core.operations.rotate_webhook_secret", return_value=_ROTATED),
-        ):
-            _run(parser, ["--yes", "webhook", "rotate-secret", WEBHOOK_ID])
-        out = capsys.readouterr().out
-        assert "whsec_abcdef" in out
-        assert "does not return it again" in out
-
-    def test_says_rotation_alone_does_not_start_verifying(self, parser, client, capsys):
-        """Rotating a secret on a non-enforcing webhook changes nothing about intake."""
-        with (
-            patch("popcorn_core.operations.get_webhook", return_value={"webhook": _HOOK}),
-            patch("popcorn_core.operations.rotate_webhook_secret", return_value=_ROTATED),
-        ):
-            _run(parser, ["--yes", "webhook", "rotate-secret", WEBHOOK_ID])
-        assert "--enforce-hmac" in capsys.readouterr().out
 
 
 class TestOverrideRules:
@@ -318,11 +271,6 @@ class TestRequests:
         client = MagicMock()
         operations.delete_webhook(client, WEBHOOK_ID)
         assert client.delete.call_args[0][0] == f"/api/webhooks/{WEBHOOK_ID}"
-
-    def test_rotate_posts_to_rotate_secret(self):
-        client = MagicMock()
-        operations.rotate_webhook_secret(client, WEBHOOK_ID)
-        assert client.post.call_args[0][0] == f"/api/webhooks/{WEBHOOK_ID}/rotate-secret"
 
     def test_override_rules_put_wraps_the_rules(self):
         client = MagicMock()

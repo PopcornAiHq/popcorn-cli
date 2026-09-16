@@ -643,16 +643,6 @@ def delete_webhook(client: APIClient, webhook_id: str) -> dict[str, Any]:
     return client.delete(f"/api/webhooks/{webhook_id}")
 
 
-def rotate_webhook_secret(client: APIClient, webhook_id: str) -> dict[str, Any]:
-    """Generate or replace a webhook's HMAC secret.
-
-    The plaintext secret comes back exactly once and is not retrievable
-    afterwards. Rotation does not turn enforcement on by itself — that is a
-    separate ``update`` with ``enforce_hmac``.
-    """
-    return client.post(f"/api/webhooks/{webhook_id}/rotate-secret")
-
-
 def get_webhook_override_rules(client: APIClient, webhook_id: str) -> dict[str, Any]:
     """Get a webhook's per-event override rules."""
     return client.get(f"/api/webhooks/{webhook_id}/override-rules")
