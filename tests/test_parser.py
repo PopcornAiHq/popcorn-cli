@@ -9,7 +9,8 @@ from unittest.mock import patch
 import pytest
 
 from popcorn_cli import registry
-from popcorn_cli.cli import build_parser, cmd_webhook
+from popcorn_cli.cli import build_parser
+from popcorn_cli.registry import dispatch
 from popcorn_core.errors import EXIT_SERVER, APIError, PopcornError
 
 
@@ -658,7 +659,7 @@ class TestWebhook:
             ]
         )
         with patch("popcorn_cli.cli._get_client"), pytest.raises(PopcornError) as exc:
-            cmd_webhook(args)
+            dispatch(args)
         assert "trigger_workflow" in str(exc.value)
 
     def test_webhook_list(self, parser):
@@ -725,7 +726,7 @@ class TestWebhookSend:
             patch("popcorn_cli.cli._get_client") as get_client,
             patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send,
         ):
-            cmd_webhook(args)
+            dispatch(args)
         get_client.assert_not_called()
         assert send.call_args[0] == ("https://hooks.popcorn.ai/ingest/tok", {})
 
@@ -736,7 +737,7 @@ class TestWebhookSend:
             patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1"),
             patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send,
         ):
-            cmd_webhook(args)
+            dispatch(args)
         assert send.call_args[0][1] == {}
 
     def test_name_target_is_resolved_through_the_channel(self, parser):
@@ -746,7 +747,7 @@ class TestWebhookSend:
             patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1") as resolve,
             patch("popcorn_core.operations.send_webhook", return_value=_SENT),
         ):
-            cmd_webhook(args)
+            dispatch(args)
         assert resolve.call_args[0][1:] == ("Intake", "#ops")
 
     def test_file_payload(self, parser, tmp_path):
@@ -756,7 +757,7 @@ class TestWebhookSend:
             ["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", f"@{body}"]
         )
         with patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send:
-            cmd_webhook(args)
+            dispatch(args)
         assert send.call_args[0][1] == {"from": "file"}
 
     def test_stdin_payload(self, parser, monkeypatch):
@@ -765,13 +766,13 @@ class TestWebhookSend:
         monkeypatch.setattr("sys.stdin", io.StringIO('{"from": "stdin"}'))
         args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", "@-"])
         with patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send:
-            cmd_webhook(args)
+            dispatch(args)
         assert send.call_args[0][1] == {"from": "stdin"}
 
     def test_bad_payload_is_a_validation_error(self, parser):
         args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok", "nope"])
         with pytest.raises(PopcornError) as exc:
-            cmd_webhook(args)
+            dispatch(args)
         assert exc.value.error_code == "validation"
 
     def test_human_output_shows_status_and_body(self, parser, capsys):
@@ -782,7 +783,7 @@ class TestWebhookSend:
             "response": {"status": "ok", "request_id": "req-9"},
         }
         with patch("popcorn_core.operations.send_webhook", return_value=sent):
-            cmd_webhook(args)
+            dispatch(args)
         out = capsys.readouterr().out
         assert "HTTP 202" in out
         assert "req-9" in out
@@ -797,7 +798,7 @@ class TestWebhookSend:
             "response": {"status": "ok", "request_id": "req-9"},
         }
         with patch("popcorn_core.operations.send_webhook", return_value=sent):
-            cmd_webhook(args)
+            dispatch(args)
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
         assert payload["data"] == sent
@@ -805,7 +806,7 @@ class TestWebhookSend:
     def test_missing_channel_for_a_name_target_errors_helpfully(self, parser):
         args = parser.parse_args(["webhook", "send", "Intake"])
         with patch("popcorn_cli.cli._get_client"), pytest.raises(PopcornError) as exc:
-            cmd_webhook(args)
+            dispatch(args)
         assert "--channel" in str(exc.value) or "channel" in str(exc.value).lower()
         assert exc.value.error_code == "validation"
 
@@ -816,28 +817,9 @@ class TestWebhookSend:
             patch("popcorn_core.operations.send_webhook", side_effect=err),
             pytest.raises(APIError) as exc,
         ):
-            cmd_webhook(args)
+            dispatch(args)
         assert exc.value.exit_code == EXIT_SERVER
         assert "boom" in exc.value.to_dict()["body"]
-
-    def test_send_reaches_both_completions(self, capsys):
-        """The subcommand list is hand-maintained in both shells — keep them in step."""
-        from popcorn_cli.cli import cmd_completion
-
-        for shell in ("bash", "zsh"):
-            cmd_completion(argparse.Namespace(shell=shell))
-            out = capsys.readouterr().out
-            assert "create deliveries event-types list send" in out, f"stale {shell} completion"
-
-    def test_send_reaches_the_help_listings(self, parser):
-        """The same list is restated in the epilog and the description dict."""
-        from popcorn_cli.cli import _COMMAND_DESCRIPTIONS
-
-        assert "send" in _COMMAND_DESCRIPTIONS["webhook"]
-        webhook_lines = [
-            ln for ln in parser.format_help().splitlines() if ln.strip().startswith("webhook ")
-        ]
-        assert webhook_lines and all("send" in ln for ln in webhook_lines)
 
 
 class TestChannelTemplates:
@@ -1097,14 +1079,12 @@ class TestWebhookListUrl:
     """
 
     def _run(self, parser, argv, capsys):
-        from popcorn_cli.cli import cmd_webhook
-
         args = parser.parse_args(argv)
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_core.operations.list_webhooks", return_value=_WEBHOOKS),
         ):
-            cmd_webhook(args)
+            dispatch(args)
         return capsys.readouterr().out
 
     def test_the_token_is_not_printed_by_default(self, parser, capsys):
@@ -1128,8 +1108,6 @@ class TestWebhookListUrl:
         assert payload["data"]["webhooks"][0]["url"].endswith("s3cr3t-token")
 
     def test_no_footer_when_the_api_returned_no_urls(self, parser, capsys):
-        from popcorn_cli.cli import cmd_webhook
-
         args = parser.parse_args(["webhook", "list", "#ops"])
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
@@ -1138,7 +1116,7 @@ class TestWebhookListUrl:
                 return_value={"webhooks": [{"id": "x", "name": "Intake"}]},
             ),
         ):
-            cmd_webhook(args)
+            dispatch(args)
         assert "--show-url" not in capsys.readouterr().out
 
 

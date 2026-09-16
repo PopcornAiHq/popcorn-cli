@@ -128,6 +128,13 @@ class Argument:
     # (SPEC.md) and keys on the canonical `name`; every spelling still
     # reaches `commands --json`, which reads option strings off argparse.
     flags: list[str] = field(default_factory=list)
+    # Arguments sharing a non-None value here land in one argparse mutually
+    # exclusive group, so a caller naming two of them fails at parse time with
+    # argparse's own message instead of at the server. Flags only — argparse
+    # cannot put a positional in such a group. Absent from `_sub_schema`, which
+    # is frozen at 1.0.0 (SPEC.md); the constraint reaches `commands --json`
+    # nowhere, so a consumer still learns it from the help text.
+    exclusive_group: str | None = None
     # A flag spelling for a POSITIONAL, so one argument answers to both. The
     # families that grew up taking an argument positionally keep that
     # spelling — scripts and skills are written that way — so this is an
@@ -146,7 +153,13 @@ class Argument:
             return self.nargs != "?"
         return self.required
 
-    def add_to(self, parser: argparse.ArgumentParser) -> None:
+    def add_to(self, parser: Any) -> None:
+        """Declare this argument on `parser`.
+
+        Typed `Any` rather than `ArgumentParser` because a mutually exclusive
+        group is a container with the same `add_argument`, and is what a
+        grouped argument is handed.
+        """
         kwargs: dict[str, Any] = {"help": self.help}
         if self.action:
             kwargs["action"] = self.action
@@ -219,8 +232,18 @@ def _add_subcommands(parent: Any, subs: list[Subcommand], dest: str) -> None:
     sub_parsers = parent.add_subparsers(dest=dest)
     for sub in subs:
         p = sub_parsers.add_parser(sub.name, help=sub.help)
+        groups: dict[str, Any] = {}
         for arg in sub.arguments:
-            arg.add_to(p)
+            if arg.exclusive_group:
+                # Not `setdefault`: its default is evaluated eagerly, so every
+                # argument after the first would leave behind an empty group,
+                # which argparse refuses to format a usage line for.
+                if arg.exclusive_group not in groups:
+                    groups[arg.exclusive_group] = p.add_mutually_exclusive_group()
+                container = groups[arg.exclusive_group]
+            else:
+                container = p
+            arg.add_to(container)
         if sub.subcommands:
             _add_subcommands(p, sub.subcommands, _nested_dest(dest, sub.name))
 
