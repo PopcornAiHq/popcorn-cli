@@ -445,7 +445,7 @@ register(
                 _webhook_deliveries,
                 [
                     _CHANNEL,
-                    Argument("limit", "Max results (1-100)", type=int),
+                    Argument("limit", "Max results (1-100)", type=int, default=50),
                     Argument("since", "ISO timestamp — deliveries after this", type=str),
                     Argument(
                         "after", "Delivery UUID — deliveries after this ID (cursor)", type=str

@@ -135,6 +135,14 @@ class Argument:
     # is frozen at 1.0.0 (SPEC.md); the constraint reaches `commands --json`
     # nowhere, so a consumer still learns it from the help text.
     exclusive_group: str | None = None
+    # argparse `default`. Without it every migrated argument parses to `None`,
+    # which is NOT the same as the hand-written form it replaced: a family
+    # moving to the registry silently loses defaults like `--limit 50`, and
+    # the None then reaches the wire as an empty string. `commands --json`
+    # reads defaults off argparse, so declaring one here also makes the
+    # schema report it. Never set it on a store_true flag — argparse already
+    # defaults those to False.
+    default: Any = None
     # A flag spelling for a POSITIONAL, so one argument answers to both. The
     # families that grew up taking an argument positionally keep that
     # spelling — scripts and skills are written that way — so this is an
@@ -172,6 +180,8 @@ class Argument:
             kwargs["nargs"] = self.nargs
         if self.const is not None:
             kwargs["const"] = self.const
+        if self.default is not None:
+            kwargs["default"] = self.default
         if self.positional:
             if self.flag_alias:
                 add_dual_spelled_argument(

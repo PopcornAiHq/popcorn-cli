@@ -176,6 +176,31 @@ class TestDelete:
         assert exc.value.error_code == "validation"
 
 
+class TestDeliveriesLimit:
+    """A migrated argument has to keep the default its hand-written form had.
+
+    `registry.Argument` had no `default`, so `--limit` parsed to None, and
+    `None` reached the query string as an empty value — the server answered
+    `query.limit: Input should be a valid integer`. Every sibling operation
+    happened to guard its optional params, so `webhook deliveries` was the one
+    command that broke.
+    """
+
+    def test_limit_defaults_rather_than_parsing_to_none(self, parser):
+        args = parser.parse_args(["webhook", "deliveries", "#ops"])
+        assert args.limit == 50
+
+    def test_an_absent_limit_is_left_off_the_wire(self):
+        client = MagicMock()
+        operations.list_webhook_deliveries(client, CHANNEL_ID, limit=None)
+        assert "limit" not in client.get.call_args[0][1]
+
+    def test_a_given_limit_is_sent(self):
+        client = MagicMock()
+        operations.list_webhook_deliveries(client, CHANNEL_ID, limit=10)
+        assert client.get.call_args[0][1]["limit"] == 10
+
+
 class TestOverrideRules:
     def test_get_renders_each_pattern(self, parser, client, capsys):
         rules = {"issues.opened": {"ignore": True}}
