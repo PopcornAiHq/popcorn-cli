@@ -38,6 +38,13 @@ Two groups of commands, split by what they act on:
 working copy against the line and the channel, and with `--channel` outside
 one it answers "has my publish landed here?" from server state alone.
 
+Either way it also checks the channel's live schedules against the ones its
+bound manifest declares (KEW-2310). Most differences there are deliberate —
+`set_app_mode` retunes cadences off prod, and a plain daily cron is moved off
+its declared minute by the de-peak offset — so `schedule_drift` classifies
+each one and only an unexplained difference, or a schedule paused with nothing
+saying why, makes the command exit non-zero.
+
 Handlers import `..cli` helpers inside the function body: cli.py imports this
 package at module load to build the parser, so a module-level import cycles.
 """
@@ -47,8 +54,11 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
-from popcorn_core import flow_rules, operations
+import yaml
+
+from popcorn_core import flow_rules, operations, schedule_drift
 
 # `baseline_changelog` is app_checkout's `manifest_changelog`, aliased because
 # app_publish exports a same-named function doing a different job. This one
@@ -88,7 +98,7 @@ from popcorn_core.app_publish import (
     unrecognized_code_note,
     unrecognized_code_paths,
 )
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import APIError, PopcornError
 from popcorn_core.resolve import resolve_conversation
 
 from ..registry import Argument, Command, Subcommand, register
@@ -747,6 +757,105 @@ def _app_apply(args: argparse.Namespace) -> None:
     _output(args, data, "\n".join(lines))
 
 
+def _collect_schedule_drift(
+    client: Any, conversation: str
+) -> tuple[schedule_drift.DriftReport | None, str | None]:
+    """Gather both sides of the comparison, or say why it could not be made.
+
+    Compared against the BOUND manifest in both of `status`'s modes, including
+    from inside a checkout where a local manifest is also to hand. The live
+    schedules were installed from the version the channel runs, so that is the
+    only manifest they can be judged against — a working copy's `schedules:`
+    describes a channel state that does not exist yet, and a head that has not
+    landed describes one that may never.
+
+    Returns `(None, reason)` rather than raising: a channel with no manifest,
+    or a Temporal outage behind the schedule list, must not take down the
+    version reporting that is this command's main job and works fine without
+    it. The reason is rendered where a reader will see it.
+    """
+    try:
+        resp = operations.get_channel_app_file(client, conversation, "manifest.yaml")
+    except APIError as exc:
+        return None, f"the bound version has no readable manifest.yaml ({exc})"
+
+    try:
+        manifest = yaml.safe_load(resp.get("content") or "") or {}
+    except yaml.YAMLError as exc:
+        return None, f"the bound manifest.yaml does not parse ({exc})"
+    if not isinstance(manifest, dict):
+        return None, "the bound manifest.yaml is not a YAML mapping"
+
+    declared = manifest.get("schedules")
+    if not isinstance(declared, list):
+        # No `schedules:` key at all is the ordinary case for most bundles,
+        # and it is not a failure to report.
+        return schedule_drift.DriftReport(), None
+
+    try:
+        live_resp = operations.list_scheduled_flows(client, conversation)
+    except APIError as exc:
+        return None, f"the channel's live schedules could not be read ({exc})"
+    live = live_resp.get("scheduled_flows") or []
+
+    # `popcorn.app_mode` separates a deliberate retune from an unexplained one,
+    # and a channel that never set it reads as None — which `classify` treats
+    # as "could not confirm" rather than as prod.
+    app_mode: str | None = None
+    try:
+        scalar = operations.get_scalar(client, conversation, "popcorn.app_mode")
+        value = (scalar.get("scalar") or {}).get("value")
+        app_mode = str(value) if value is not None else None
+    except APIError:
+        pass
+
+    entries = [e for e in declared if isinstance(e, dict)]
+    return schedule_drift.classify(entries, live, app_mode), None
+
+
+def _render_schedule_drift(
+    report: schedule_drift.DriftReport | None, error: str | None
+) -> list[str]:
+    """The `Schedules:` block, and nothing when a bundle declares none."""
+    if error is not None:
+        return ["", f"Schedules: not checked — {error}"]
+    assert report is not None
+    if not report.findings:
+        return []
+
+    lines = ["", "Schedules:"]
+    for finding in report.findings:
+        if finding.drift_class is None:
+            lines.append(f"  OK    {finding.slug} — {finding.summary}")
+            continue
+        label = "DRIFT" if finding.alarming else "note "
+        lines.append(f"  {label} {finding.slug} — {finding.summary}")
+        if finding.declared or finding.live:
+            lines.append(
+                f"        declared {finding.declared or '(none)'}; "
+                f"live {finding.live or '(not installed)'}"
+            )
+    return lines
+
+
+def _schedule_drift_section(
+    client: Any, conversation: str, data: dict[str, Any], lines: list[str]
+) -> str | None:
+    """Fold the drift check into a status report's data and rendering.
+
+    Returns the message the caller must raise AFTER emitting output, so a
+    drifted channel still prints its report rather than only an error.
+    """
+    report, error = _collect_schedule_drift(client, conversation)
+    data["schedule_drift"] = report.to_dict() if report is not None else None
+    data["schedule_drift_error"] = error
+    lines += _render_schedule_drift(report, error)
+    if report is None or not report.alarming:
+        return None
+    slugs = ", ".join(f.slug for f in report.alarming)
+    return f"{len(report.alarming)} schedule(s) drifted from the manifest: {slugs}"
+
+
 def _channel_status(args: argparse.Namespace, conversation: str) -> None:
     """ "Has my publish landed on this channel?", from server state alone.
 
@@ -823,7 +932,10 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
             "",
             f"Install: CURRENT — the channel runs the line's head (version {head_id}).",
         ]
+    drift = _schedule_drift_section(client, conversation, data, lines)
     _output(args, data, "\n".join(lines))
+    if drift:
+        raise PopcornError(drift, error_code="validation")
 
 
 def _app_status(args: argparse.Namespace) -> None:
@@ -915,7 +1027,10 @@ def _app_status(args: argparse.Namespace) -> None:
     if diff.preserved:
         lines.append("")
         lines.append(preserved_note(diff.preserved))
+    drift = _schedule_drift_section(client, conversation, data, lines)
     _output(args, data, "\n".join(lines))
+    if drift:
+        raise PopcornError(drift, error_code="validation")
 
 
 register(
