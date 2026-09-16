@@ -62,6 +62,7 @@ from popcorn_core.app_checkout import (
     files_from_response,
     occupied,
     read_baseline,
+    write_agent_guide,
     write_baseline,
     write_tree,
 )
@@ -281,6 +282,9 @@ def _app_checkout(args: argparse.Namespace) -> None:
     written = write_tree(directory, files)
     baseline = baseline_from_response(resp, files, conversation_id=conv_id)
     write_baseline(directory, baseline)
+    # --force is already the author saying "take checkout's version of this
+    # directory"; without it an existing guide is theirs to keep.
+    guide = write_agent_guide(directory, force=bool(getattr(args, "force", False)))
 
     # What the channel runs, alongside what was served. An API older than
     # popcorn-backend #1985 sends neither field; then the served version IS
@@ -297,6 +301,9 @@ def _app_checkout(args: argparse.Namespace) -> None:
         "channel_version_id": channel_id,
         "tree_digest": baseline.tree_digest,
         "files": written,
+        # Named rather than folded into `files`: it is not bundle content and
+        # publish will not send it. None when an existing one was kept.
+        "guide": guide.name if guide else None,
     }
     if forked is not None:
         data["fork"] = forked
@@ -315,9 +322,13 @@ def _app_checkout(args: argparse.Namespace) -> None:
         "",
         f"{len(written)} file{'s' if len(written) != 1 else ''}, "
         f"baseline version {baseline.base_version_id}",
-        "",
-        f"Next: popcorn template check {directory}",
     ]
+    if guide is not None:
+        lines.append(
+            f"Also wrote {guide.name} — how to edit and publish this directory, "
+            "for whoever reads it next. It is not bundle content and does not publish."
+        )
+    lines += ["", f"Next: popcorn template check {directory}"]
     _output(args, data, "\n".join(lines))
 
 
