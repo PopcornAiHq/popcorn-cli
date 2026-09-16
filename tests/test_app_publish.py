@@ -414,7 +414,7 @@ class TestBumpManifestText:
     """The rewrite, and the `sed` trap that is the reason it exists."""
 
     def test_the_naive_sed_pattern_matches_nothing(self):
-        """KEW-2367's sharp edge, pinned so nobody "simplifies" back to it.
+        """The sharp edge, pinned so nobody "simplifies" back to it.
 
         A manifest quotes its version, so the obvious
         `sed -E 's/^version: [0-9.]+/…/'` matches no line and exits 0 —
@@ -806,7 +806,7 @@ class TestPublishCommand:
         rec = _Recorder()
         with pytest.raises(PopcornError) as exc:
             _run_publish(tmp_path, _files_response({}), rec, _args(directory=str(tmp_path)))
-        # The one-command recovery (KEW-2362), not the old fork-then-checkout
+        # The one-command recovery, not the old fork-then-checkout
         # pair: `app checkout --fork` does both and cannot be half-done.
         assert "app checkout" in str(exc.value.hint or "")
         assert "--fork" in str(exc.value.hint or "")
@@ -852,7 +852,7 @@ class TestPublishCommand:
         assert rec.calls == []
 
     def test_publishes_from_the_head_while_the_channel_is_behind(self, tmp_path):
-        """The deadlock popcorn-backend #1985 removed.
+        """The deadlock a server-side change removed.
 
         The head's install failed, so the channel still runs the previous
         version. The checkout IS the head, the publish is based on it, and
@@ -1137,8 +1137,8 @@ class TestForkAndApplyCommands:
 
 class TestNamelessFork:
     """A nameless fork adopts whatever single line exists, wherever it has got
-    to — 23 minor versions behind product, in the workspace that prompted
-    KEW-2362. So it discloses the line first, on every path."""
+    to — 23 minor versions behind product, in the workspace that prompted this
+    command. So it discloses the line first, on every path."""
 
     def test_discloses_and_confirms_the_line_it_would_adopt(self, capsys, tty):
         rec = _ForkRecorder()
@@ -1227,7 +1227,7 @@ class TestNamelessFork:
         """The server is the only thing that knows the name. When it withholds
         it, saying "default" is not a safe guess but a wrong answer on every
         workspace that named its line — and right only by coincidence on the
-        first one, because "default" is what the backend mints (KEW-2375)."""
+        first one, because "default" is what the backend mints."""
         rec = _ForkRecorder()
         listing = _listing()
         listing["apps"].append({"kind": "fork", "app": "alerttracker", "semver": "1.14.0"})
@@ -1284,7 +1284,7 @@ class TestNamelessFork:
 
 
 # ---------------------------------------------------------------------------
-# `app publish --bump` (KEW-2367)
+# `app publish --bump`
 # ---------------------------------------------------------------------------
 
 
@@ -1351,8 +1351,8 @@ class TestPublishBump:
 
     def test_an_untouched_checkout_still_publishes_nothing(self, tmp_path):
         """`--bump` on a clean working copy must not mint a version whose
-        only content is its own number — the wasted version KEW-2368 is
-        about. Emptiness is judged before the bump, never after."""
+        only content is its own number — the wasted version the flag exists
+        to avoid. Emptiness is judged before the bump, never after."""
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
         rec = _Recorder()
@@ -1385,7 +1385,7 @@ class TestPublishBump:
 
     def test_a_hand_edited_version_publishes_without_the_flag(self, tmp_path):
         """The refusal above is about `--bump` only — editing by hand stays
-        the supported path, since that is what KEW-2366 still has to catch."""
+        the supported path, since an empty publish still has to be caught."""
         base = self._edited(tmp_path)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.5.0"))
         rec = _Recorder(semver="0.5.0")
@@ -1393,7 +1393,7 @@ class TestPublishBump:
         assert read_baseline(tmp_path).semver == "0.5.0"
 
     def test_bumps_over_a_stale_manifest_that_never_advanced(self, tmp_path):
-        """The case the ticket opens with: the `sed` no-opped, so the manifest
+        """The case `--bump` exists for: the `sed` no-opped, so the manifest
         still holds the published version. `--bump` is exactly the fix."""
         base = self._edited(tmp_path)
         assert (tmp_path / "manifest.yaml").read_text() == _manifest("0.2.0")
@@ -1405,7 +1405,7 @@ class TestPublishBump:
 
 
 # ---------------------------------------------------------------------------
-# `app publish --message` / `-m` (KEW-2368)
+# `app publish --message` / `-m`
 # ---------------------------------------------------------------------------
 
 
@@ -1516,7 +1516,7 @@ class TestDeprecatedChangelogAlias:
 
 
 # ---------------------------------------------------------------------------
-# KEW-2370 — `app status --channel`, with no checkout
+# `app status --channel`, with no checkout
 # ---------------------------------------------------------------------------
 
 
@@ -1596,7 +1596,7 @@ class TestChannelScopedStatus:
         assert "popcorn app apply --channel #chan" in out["rendered"]
 
     def test_pending_says_the_job_status_is_not_readable(self, tmp_path):
-        """The honest half of KEW-2370: the API exposes no status for the
+        """The honest half of `app status`: the API exposes no status for the
         install job, so a failed install and a running one look the same and
         the output must not imply otherwise."""
         out = self._run(
@@ -1642,7 +1642,7 @@ class TestChannelScopedStatus:
         assert "does not run an app bundle" in str(exc.value)
 
     def test_an_older_api_without_bound_fields_falls_back_to_the_binding(self, tmp_path):
-        """popcorn-backend before #1985 sends no `bound_*`; then the served
+        """A server predating the binding fields sends no `bound_*`; then the served
         version IS the bound one and the channel cannot read as behind."""
         tree = _tree_response()
         del tree["bound_version_id"]
@@ -1688,7 +1688,7 @@ class TestChannelScopedStatus:
 
 
 class TestApplyReadsAsRecovery:
-    """KEW-2373: publish → install converged on the first poll across roughly
+    """Publish → install converged on the first poll across roughly
     a dozen publishes, and `apply` was never needed once. Documenting it as a
     routine step in the loop is what invites it into scripts."""
 
@@ -1732,7 +1732,8 @@ class TestApplyReadsAsRecovery:
 
     def test_an_unreported_line_is_not_rendered_as_default(self):
         """`_ForkRecorder`'s response carries no fork_name on purpose: it is
-        what a server predating KEW-2375 returns on the already_fork path, and
+        what a server predating the fork-name field returns on the
+        already_fork path, and
         agent mode reads exactly this rendering."""
         from popcorn_cli.commands import app as mod
 
@@ -1756,7 +1757,7 @@ class TestApplyReadsAsRecovery:
 
     def test_the_adopting_note_points_at_status_not_a_list_poll(self):
         """`app list` was the old answer and is what callers grepped a semver
-        out of (KEW-2370)."""
+        out of."""
         from popcorn_cli.commands import app as mod
 
         rendered = "\n".join(mod._fork_lines({"status": "adopting", "app": "a", "semver": "1.0.0"}))
@@ -1765,7 +1766,7 @@ class TestApplyReadsAsRecovery:
 
 
 class TestScheduleDriftInStatus:
-    """The drift check wired into `app status` (KEW-2310).
+    """The drift check wired into `app status`.
 
     The classification itself is covered by `tests/test_schedule_drift.py`;
     what matters here is the wiring — that the bound manifest is what gets

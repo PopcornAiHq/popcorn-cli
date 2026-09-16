@@ -56,8 +56,9 @@ Families still living in `cli.py` are mid-migration; see
 
 `docs/TEMPLATE_AUTHORING.md` is the guide for authoring a channel-template
 bundle with this CLI. Its §2 is the thing to keep straight: a **new** app type
-is a backend PR into `CHANNEL_TEMPLATES` plus a deploy, but **editing** one is
-a pure CLI loop (`app fork` → `checkout` → `publish`) with no deploy in it.
+needs a server-side registration plus a deploy, neither of which the CLI can
+do, but **editing** one is a pure CLI loop (`app fork` → `checkout` →
+`publish`) with no deploy in it.
 `popcorn flow import` is gone and neither path replaces it.
 
 Two bundles back the guide's §6 contrast. **They are checker fixtures, not
@@ -110,7 +111,7 @@ offline — no server, no channel, no credentials, identical findings on every
 machine, which is what `--strict` in CI has to guarantee.
 
 ```
-backend: lib/temporal/dsl/schema.py — flow_document_schema
+the server's flow-document schema
    │  GET /api/customer-flows/schema
    ▼
 scripts/sync_flow_rules.py  (make sync-rules / make check-rules)
@@ -133,12 +134,13 @@ reference grammar accepted `$a.`, `$a..b` and `$a.1b`, which the interpreter
 rejects, and `max_block_depth` had no counterpart at all, so a block nested
 past the cap checked clean and failed at install (`block-too-deep`).
 
-**Code blocks are a third path classification** (`code/<block>/…`), served since
-backend#1923. A block file keeps its whole path rather than flattening to a
-basename, because neither reader keys it that way — which is what stopped
-`template check` reporting a `basename-collision` between two blocks' `main.py`,
-the entrypoint the runner's convention requires each Python block to carry. The
-rule also makes a `.yaml` under a block block source rather than a lost flow.
+**Code blocks are a third path classification** (`code/<block>/…`), served
+since a server-side change. A block file keeps its whole path rather than
+flattening to a basename, because neither reader keys it that way — which is
+what stopped `template check` reporting a `basename-collision` between two
+blocks' `main.py`, the entrypoint the runner's convention requires each Python
+block to carry. The rule also makes a `.yaml` under a block block source rather
+than a lost flow.
 The two findings it adds — `code-file-outside-block` and
 `code-block-name-invalid` — are paths `app publish` refuses outright.
 
@@ -154,18 +156,16 @@ checker can predict `app_publish.require_bump` offline: `version-not-advanced`
 is an error because a published version is immutable and the server refuses the
 publish outright, `changelog-not-updated` a warning because the stale note
 ships as content rather than blocking anything. Both are gated on the baseline
-existing — bundle SOURCE (`backend:lib/apps/<app>/`, `tests/fixtures/bundles/`)
-has none, so neither check applies there rather than failing open or closed,
-and the backend owns the equivalent rule for its own tree in
-`check_bundle_version.py`. The changelog comparison additionally needs a v3
-baseline, which is the first that captured the served note; an older checkout
-gets the version check and silence on the changelog. Its wording is
+existing — bundle SOURCE that was never checked out (the platform's own
+template tree, `tests/fixtures/bundles/`) has none, so neither check applies
+there rather than failing open or closed, and the server side owns the
+equivalent rule for its own tree. The changelog comparison additionally needs a
+v3 baseline, which is the first that captured the served note; an older
+checkout gets the version check and silence on the changelog. Its wording is
 fork-aware, off `Baseline.kind`: only the product publish path reads the
-manifest's `changelog:` (`backend:lib/app_bundles/services/publish.py —
-publish_registry_template`), so on a fork line the note is bundle
-documentation and `app publish -m` is what the registry records. Saying the
-product answer to a fork author is what made this check contradict the very
-next command (KEW-2381).
+manifest's `changelog:`, so on a fork line the note is bundle documentation and
+`app publish -m` is what the registry records. Giving a fork author the product
+answer is what made this check contradict the very next command they would run.
 
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,
@@ -183,11 +183,11 @@ Four test layers, and the gap at the bottom is deliberate:
 | `tests/test_fixture_bundles.py` | CI | every `tests/fixtures/bundles/*/`, so a new bundle is gated the moment it is added |
 | `tests/test_template_check.py` | CI | one grammar feature per test, derived from what real templates do |
 | `tests/test_flow_rules.py` | CI | every generated rule, asserted longhand, plus the generator's own failure modes |
-| `tests/test_backend_templates.py` | **local only** | the shipped `popcorn-backend` bundles, read from the real checkout |
+| `tests/test_backend_templates.py` | **local only** | the bundles the platform actually ships, read from a local server-side checkout |
 
-The last one skips without a backend checkout (`POPCORN_BACKEND_FLOWS`, or
-`~/popcorn/backend/lib/apps`), so **it does not run in CI** — vendoring
-copies would rot within a release. It exists because the checker shipped with
+The last one needs `POPCORN_BACKEND_FLOWS` to point at a directory of those
+bundles and skips otherwise, so **it does not run in CI** — vendoring copies
+would rot within a release. It exists because the checker shipped with
 ~180 false positives against those templates while passing everything in this
 repo: the fixture bundles use no block, no `collect:`, no expression-rail
 `when:`, no `$trigger`, no `.md.j2` prompt. Run it after touching the checker.

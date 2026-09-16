@@ -14,8 +14,8 @@ from popcorn_core.operations import resolve_flow_ref, with_conversation_id
 
 _FLOWS = {
     "flows": [
-        {"id": "50c3375e-ec4b-4f34-843d-7f870c9e5544", "name": "alert_tick"},
-        {"id": "7299e10f-9d22-4602-bbed-2c01bed0955b", "name": "alert_apply"},
+        {"id": "00000000-0000-4000-8000-000000000021", "name": "alert_tick"},
+        {"id": "00000000-0000-4000-8000-000000000022", "name": "alert_apply"},
     ]
 }
 
@@ -29,13 +29,13 @@ class TestResolveFlowRef:
             calls.append(a)
             return _FLOWS
 
-        out = resolve_flow_ref(None, "#ops", "50c3375e-ec4b-4f34-843d-7f870c9e5544", lister)
-        assert out == "50c3375e-ec4b-4f34-843d-7f870c9e5544"
+        out = resolve_flow_ref(None, "#ops", "00000000-0000-4000-8000-000000000021", lister)
+        assert out == "00000000-0000-4000-8000-000000000021"
         assert calls == []
 
     def test_name_resolves_to_id(self):
         out = resolve_flow_ref(None, "#ops", "alert_tick", lambda *a, **k: _FLOWS)
-        assert out == "50c3375e-ec4b-4f34-843d-7f870c9e5544"
+        assert out == "00000000-0000-4000-8000-000000000021"
 
     def test_unknown_name_passes_through(self):
         """Bundle flows bound via channel_app ARE resolvable by name server

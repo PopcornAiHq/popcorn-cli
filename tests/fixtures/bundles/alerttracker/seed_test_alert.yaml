@@ -14,7 +14,7 @@ description: >
 
 inputs:
   conversation_id: { type: string }
-  resource: { type: string, required: false, default: popcorn-dev-seed-service }
+  resource: { type: string, required: false, default: example-seed-service }
   severity: { type: string, required: false, default: warning }
   env: { type: string, required: false, default: dev }
   reason: { type: string, required: false, default: Seeded test alert from seed_test_alert. }

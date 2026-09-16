@@ -6,12 +6,12 @@ reconciles the channel's Temporal schedules to that list on every install.
 Changing a cadence therefore means editing the manifest and publishing a
 version, the same path as any other change to what a channel does. The
 user-token `create`/`update`/`delete` this command was once expected to grow
-into were deleted outright, not deprecated (popcorn-backend#2024), and no
-`create` or `delete` survives on the agent surface either. The one remaining
-`update` is a live PATCH owned by the `set_app_mode` bundle flow, which
-refuses any schedule the bound manifest does not declare and is re-applied
-over by the next install — so a CLI write on top of it would be transient
-even where it was reachable. KEW-2307 recorded that decision and is closed.
+into were deleted server-side outright, not deprecated, and no `create` or
+`delete` survives on the agent surface either. The one remaining `update` is
+a live PATCH owned by the `set_app_mode` bundle flow, which refuses any
+schedule the bound manifest does not declare and is re-applied over by the
+next install — so a CLI write on top of it would be transient even where it
+was reachable. Read-only here is therefore settled, not pending.
 
 Handlers import their `..cli` helpers *inside* the function body: cli.py
 imports this package at module load to build the parser, so a module-level

@@ -8,10 +8,10 @@ per-key edit here is read-merge-write, and inherits the backend's documented
 last-write-wins — two concurrent edits race on the whole document and the
 loser's keys vanish with no error.
 
-The lint is not computed here. `inspect_channel_config` returns `comparison`
-from `backend:lib/temporal/dsl/channel_usage.py — compare_channel_usage`;
-this module only decides which of its five fields mean "a run will fail"
-versus "untidy".
+The lint is not computed here. `inspect_channel_config` returns the
+`comparison` the server computes between a channel's config and what its
+flows actually use; this module only decides which of its five fields mean
+"a run will fail" versus "untidy".
 """
 
 from __future__ import annotations

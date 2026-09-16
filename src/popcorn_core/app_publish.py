@@ -5,12 +5,12 @@ over the version the checkout came from. Everything here is the local half of
 that — collecting the working copy, diffing it, and refusing the four things
 the server would refuse anyway, so an obvious mistake costs no round trip.
 
-The shape rules mirror `backend:lib/temporal/flows/templates.py` — the server
-is the source of truth and re-checks all of it; these copies exist to produce
-a better message, never to decide. Two of them are worth naming:
+The shape rules mirror the server's — it is the source of truth and re-checks
+all of it; these copies exist to produce a better message, never to decide.
+Two of them are worth naming:
 
-- `collect_tree` mirrors `bundle_file_tree`, the server's own DISK collector,
-  which silently skips anything the installer would not read — `evals/` in
+- `collect_tree` mirrors the server's own disk collector, which silently
+  skips anything the installer would not read — `evals/` in
   `claimcoordinator` is shipped in-repo and filtered exactly this way. So
   auxiliary files are filtered here too, and reported so a misplaced
   `flows/alert.yaml` is visible rather than a mystery. Refusing them instead
@@ -38,8 +38,8 @@ from .errors import PopcornError
 
 # One level under these seeds a channel_parameter of the same name. Read from
 # the served rules rather than restated: this is the same `bundle.subdirs` the
-# checker consumes, and a second hand-written copy of a served rule is the
-# thing KEW-2192 set out to end.
+# checker consumes, and a second hand-written copy of a served rule is exactly
+# the drift this package set out to end.
 FILES_SUBDIRS = flow_rules.SUBDIRS
 MANIFEST_FILENAMES = ("manifest.yaml", "config.yaml")
 _DOC_FILENAMES = ("AGENT.md", "README.md")
@@ -231,9 +231,9 @@ def _walk_code_dir(root: Path) -> list[Path]:
     Recursive, and deliberately unfiltered past dotfiles and `__pycache__`: a
     misplaced entry — a loose `code/loose.py`, a block directory named `Calc`
     — has to survive collection to reach `unrecognized_code_paths`. The
-    server's `bundle_file_tree` keeps one for the same reason, so that
-    `validate_code_blocks` can refuse it; dropping it here instead would
-    publish a half-block and call the publish a success.
+    server's own collector keeps one for the same reason, so that its
+    validation can refuse it; dropping it here instead would publish a
+    half-block and call the publish a success.
     """
     found: list[Path] = []
     for child in sorted(root.iterdir(), key=lambda p: p.name):
@@ -345,10 +345,8 @@ def manifest_changelog(files: dict[str, str]) -> str | None:
 
     Read only to WARN about it. `/apps/publish` records the request's
     changelog verbatim and never falls back to the manifest — that fallback
-    exists on the product/registry publish path
-    (`backend:lib/app_bundles/services/publish.py —
-    publish_registry_template`) and not on the fork path a CLI publish takes
-    (`publish_fork_version`). So a manifest `changelog:` with no `--message`
+    exists on the server's product/registry publish path and not on the fork
+    path a CLI publish takes. So a manifest `changelog:` with no `--message`
     records nothing at all, silently, which is worth one line of output.
     """
     try:

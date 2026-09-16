@@ -15,9 +15,9 @@ query filters on `Status: firing`.
 
 **Not installable as it stands.** These bundles are reference material, not
 registry entries — `popcorn flow import` is gone and nothing installs a local
-directory (see `docs/TEMPLATE_AUTHORING.md` §2). To run it, land it in
-popcorn-backend under `lib/temporal/flows/`, register it in `CHANNEL_TEMPLATES`,
-deploy, publish from the intranet `/app-bundles` page, then:
+directory (see `docs/TEMPLATE_AUTHORING.md` §2). Installable templates are a
+fixed set published to the server's bundle registry, so running this one means
+getting it into that registry first. Once it is published:
 
 ```bash
 popcorn channel create '#alerts' --template alerttracker

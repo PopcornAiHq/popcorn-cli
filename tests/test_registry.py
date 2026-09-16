@@ -205,7 +205,7 @@ class TestFlowActivities:
             parser.parse_args(["flow", "activities", "--tier", "bogus"])
 
     def test_activities_sends_its_filters_to_the_server(self, monkeypatch, capsys):
-        """Filtering belongs to the server (popcorn-backend#1848).
+        """Filtering belongs to the server.
 
         Narrowing the response here would put a copy of the taxonomy in this
         package and, worse, turn a typo back into zero rows reading as "no
@@ -827,7 +827,7 @@ class TestFlowValidate:
 class TestFlowImportIsFenced:
     """`flow import` is removed, and the removal has to be a *message*.
 
-    The endpoint it posted to is gone (backend `app-bundles!`), so the honest
+    The endpoint it posted to is gone server-side, so the honest
     outcomes were a 404 carrying no explanation, or — had the subcommand been
     deleted — an argparse "invalid choice". Neither tells an author where
     installs moved to. So the subcommand stays registered and fails with the
@@ -857,8 +857,8 @@ class TestFlowImportIsFenced:
         gave us — the message has to carry the replacement path."""
         _, out = self._err(monkeypatch, capsys)
         text = out.out + out.err
-        assert "CHANNEL_TEMPLATES" in text, "no pointer to the backend registry"
-        assert "/app-bundles" in text, "no pointer to the publish page"
+        assert "bundle registry" in text, "no pointer to the server-side registry"
+        assert "channel create" in text, "no pointer to how installs happen now"
         assert "template check" in text, "no pointer to what still works offline"
 
     def test_dry_run_is_fenced_too(self, monkeypatch, capsys):
@@ -866,7 +866,7 @@ class TestFlowImportIsFenced:
         author is most likely to have in muscle memory."""
         code, out = self._err(monkeypatch, capsys, ("--dry-run",))
         assert code != 0
-        assert "/app-bundles" in (out.out + out.err)
+        assert "channel create" in (out.out + out.err)
 
     def test_it_never_builds_a_client(self, monkeypatch, capsys):
         """The endpoint is gone for everyone, so needing a login to be told so
@@ -882,7 +882,7 @@ class TestFlowImportIsFenced:
 
 
 class TestArgumentAliases:
-    """`Argument.flags` — extra option strings on one dest (KEW-2368)."""
+    """`Argument.flags` — extra option strings on one dest."""
 
     def test_every_spelling_lands_on_the_declared_dest(self):
         p = argparse.ArgumentParser()
@@ -909,7 +909,7 @@ class TestArgumentAliases:
 
 
 class TestAppPublishFlags:
-    """`app publish --bump` (KEW-2367) and `--message`/`-m` (KEW-2368)."""
+    """`app publish --bump`, and `--message`/`-m` with its aliases."""
 
     @pytest.mark.parametrize("flag", ["-m", "--message", "--changelog"])
     def test_all_three_message_spellings_parse(self, parser, flag):

@@ -1,19 +1,19 @@
 {
-  "receiver": "popcorn-ops-webhook",
+  "receiver": "example-ops-webhook",
   "status": "firing",
   "alerts": [
     {
       "status": "firing",
       "labels": {
         "alertname": "HighRequestLatency",
-        "job": "popcorn-prod-api",
+        "job": "example-web",
         "severity": "critical",
         "env": "prod",
         "instance": "10.0.42.17:9090"
       },
       "annotations": {
         "summary": "p99 request latency above 2s for 10 minutes",
-        "description": "The popcorn-prod-api job has served p99 latency of 2.7s over the last 10 minutes, above the 2s objective."
+        "description": "The example-web job has served p99 latency of 2.7s over the last 10 minutes, above the 2s objective."
       },
       "startsAt": "2026-08-09T14:02:11.443Z",
       "endsAt": "0001-01-01T00:00:00Z",
@@ -26,7 +26,7 @@
   },
   "commonLabels": {
     "alertname": "HighRequestLatency",
-    "job": "popcorn-prod-api",
+    "job": "example-web",
     "severity": "critical",
     "env": "prod"
   },

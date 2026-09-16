@@ -155,7 +155,7 @@ Paginated commands include `data.pagination.next`. When there are more results, 
     "messages": [...],
     "has_more": true,
     "pagination": {
-      "next": {"before": "019d8797-45fa-7015-bd1c-4694fc4cecb8"}
+      "next": {"before": "01900000-0000-7000-8000-000000000001"}
     }
   }
 }

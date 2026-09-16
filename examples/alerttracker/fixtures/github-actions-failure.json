@@ -10,7 +10,7 @@
     "status": "completed",
     "conclusion": "failure",
     "workflow_id": 4471902,
-    "html_url": "https://github.com/PopcornAiHq/popcorn-backend/actions/runs/31345213774",
+    "html_url": "https://github.com/example-org/example-service/actions/runs/31345213774",
     "created_at": "2026-08-09T13:40:02Z",
     "updated_at": "2026-08-09T13:52:47Z",
     "run_attempt": 1,
@@ -27,12 +27,12 @@
   },
   "repository": {
     "id": 771294455,
-    "name": "popcorn-backend",
-    "full_name": "PopcornAiHq/popcorn-backend",
+    "name": "example-service",
+    "full_name": "example-org/example-service",
     "private": true
   },
   "sender": {
-    "login": "shaun",
+    "login": "octocat",
     "type": "User"
   }
 }

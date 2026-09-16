@@ -578,7 +578,7 @@ def test_schedule_declaring_both_cadences_is_rejected(tmp_path):
     # The backend's resolve_schedule refuses a spec carrying both rather
     # than silently dropping one, so a bundle declaring both cannot
     # install. Without this check the author only found out during an
-    # install against a real channel (KEW-2155).
+    # install against a real channel.
     manifest = {
         **CLEAN_MANIFEST,
         "schedules": [{"flow": "sweep", "slug": "s", "interval": 300, "cron": "0 9 * * *"}],
@@ -1039,7 +1039,7 @@ def test_trigger_keys_match_what_the_interpreter_seeds(tmp_path):
     matter what is removed from it. Transcribed from the interpreter's
     own `trigger={...}` dict; when that grows a key this fails until
     someone copies it across. The durable fix is serving the shape
-    instead of vendoring it (KEW-2150).
+    instead of vendoring it.
     """
     assert {
         "thread_id",
@@ -1400,7 +1400,7 @@ def test_a_pre_changelog_baseline_says_nothing_about_the_changelog(tmp_path):
 
 
 def test_bundle_source_without_a_baseline_is_unaffected(tmp_path):
-    """`template check` runs on the backend's `lib/apps/<app>/` and on the
+    """`template check` runs on the server's shipped bundle trees and on the
     fixture trees, neither of which is a checkout. With no baseline there is
     no previous version on disk, so neither check applies — including on a
     manifest whose version would fail every one of them."""

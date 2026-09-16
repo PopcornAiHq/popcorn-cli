@@ -148,7 +148,7 @@ class TestOccupied:
 class TestAgentGuide:
     """`CLAUDE.md` — the rules an agent needs before it knows it is in a
     bundle at all, written where reading any file in the directory loads
-    them (KEW-2380)."""
+    them."""
 
     def test_writes_the_guide(self, tmp_path):
         written = write_agent_guide(tmp_path)
@@ -296,8 +296,8 @@ class TestOperations:
 
     def test_files_reads_the_line_head_by_default(self, mock_client):
         """A checkout is what a publish is based on, and a publish must be
-        based on the fork line's head — not on whatever the channel runs
-        (popcorn-backend #1985)."""
+        based on the fork line's head — not on whatever the channel runs. A
+        server-side change made that the supported behaviour."""
         mock_client.get.return_value = _files_response({})
         operations.get_channel_app_files(mock_client, _CONV)
         mock_client.get.assert_called_once_with(
@@ -491,7 +491,7 @@ class TestCheckoutCommand:
 
 
 class TestCheckoutFork:
-    """`--fork [name]` — fork and check out in one command (KEW-2362)."""
+    """`--fork [name]` — fork and check out in one command."""
 
     def _run(self, resp, args, listing=None):
         """Like TestCheckoutCommand._run, with the fork path patched too.
@@ -566,7 +566,7 @@ class TestCheckoutFork:
 
     def test_no_fork_flag_still_records_a_product_checkout(self, tmp_path):
         """Reading what a channel runs without touching it stays a legitimate
-        use — it is how a shipped bundle gets read (KEW-2331)."""
+        use — it is how a shipped bundle gets read."""
         out = self._run(
             _files_response({"manifest.yaml": "v: 1\n"}),
             _args(directory=str(tmp_path / "out")),

@@ -1,6 +1,6 @@
-"""Tests for `popcorn app lines` — the fork-line inventory (KEW-2371).
+"""Tests for `popcorn app lines` — the fork-line inventory.
 
-Two halves of that ticket are NOT here because the API cannot support them,
+Two halves of that feature are NOT here because the API cannot support them,
 and the tests say so rather than leaving it to a reader to notice: there is no
 endpoint that deletes a fork line, and none that reports how many channels
 ride one. `TestStatedGaps` holds the command to admitting both, so a later
