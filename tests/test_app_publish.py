@@ -26,6 +26,7 @@ import pytest
 from popcorn_core import operations
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
+    GUIDE_FILE,
     Baseline,
     read_baseline,
     write_baseline,
@@ -177,6 +178,24 @@ class TestCollectTree:
         (tmp_path / ".DS_Store").write_text("junk")
         tree = collect_tree(tmp_path)
         assert BASELINE_FILE not in tree.files
+        assert tree.ignored == []
+
+    def test_never_publishes_the_agent_guide(self, tmp_path):
+        """`CLAUDE.md` is local tooling; `AGENT.md` beside it is bundle
+        content. The pair is asserted together because the difference is one
+        entry in the doc-filename tuple, and a later edit to that tuple would
+        otherwise start shipping every checkout's guide to the server.
+        """
+        _checkout(
+            tmp_path,
+            {"manifest.yaml": _manifest(), "AGENT.md": "ships\n"},
+        )
+        (tmp_path / GUIDE_FILE).write_text("local only\n")
+        tree = collect_tree(tmp_path)
+        assert "AGENT.md" in tree.files
+        assert GUIDE_FILE not in tree.files
+        # Not merely unpublished — unreported, since the author did not
+        # misplace it and has nothing to fix.
         assert tree.ignored == []
 
     def test_skips_pycache_silently(self, tmp_path):

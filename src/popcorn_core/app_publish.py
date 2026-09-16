@@ -33,7 +33,7 @@ from typing import Any
 import yaml
 
 from . import flow_rules
-from .app_checkout import BASELINE_FILE, parse_semver, tree_digest
+from .app_checkout import BASELINE_FILE, GUIDE_FILE, parse_semver, tree_digest
 from .errors import PopcornError
 
 # One level under these seeds a channel_parameter of the same name. Read from
@@ -176,7 +176,10 @@ def collect_tree(directory: Path) -> LocalTree:
 
     Dotfiles are skipped silently: the baseline is one, and a bundle has no
     hidden members by definition. `__pycache__` is skipped for the same
-    reason. Everything else the installer would not read lands in `ignored`,
+    reason, and so is the root `CLAUDE.md` that `app checkout` writes — it is
+    the CLI's own file, so reporting it as a path the author misplaced would
+    point them at nothing to fix. Everything else the installer would not read
+    lands in `ignored`,
     which the caller prints — an authoring directory legitimately holds
     fixtures and notes, and refusing them would reject the very examples the
     CLI docs ship.
@@ -191,6 +194,8 @@ def collect_tree(directory: Path) -> LocalTree:
 
     for entry in sorted(directory.iterdir(), key=lambda p: p.name):
         if entry.name.startswith(".") or entry.name in _SILENT_SKIPS:
+            continue
+        if entry.name == GUIDE_FILE and entry.is_file():
             continue
         if entry.is_dir():
             if entry.name == flow_rules.CODE_SUBDIR:

@@ -9,6 +9,14 @@ refused when the line has moved underneath it, and it names the channel so
 The baseline lives INSIDE the checkout directory but is not bundle content.
 It is a dotfile so `template check`'s globs skip it, and publish must exclude
 dotfiles for the same reason.
+
+`CLAUDE.md` is written beside it for the same "inside the directory, not part
+of the bundle" reason, and for one the baseline cannot serve: a coding agent
+asked to reword an email in this directory has nothing in the REQUEST naming
+Popcorn, so no skill of ours can trigger on it, and it edits a file and ships
+nothing. A `CLAUDE.md` in the directory loads when the agent reads a file in
+the directory — the trigger and the failure window become the same event
+(KEW-2380).
 """
 
 from __future__ import annotations
@@ -24,6 +32,9 @@ from . import flow_rules
 from .errors import PopcornError
 
 BASELINE_FILE = ".popcorn-app.json"
+# Not a dotfile, unlike the baseline: Claude Code loads a subdirectory's
+# CLAUDE.md by that exact name, so the name is the mechanism.
+GUIDE_FILE = "CLAUDE.md"
 # 2 added `conversation_id`. 3 added `changelog`. An older baseline still
 # parses — every field is read with a default — and each command degrades to
 # what it can still answer rather than rewriting the file underneath the user:
@@ -36,6 +47,63 @@ _VERSION = 3
 CHANGELOG_VERSION = 3
 
 _SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+
+# Deliberately not templated with the app or channel — the baseline next to it
+# carries those and stays correct as the line moves, while a name baked in
+# here would be a second copy to go stale. What belongs here is only what is
+# true of every checkout and unreachable from the wording of a request: that
+# this directory publishes, and the one authoring rule that fails silently.
+GUIDE_TEXT = f"""# Popcorn app bundle — working copy
+
+This directory is a **checked-out Popcorn app bundle**, not a folder of YAML.
+`{BASELINE_FILE}` beside this file names the app, the fork line, and the
+version this copy came from.
+
+**Editing a file here ships nothing on its own.** The loop is:
+
+```
+edit  →  popcorn template check .  →  popcorn app publish . -m "<what changed>"
+```
+
+`app publish` refuses a manifest whose `version:` has not advanced past the
+checked-out one; `--bump patch` (or `minor`/`major`) writes that bump for you
+on a successful publish. Until a publish lands, the channel still runs the old
+version — a clean `template check` is a check, not a release.
+
+## Posting markdown needs `format: markdown`
+
+`foundation.channel.post` defaults to `format: plain`, so a step whose `text:`
+carries markdown posts its asterisks and hashes literally:
+
+```yaml
+- id: announce
+  activity: foundation.channel.post
+  args:
+    channel_id: $inputs.conversation_id
+    text: "**Deploy complete** — 3 services updated"
+    format: markdown          # without this the ** ships as literal asterisks
+```
+
+Nothing in the authoring loop catches the omission: `template check` passes,
+the flow runs green, and the message is wrong only on screen. Read
+`part.format` back with `popcorn message list` after a test run.
+
+`foundation.channel.edit` and `foundation.channel.post_file` take **no
+`format` argument at all** and always emit plain, so refreshing a markdown
+post with `channel.edit` silently drops the rendering.
+
+## What this file is
+
+`popcorn app checkout` wrote it, and `popcorn app publish` does not upload it.
+It is local guidance for whoever edits this working copy, so deleting it
+changes nothing about the app — the next checkout writes it again, and a
+re-checkout leaves your edits to it alone unless you pass `--force`.
+
+`AGENT.md` is the opposite and is not interchangeable with this: it is bundle
+content, it publishes, and it travels to every channel that installs the app.
+Instructions for the app's own users go there; instructions about editing and
+shipping this directory go here.
+"""
 
 
 def semver_key(version: str) -> tuple[int, int, int] | None:
@@ -214,20 +282,44 @@ def write_tree(directory: Path, files: dict[str, str]) -> list[str]:
 
 
 def occupied(directory: Path) -> bool:
-    """True when `directory` holds anything other than a stale baseline.
+    """True when `directory` holds anything checkout did not write itself.
 
-    A directory containing only our own baseline is a re-checkout of the same
-    working copy, not a collision, so it does not need --force.
+    A directory containing only our own baseline and the guide beside it is a
+    re-checkout of the same working copy, not a collision, so it does not need
+    --force.
+
+    The guide only counts as ours when the baseline is there with it. A lone
+    `CLAUDE.md` is somebody else's project file, and scattering a bundle over
+    their directory is precisely the collision this exists to catch.
     """
     if not directory.exists():
         return False
-    entries = [p for p in directory.iterdir() if p.name != BASELINE_FILE]
-    return bool(entries)
+    ours = {BASELINE_FILE}
+    if (directory / BASELINE_FILE).exists():
+        ours.add(GUIDE_FILE)
+    return any(p.name not in ours for p in directory.iterdir())
 
 
 def write_baseline(directory: Path, baseline: Baseline) -> Path:
     target = directory / BASELINE_FILE
     target.write_text(json.dumps(baseline.to_dict(), indent=2) + "\n")
+    return target
+
+
+def write_agent_guide(directory: Path, force: bool = False) -> Path | None:
+    """Write `CLAUDE.md` into the checkout. Returns the path, or None if kept.
+
+    Separate from `write_baseline` because the two answer to different rules:
+    the baseline is derived state and is always rewritten to match what was
+    served, while this is prose a reader may have edited and the edit is worth
+    more than a refresh. So an existing file is left alone unless the caller
+    is already overwriting the working copy (`--force`), which is the one
+    moment the author has said they want checkout's version of these files.
+    """
+    target = directory / GUIDE_FILE
+    if target.exists() and not force:
+        return None
+    target.write_text(GUIDE_TEXT)
     return target
 
 

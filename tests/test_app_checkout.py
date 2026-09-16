@@ -18,6 +18,8 @@ import pytest
 from popcorn_core import operations
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
+    GUIDE_FILE,
+    GUIDE_TEXT,
     Baseline,
     baseline_from_response,
     files_from_response,
@@ -25,6 +27,7 @@ from popcorn_core.app_checkout import (
     occupied,
     read_baseline,
     tree_digest,
+    write_agent_guide,
     write_baseline,
     write_tree,
 )
@@ -120,9 +123,64 @@ class TestOccupied:
         (tmp_path / BASELINE_FILE).write_text("{}")
         assert occupied(tmp_path) is False
 
+    def test_directory_holding_only_a_baseline_and_our_guide_is_free(self, tmp_path):
+        """Checkout writes both, so both together are still a re-checkout.
+
+        Without this, writing the guide would make every re-checkout of an
+        untouched working copy demand --force.
+        """
+        (tmp_path / BASELINE_FILE).write_text("{}")
+        (tmp_path / GUIDE_FILE).write_text("# guide")
+        assert occupied(tmp_path) is False
+
+    def test_a_guide_without_a_baseline_is_somebody_elses(self, tmp_path):
+        """A CLAUDE.md alone is a project file, not a checkout of ours —
+        scattering a bundle over that directory is the collision --force is
+        there to confirm."""
+        (tmp_path / GUIDE_FILE).write_text("# my project")
+        assert occupied(tmp_path) is True
+
     def test_directory_with_content_is_occupied(self, tmp_path):
         (tmp_path / "manifest.yaml").write_text("x")
         assert occupied(tmp_path) is True
+
+
+class TestAgentGuide:
+    """`CLAUDE.md` — the rules an agent needs before it knows it is in a
+    bundle at all, written where reading any file in the directory loads
+    them (KEW-2380)."""
+
+    def test_writes_the_guide(self, tmp_path):
+        written = write_agent_guide(tmp_path)
+        assert written == tmp_path / GUIDE_FILE
+        assert written.read_text() == GUIDE_TEXT
+
+    def test_says_an_edit_is_not_a_release(self, tmp_path):
+        """The failure it exists for: a good edit that was never published."""
+        text = write_agent_guide(tmp_path).read_text()
+        assert "popcorn template check" in text
+        assert "popcorn app publish" in text
+
+    def test_carries_the_format_rule(self, tmp_path):
+        """Stranded in the plugin skill's body until the skill triggers; the
+        checkout directory is the only place the rule applies."""
+        text = write_agent_guide(tmp_path).read_text()
+        assert "foundation.channel.post" in text
+        assert "format: markdown" in text
+
+    def test_separates_itself_from_agent_md(self, tmp_path):
+        """Both are agent-facing docs in one directory; only AGENT.md ships."""
+        assert "AGENT.md" in write_agent_guide(tmp_path).read_text()
+
+    def test_keeps_an_edited_guide(self, tmp_path):
+        (tmp_path / GUIDE_FILE).write_text("my own notes\n")
+        assert write_agent_guide(tmp_path) is None
+        assert (tmp_path / GUIDE_FILE).read_text() == "my own notes\n"
+
+    def test_force_refreshes_it(self, tmp_path):
+        (tmp_path / GUIDE_FILE).write_text("stale\n")
+        assert write_agent_guide(tmp_path, force=True) is not None
+        assert (tmp_path / GUIDE_FILE).read_text() == GUIDE_TEXT
 
 
 # ---------------------------------------------------------------------------
@@ -402,6 +460,30 @@ class TestCheckoutCommand:
         self._run(_files_response({"manifest.yaml": "v\n"}), _args(directory=str(tmp_path)))
         assert (tmp_path / "manifest.yaml").exists()
 
+    def test_writes_the_agent_guide(self, tmp_path):
+        out = self._run(
+            _files_response({"manifest.yaml": "v\n"}), _args(directory=str(tmp_path / "out"))
+        )
+        assert (tmp_path / "out" / GUIDE_FILE).read_text() == GUIDE_TEXT
+        assert out["data"]["guide"] == GUIDE_FILE
+        # Not folded into `files`: publish sends those and will not send this.
+        assert out["data"]["files"] == ["manifest.yaml"]
+
+    def test_re_checkout_keeps_an_edited_guide(self, tmp_path):
+        write_baseline(tmp_path, baseline_from_response(_files_response({}), {}))
+        (tmp_path / GUIDE_FILE).write_text("my own notes\n")
+        out = self._run(_files_response({"manifest.yaml": "v\n"}), _args(directory=str(tmp_path)))
+        assert (tmp_path / GUIDE_FILE).read_text() == "my own notes\n"
+        assert out["data"]["guide"] is None
+
+    def test_force_refreshes_the_guide(self, tmp_path):
+        (tmp_path / GUIDE_FILE).write_text("stale\n")
+        self._run(
+            _files_response({"manifest.yaml": "v\n"}),
+            _args(directory=str(tmp_path), force=True),
+        )
+        assert (tmp_path / GUIDE_FILE).read_text() == GUIDE_TEXT
+
     def test_empty_tree_is_an_error_not_an_empty_directory(self, tmp_path):
         with pytest.raises(PopcornError) as exc:
             self._run(_files_response({}), _args(directory=str(tmp_path / "out")))
@@ -604,10 +686,15 @@ def test_a_real_bundle_round_trips_and_still_passes_template_check(tmp_path, nam
     ):
         mod._app_checkout(_args(directory=str(out)))
 
-    assert _read_bundle(out) == original_bytes, "checkout did not round-trip byte-identically"
+    on_disk = _read_bundle(out)
+    # Popped, not excluded from `_read_bundle`: the guide is a file checkout
+    # writes on purpose, and everything else must still be the served bytes.
+    assert on_disk.pop(GUIDE_FILE, None) is not None, "checkout did not write the guide"
+    assert on_disk == original_bytes, "checkout did not round-trip byte-identically"
 
     report = check_bundle(str(out))
     assert not report.errors, [f.code for f in report.errors]
+    assert not report.warnings, [f.code for f in report.warnings]
 
     # The baseline must not look like bundle content to the checker or to a
     # future publish diff.

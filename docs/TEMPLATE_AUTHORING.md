@@ -156,6 +156,14 @@ tells you rather than contradicting it. Both checks read the baseline
 `app checkout` wrote and are skipped entirely on a directory that is not a
 checkout.
 
+A checkout writes two files that are not bundle content: `.popcorn-app.json`,
+the baseline above, and `CLAUDE.md`, which tells a coding agent opening a file
+in the directory that this is a bundle and that an edit is not a release until
+`template check` and `app publish` have run. Neither publishes. `CLAUDE.md` is
+yours once written — a re-checkout leaves your edits to it alone unless you
+pass `--force` — and it is not `AGENT.md`, which *is* bundle content and ships
+to every channel that installs the app.
+
 `app apply` is **not** a step in this loop. It is the retry for an install that
 did not land: the channel had app updates locked, another install held it, or
 it failed. Run it when `app status` says the channel is still behind its line,
