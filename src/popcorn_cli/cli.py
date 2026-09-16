@@ -1349,106 +1349,6 @@ def cmd_delete_channel(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Webhook commands
-# ---------------------------------------------------------------------------
-
-
-def cmd_webhook_send(args: argparse.Namespace) -> None:
-    """Fire a webhook's ingest URL with a JSON payload.
-
-    The client is built only when the target needs resolving: an ingest URL
-    target posts to an unauthenticated host, so it must work without a login.
-    """
-    payload = _read_json_object(args.payload, "payload") if args.payload else {}
-    target = args.target
-    if operations.is_webhook_url(target):
-        url = target
-    else:
-        url = operations.resolve_webhook_url(
-            _get_client(args), target, getattr(args, "channel", None)
-        )
-    result = operations.send_webhook(url, payload)
-    body = result["response"]
-    rendered = json.dumps(body, indent=2) if isinstance(body, dict | list) else str(body)
-    _output(args, result, f"HTTP {result['status']} → {url}\n{rendered}")
-
-
-def cmd_webhook(args: argparse.Namespace) -> None:
-    sub = getattr(args, "webhook_command", None)
-    if sub == "send":
-        cmd_webhook_send(args)
-        return
-    client = _get_client(args)
-
-    if sub == "create":
-        flow_id = getattr(args, "trigger_flow_id", None)
-        flow_name = getattr(args, "trigger_flow_name", None)
-        if getattr(args, "action_mode", None) == "trigger_workflow" and not (flow_id or flow_name):
-            e = PopcornError("--action-mode=trigger_workflow needs the flow to start")
-            e.hint = "pass --trigger-flow-name <name> (see `popcorn flow list`)"
-            raise e
-        resp = operations.create_webhook(
-            client,
-            args.conversation,
-            args.name,
-            description=getattr(args, "description", None),
-            avatar_url=getattr(args, "avatar_url", None),
-            action_mode=getattr(args, "action_mode", None),
-            trigger_flow_id=getattr(args, "trigger_flow_id", None),
-            trigger_flow_name=getattr(args, "trigger_flow_name", None),
-        )
-        _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
-    elif sub == "event-types":
-        resp = operations.webhook_event_types(client)
-        sources = resp.get("sources", [])
-        modes = resp.get("action_modes", [])
-        source_names = [s.get("name", str(s)) if isinstance(s, dict) else str(s) for s in sources]
-        lines = ["Webhook event types:"]
-        lines.append("  sources: " + (", ".join(source_names) or "—"))
-        lines.append("  action_modes: " + (", ".join(map(str, modes)) or "—"))
-        _output(args, resp, "\n".join(lines))
-    elif sub == "list":
-        resp = operations.list_webhooks(client, args.conversation)
-        hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
-        show_url = getattr(args, "show_url", False)
-        lines = [f"Webhooks for {args.conversation} ({len(hooks)}):"]
-        for h in hooks:
-            lines.append(f"  {h.get('id', '?')}  {h.get('name', '?')}")
-            if show_url and h.get("url"):
-                lines.append(f"    {h['url']}")
-        # The ingest URL's token IS the credential — anyone holding it can post
-        # to the channel — so it is opt-in rather than printed by default, and
-        # the footer is what stops that decision from sending people back to
-        # `--json` to find it.
-        if not show_url and any(h.get("url") for h in hooks):
-            lines.append("")
-            lines.append("Ingest URLs hidden (they carry a secret token) — pass --show-url.")
-        _output(args, resp, "\n".join(lines))
-    elif sub == "deliveries":
-        resp = operations.list_webhook_deliveries(
-            client,
-            args.conversation,
-            limit=getattr(args, "limit", 50),
-            since=getattr(args, "since", None),
-            after=getattr(args, "after", None),
-            status=getattr(args, "status", None),
-            include=getattr(args, "include", None),
-        )
-        deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
-        lines = [f"Deliveries for {args.conversation} ({len(deliveries)}):"]
-        for d in deliveries:
-            wh_name = d.get("webhook_name", d.get("webhook_id", "?"))
-            ts = d.get("created_at", "?")
-            lines.append(f"  {d.get('id', '?')}  {wh_name}  {ts}")
-            if "payload_raw" in d:
-                preview = _format_payload_preview(d["payload_raw"])
-                lines.append(f"    payload: {preview}")
-        _output(args, resp, "\n".join(lines))
-    else:
-        raise PopcornError("Usage: popcorn webhook [create|deliveries|event-types|list|send]")
-
-
-# ---------------------------------------------------------------------------
 # Channel templates
 # ---------------------------------------------------------------------------
 
@@ -2760,9 +2660,6 @@ _popcorn_completions() {
         channel)
             COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
             ;;
-        webhook)
-            COMPREPLY=($(compgen -W "create deliveries event-types list send" -- "$cur"))
-            ;;
         vm)
             COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
             ;;
@@ -2791,7 +2688,6 @@ _popcorn() {
         'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
-        'webhook:Webhook commands (create, deliveries, event-types, list, send)'
         'whoami:Show current user and workspace'
         'workspace:Workspace commands (check-access, inbox, list, switch, users)'
 {registry_commands}    )
@@ -2813,7 +2709,6 @@ _popcorn() {
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
                 channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
-                webhook) _values 'subcommand' create deliveries event-types list send ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
@@ -2840,7 +2735,6 @@ _STATIC_TOP_LEVEL = [
     "upgrade",
     "version",
     "vm",
-    "webhook",
     "whoami",
     "workspace",
 ]
@@ -2962,7 +2856,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
     "message": "messages",
     "channel": "channels",
-    "webhook": "webhooks",
     "vm": "vm",
     "auth": "auth",
     "workspace": "auth",
@@ -2978,7 +2871,6 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
-    "webhook": "Webhook commands (create, deliveries, event-types, list, send)",
     "vm": "VM commands (monitor, usage)",
     "auth": "Auth commands (login, logout, status, token)",
     "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
@@ -3460,7 +3352,8 @@ Tables:
   table           Data-store commands (list, schema, rows, row, scalar, audit)
 
 Webhooks:
-  webhook         Webhook commands (create, deliveries, event-types, list, send)
+  webhook         Webhook commands (create, list, get, update, delete,
+                  rotate-secret, override-rules, deliveries, event-types, send)
 
 VM:
   vm              VM commands (monitor, usage)
@@ -3789,72 +3682,6 @@ Other:
 
     ch_sub.add_parser("templates", help="List available channel templates")
 
-    # --- Webhooks ---
-
-    wh_parser = sub.add_parser("webhook", help=_h)
-    wh_sub = wh_parser.add_subparsers(dest="webhook_command")
-    wh_create = wh_sub.add_parser("create", help="Create a webhook")
-    _add_channel_argument(wh_create, "conversation", "Channel name or UUID")
-    wh_create.add_argument("name", help="Webhook name")
-    wh_create.add_argument("--description", type=str, help="Webhook description")
-    wh_create.add_argument("--avatar-url", type=str, help="Avatar URL")
-    wh_create.add_argument(
-        "--action-mode",
-        type=str,
-        choices=["silent", "as_is", "ai_enhanced", "trigger_workflow"],
-        help="How deliveries are processed",
-    )
-    # One flow, two ways to name it, never both. `popcorn flow list` reports a
-    # flow's NAME in its `id` field, so for a bundle flow the id you are handed
-    # ("alert_webhook") is not a UUID and --trigger-flow-id would 422 on it.
-    wh_flow = wh_create.add_mutually_exclusive_group()
-    wh_flow.add_argument(
-        "--trigger-flow-id",
-        type=str,
-        help="Flow UUID to start (with --action-mode=trigger_workflow)",
-    )
-    wh_flow.add_argument(
-        "--trigger-flow-name",
-        type=str,
-        help="Flow NAME to start, as shown by `popcorn flow list` "
-        "(with --action-mode=trigger_workflow)",
-    )
-    wh_sub.add_parser("event-types", help="List valid webhook sources and action modes")
-    wh_del = wh_sub.add_parser("deliveries", help="List webhook deliveries")
-    _add_channel_argument(wh_del, "conversation", "Channel name or UUID")
-    wh_del.add_argument("--limit", type=int, default=50, help="Max results (1-100)")
-    wh_del.add_argument("--since", type=str, help="ISO timestamp — deliveries after this")
-    wh_del.add_argument(
-        "--after", type=str, help="Delivery UUID — deliveries after this ID (cursor)"
-    )
-    wh_del.add_argument("--status", type=str, help="Filter: completed,ignored,failed,processing")
-    wh_del.add_argument(
-        "--include",
-        type=str,
-        help="Comma-separated optional fields to hydrate (e.g. payload_raw)",
-    )
-    wh_list = wh_sub.add_parser("list", help="List webhooks for a channel")
-    _add_channel_argument(wh_list, "conversation", "Channel name or UUID")
-    wh_list.add_argument(
-        "--show-url",
-        action="store_true",
-        help="Print each webhook's ingest URL — it embeds a secret token, so it "
-        "is hidden by default",
-    )
-    wh_send = wh_sub.add_parser("send", help="Send a payload to a webhook's ingest URL")
-    wh_send.add_argument("target", help="Ingest URL, webhook UUID, or webhook name")
-    wh_send.add_argument(
-        "payload",
-        nargs="?",
-        default=None,
-        help="JSON body (default {}; '@-' reads stdin, '@path' reads a file)",
-    )
-    wh_send.add_argument(
-        "--channel",
-        type=str,
-        help="Channel name or UUID — required unless <target> is an ingest URL",
-    )
-
     # --- Escape hatch ---
 
     api_p = sub.add_parser("api", help=_h)
@@ -3965,7 +3792,6 @@ _ALL_COMMAND_NAMES.extend(
         *_COMMANDS.keys(),
         "auth",
         "workspace",
-        "webhook",
         "vm",
         "site",
         "message",
@@ -4085,8 +3911,6 @@ def main() -> None:
                 raise PopcornError(
                     "Usage: popcorn workspace [check-access|inbox|list|switch|users]"
                 )
-        elif args.command == "webhook":
-            cmd_webhook(args)
         elif args.command == "site":
             site_sub = {
                 "cancel": cmd_vm_cancel,

@@ -592,9 +592,124 @@ def list_webhooks(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.get("/api/webhooks/list", {"conversation": conv_id})
 
 
+def get_webhook(client: APIClient, webhook_id: str) -> dict[str, Any]:
+    """Get one webhook by UUID.
+
+    Unlike ``list_webhooks`` this needs no conversation: the server authorizes
+    against the webhook's own channel, which it looks up from the id.
+    """
+    return client.get(f"/api/webhooks/{webhook_id}")
+
+
+def update_webhook(
+    client: APIClient,
+    webhook_id: str,
+    name: str | None = None,
+    description: str | None = None,
+    avatar_url: str | None = None,
+    is_active: bool | None = None,
+    enforce_hmac: bool | None = None,
+    action_mode: str | None = None,
+) -> dict[str, Any]:
+    """Update a webhook's settings. Omitted fields are left unchanged.
+
+    The delivery binding is deliberately absent. A webhook's flow is fixed at
+    creation and bound by NAME, so there is nothing here to re-point it with:
+    the server rejects the id form outright, and the name form is a create-time
+    argument. Rebinding means creating a new webhook.
+
+    ``enforce_hmac=True`` is conditional on the server side — a webhook with no
+    HMAC secret has enforcement silently written back as False rather than
+    erroring, so callers must read the result rather than assume it took.
+    """
+    body: dict[str, Any] = {}
+    if name is not None:
+        body["name"] = name
+    if description is not None:
+        body["description"] = description
+    if avatar_url is not None:
+        body["avatar_url"] = avatar_url
+    if is_active is not None:
+        body["is_active"] = is_active
+    if enforce_hmac is not None:
+        body["enforce_hmac"] = enforce_hmac
+    if action_mode is not None:
+        body["action_mode"] = action_mode
+    return client.patch(f"/api/webhooks/{webhook_id}", data=body)
+
+
+def delete_webhook(client: APIClient, webhook_id: str) -> dict[str, Any]:
+    """Delete a webhook. The server soft-deletes; deliveries stop either way."""
+    return client.delete(f"/api/webhooks/{webhook_id}")
+
+
+def rotate_webhook_secret(client: APIClient, webhook_id: str) -> dict[str, Any]:
+    """Generate or replace a webhook's HMAC secret.
+
+    The plaintext secret comes back exactly once and is not retrievable
+    afterwards. Rotation does not turn enforcement on by itself — that is a
+    separate ``update`` with ``enforce_hmac``.
+    """
+    return client.post(f"/api/webhooks/{webhook_id}/rotate-secret")
+
+
+def get_webhook_override_rules(client: APIClient, webhook_id: str) -> dict[str, Any]:
+    """Get a webhook's per-event override rules."""
+    return client.get(f"/api/webhooks/{webhook_id}/override-rules")
+
+
+def set_webhook_override_rules(
+    client: APIClient, webhook_id: str, rules: dict[str, Any]
+) -> dict[str, Any]:
+    """Replace a webhook's override rules wholesale.
+
+    A PUT, not a merge: rules absent from ``rules`` are dropped. Keys are
+    ``event_type.action`` patterns (``*`` wildcards); values patch the
+    provider's event config — ``ignore``, ``skip_llm``, ``sentiment``.
+    """
+    return client.put(f"/api/webhooks/{webhook_id}/override-rules", data={"rules": rules})
+
+
 def is_webhook_url(target: str) -> bool:
     """True when a `webhook send` target is already an ingest URL."""
     return target.startswith(("http://", "https://"))
+
+
+def _lookup_webhook(
+    client: APIClient,
+    target: str,
+    conversation: str | None = None,
+) -> dict[str, Any]:
+    """Find one webhook by UUID or by name.
+
+    A UUID answers on its own through the by-id lookup. A NAME needs
+    ``conversation``: names are only unique within a channel, and listing that
+    channel's webhooks is the one place a name is matched at all. A UUID given
+    *with* a channel takes the listing path too, which is harmless and keeps
+    one code path for the "not in this channel" message.
+    """
+    if _looks_like_uuid(target) and not conversation:
+        return (get_webhook(client, target) or {}).get("webhook") or {}
+    if not conversation:
+        raise PopcornError(
+            f"'{target}' is a webhook name, and matching one needs a channel: "
+            "names are only unique within a channel. "
+            "Pass --channel, or give the webhook's UUID instead.",
+            error_code="validation",
+            hint="popcorn webhook list '#my-channel'",
+        )
+    resp = list_webhooks(client, conversation)
+    hooks: list[dict[str, Any]] = resp if isinstance(resp, list) else resp.get("webhooks", [])
+    wanted = target.lower()
+    for hook in hooks:
+        if str(hook.get("id", "")) == target or str(hook.get("name", "")).lower() == wanted:
+            return hook
+    known = ", ".join(str(h.get("name", h.get("id", "?"))) for h in hooks) or "none"
+    raise PopcornError(
+        f"No webhook '{target}' in {conversation} (has: {known})",
+        error_code="not_found",
+        hint=f"popcorn webhook list {conversation}",
+    )
 
 
 def resolve_webhook_url(
@@ -604,39 +719,42 @@ def resolve_webhook_url(
 ) -> str:
     """Turn a webhook reference into its ingest URL.
 
-    ``target`` is either an ingest URL (returned untouched), a webhook UUID, or
-    a webhook name matched case-insensitively. The last two need
-    ``conversation``: ``list_webhooks`` is the only lookup the API offers and it
-    is scoped to one conversation — there is no get-by-id.
+    ``target`` is an ingest URL (returned untouched), a webhook UUID, or a
+    webhook name matched case-insensitively.
     """
     if is_webhook_url(target):
         return target
-    if not conversation:
+    hook = _lookup_webhook(client, target, conversation)
+    url = hook.get("url")
+    if not url:
         raise PopcornError(
-            f"'{target}' is a webhook name or UUID, and looking one up needs a channel: "
-            "the API's only webhook lookup is scoped to a conversation. "
-            "Pass --channel, or give the full ingest URL instead.",
-            error_code="validation",
-            hint="popcorn webhook send <target> --channel '#my-channel'",
+            f"Webhook '{target}' has no ingest URL to post to",
+            error_code="not_found",
         )
-    resp = list_webhooks(client, conversation)
-    hooks = resp if isinstance(resp, list) else resp.get("webhooks", [])
-    wanted = target.lower()
-    for hook in hooks:
-        if str(hook.get("id", "")) == target or str(hook.get("name", "")).lower() == wanted:
-            url = hook.get("url")
-            if not url:
-                raise PopcornError(
-                    f"Webhook '{target}' in {conversation} has no ingest URL to post to",
-                    error_code="not_found",
-                )
-            return str(url)
-    known = ", ".join(str(h.get("name", h.get("id", "?"))) for h in hooks) or "none"
-    raise PopcornError(
-        f"No webhook '{target}' in {conversation} (has: {known})",
-        error_code="not_found",
-        hint=f"popcorn webhook list {conversation}",
-    )
+    return str(url)
+
+
+def resolve_webhook_id(
+    client: APIClient,
+    target: str,
+    conversation: str | None = None,
+) -> str:
+    """Turn a webhook reference into its UUID, which every by-id route needs.
+
+    A UUID is returned without a request. A name costs one listing, which is
+    what lets the lifecycle commands be driven by the name `webhook list`
+    prints rather than by an id a caller has to carry around.
+    """
+    if _looks_like_uuid(target):
+        return target
+    hook = _lookup_webhook(client, target, conversation)
+    hook_id = hook.get("id")
+    if not hook_id:
+        raise PopcornError(
+            f"Webhook '{target}' came back without an id",
+            error_code="not_found",
+        )
+    return str(hook_id)
 
 
 def send_webhook(url: str, payload: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:

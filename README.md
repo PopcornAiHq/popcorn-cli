@@ -130,8 +130,13 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn table scalar set <key> <value> --channel <conv>` | Write one scalar |
 | `popcorn table audit --channel <conv> [--limit N] [--cursor C]` | Recent data-store audit entries |
 | **Webhooks** | |
-| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-id ID]` | Create a webhook |
+| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-name F]` | Create a webhook. The flow binding is fixed here — `update` cannot re-point it |
 | `popcorn webhook list <conv>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
+| `popcorn webhook get <webhook> [--channel <conv>] [--show-url]` | Show one webhook's settings (`<webhook>` is a UUID, or a name with `--channel`) |
+| `popcorn webhook update <webhook> [--name N] [--description D] [--action-mode MODE] [--activate\|--deactivate] [--enforce-hmac\|--no-enforce-hmac]` | Change a webhook's settings |
+| `popcorn webhook rotate-secret <webhook>` | Replace the HMAC secret — printed once, and never retrievable again. Prompts; `--yes` to skip |
+| `popcorn webhook delete <webhook>` | Delete a webhook. Prompts; `--yes` to skip |
+| `popcorn webhook override-rules get\|set <webhook> [rules]` | Per-event overrides; `set` replaces the whole set (`@-` reads stdin, `@path` a file) |
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
 | `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |

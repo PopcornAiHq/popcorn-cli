@@ -58,12 +58,12 @@ Three dataclasses, one entry point:
 
 | Function | Feeds | Notes |
 |---|---|---|
-| `add_to_parser(subparsers)` | `build_parser()` (`cli.py:3672`) | `help=SUPPRESS`, matching the hand-written families — the epilog renders the listing |
-| `dispatch(args)` | `main()` (`cli.py:3795`) | returns `False` for an unregistered command so the hand-written chain still runs; raises a usage error at whatever level the user stopped short |
-| `schema()` | `cmd_commands` via `_command_categories` / `_command_descriptions` (`cli.py:2868`) | see [Where the schema really comes from](#where-the-schema-really-comes-from) |
-| `completion_groups()` | `_render_bash_completion` (`cli.py:2730`) | families **and** nested groups, flat — bash keys on the previous word alone |
-| `completion_words(name)` | `_render_zsh_completion` (`cli.py:2746`) | family level only, matching the template's hand-written families |
-| `descriptions()` | zsh command list, bash top-level words, `_ALL_COMMAND_NAMES` (`cli.py:3710`) | |
+| `add_to_parser(subparsers)` | `build_parser()` (`cli.py`) | `help=SUPPRESS`, matching the hand-written families — the epilog renders the listing |
+| `dispatch(args)` | `main()` (`cli.py`) | returns `False` for an unregistered command so the hand-written chain still runs; raises a usage error at whatever level the user stopped short |
+| `schema()` | `cmd_commands` via `_command_categories` / `_command_descriptions` (`cli.py`) | see [Where the schema really comes from](#where-the-schema-really-comes-from) |
+| `completion_groups()` | `_render_bash_completion` (`cli.py`) | families **and** nested groups, flat — bash keys on the previous word alone |
+| `completion_words(name)` | `_render_zsh_completion` (`cli.py`) | family level only, matching the template's hand-written families |
+| `descriptions()` | zsh command list, bash top-level words, `_ALL_COMMAND_NAMES` (`cli.py`) | |
 
 ### Argument naming
 
@@ -148,12 +148,16 @@ declared but never reached the parser.
 |---|---|---|
 | `flow` | `commands/flow.py` | registry |
 | `table` | `commands/table.py` | registry |
+| `webhook` | `commands/webhook.py` | registry |
+| `app` | `commands/app.py` | registry |
+| `channel-config` | `commands/channel_config.py` | registry |
+| `schedule` | `commands/schedule.py` | registry |
+| `template` | `commands/template.py` | registry |
 | `auth` | `cli.py` | pending |
 | `channel` | `cli.py` | pending |
 | `message` | `cli.py` | pending |
 | `site` | `cli.py` | pending |
 | `vm` | `cli.py` | pending |
-| `webhook` | `cli.py` | pending |
 | `workspace` | `cli.py` | pending |
 | flat commands (`api`, `commands`, `completion`, `doctor`, `env`, `upgrade`, `version`, `whoami`) | `cli.py` `_COMMANDS` | pending |
 
