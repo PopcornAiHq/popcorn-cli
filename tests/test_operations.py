@@ -900,12 +900,12 @@ class TestTemplateImportIsFenced:
         (tmp_path / "no_manifest.yaml").write_text("name: x\n")
         with pytest.raises(PopcornError) as exc:
             operations.import_template(mock_client, "conv-uuid", str(tmp_path))
-        assert "/app-bundles" in str(exc.value)
+        assert "bundle registry" in str(exc.value)
 
     def test_the_message_carries_the_replacement_path(self, mock_client, tmp_path):
         with pytest.raises(PopcornError) as exc:
             operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
         msg = str(exc.value)
-        assert "CHANNEL_TEMPLATES" in msg
-        assert "/app-bundles" in msg
+        assert "bundle registry" in msg
+        assert "channel create" in msg
         assert "template check" in msg

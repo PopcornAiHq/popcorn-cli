@@ -20,7 +20,7 @@ description: >
 inputs:
   conversation_id: { type: string }
   deployment_id: { type: string, required: false, default: MDEwOkRlcGxveW1lbnQx }
-  repo: { type: string, required: false, default: PopcornAiHq/popcorn-backend }
+  repo: { type: string, required: false, default: example-org/popcorn-cli }
   environment: { type: string, required: false, default: dev }
   state: { type: string, required: false, default: in_progress }
   ref: { type: string, required: false, default: main }
@@ -51,7 +51,7 @@ steps:
           deployment_status:
             state: $inputs.state
             environment: $inputs.environment
-            target_url: https://github.com/PopcornAiHq/popcorn-backend/actions
+            target_url: https://github.com/example-org/popcorn-cli/actions
             creator:
               login: seed-bot
           repository:

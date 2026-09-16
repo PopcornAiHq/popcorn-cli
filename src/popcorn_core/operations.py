@@ -883,7 +883,7 @@ def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) 
     )
 
 
-# Mirrors the backend read_zip's per-entry ceiling so an oversized bundle fails
+# Mirrors the server importer's per-entry ceiling so an oversized bundle fails
 # locally with a clear message instead of as an opaque 400.
 _MAX_TEMPLATE_ENTRY_BYTES = 1024 * 1024
 
@@ -934,19 +934,17 @@ def pack_template_dir(path: str) -> bytes:
 TEMPLATE_INSTALL_REMOVED = """\
 Installing a bundle from a local directory is no longer supported.
 
-The backend's `app-bundles!` change removed the zip-install route, so
+A server-side change removed the zip-install route, so
 POST /api/customer-flows/import is 404 on dev and prod. There is no
-client-reachable replacement: installable templates are a fixed set checked
-into the backend repo and published to the bundle registry from inside the VPC.
+client-reachable replacement: installable templates are a fixed set published
+to the bundle registry server-side.
 
 To install a bundle:
-  1. add it to popcorn-backend under lib/temporal/flows/<name>/ and register
-     the name in `lib/temporal/flows/templates.py` -- CHANNEL_TEMPLATES
-  2. deploy the backend, THEN publish the version from the intranet
-     /app-bundles page. Publish AFTER the deploy: a bundle whose flows call a
-     new activity must not become installable before the workers that can run
-     it exist.
-  3. install it by creating a channel with that template:
+  1. have the bundle published to the registry. That half is internal to the
+     Popcorn team, and it happens AFTER the servers that will run the flows
+     are updated, because a bundle whose flows call a new activity must not
+     become installable before the workers that can run it exist.
+  2. install it by creating a channel with that template:
        popcorn channel templates                       # is it published yet?
        popcorn channel create '#chan' --template <name>
 
@@ -970,8 +968,8 @@ def import_template(
 
     The signature is unchanged so a caller reaches the explanation rather than
     an AttributeError. :func:`pack_template_dir` is deliberately kept: the
-    server-side zip parser (``read_zip``) was retained for a future upload
-    transport, and the packing rules are the checked half of that contract.
+    server-side zip parser was retained for a future upload transport, and the
+    packing rules are the checked half of that contract.
     """
     raise PopcornError(TEMPLATE_INSTALL_REMOVED, error_code="validation")
 
@@ -1021,7 +1019,7 @@ def list_activity_catalog(
     in-process from the activity registries, so `conversation` is accepted and
     ignored for signature symmetry with the other flow operations.
 
-    Filtering is the SERVER's job (popcorn-backend#1848), not ours. Narrowing
+    Filtering is the SERVER's job, not ours. Narrowing
     here would mean shipping a copy of the taxonomy in this package, and
     `category` cannot be validated offline at all — a domain exists exactly
     when an activity is registered under it, so only the server knows the set.
@@ -1033,8 +1031,8 @@ def list_activity_catalog(
     Schemas and keeps one line of each description — the whole catalog is
     ~500 KB, and a browse does not need the schemas.
 
-    Omitted params are not sent, so against a backend predating #1848 this
-    call is byte-identical to what it was.
+    Omitted params are not sent, so against a server predating server-side
+    filtering this call is byte-identical to what it was.
     """
     params = {
         k: v
@@ -1356,8 +1354,8 @@ def list_store_audit(
 # App bundles (read)
 # ---------------------------------------------------------------------------
 #
-# The user-JWT mirror of the agent surface's /apps reads (popcorn-backend
-# #1801). `conversation_id` is required on every one of them and is what
+# The user-JWT mirror of the agent surface's /apps reads. `conversation_id`
+# is required on every one of them and is what
 # authorizes the call — the human surface never reads
 # X-Active-Conversation-ID — so these look like every other channel-scoped
 # operation here and need nothing special from APIClient.
@@ -1410,7 +1408,7 @@ def get_channel_app_files(
     and is what a publish must be based on; "bound" is what the channel runs.
     The two differ only while the channel lags its line — a head whose install
     has not landed, or failed — which is exactly when a checkout of the bound
-    tree would produce an edit no publish can accept (popcorn-backend #1985).
+    tree would produce an edit no publish can accept.
     The response carries both: `version_id`/`semver` for the served version
     and `bound_version_id`/`bound_semver` for the channel's own.
     """
@@ -1422,7 +1420,7 @@ def get_channel_app_files(
 # App bundles (write)
 # ---------------------------------------------------------------------------
 #
-# The user-JWT mirror of the agent surface's writes (popcorn-backend #1803).
+# The user-JWT mirror of the agent surface's writes.
 # Same `conversation_id`-authorizes-the-call shape as the reads, so these are
 # three-liners too. One asymmetry worth knowing at the call site: `publish` is
 # workspace-ADMIN only while fork and apply also accept a channel member, so a
@@ -1451,7 +1449,7 @@ def publish_channel_app(
     `payload` is `{base_version_id, files, deletes, changelog?}` — see
     `app_publish.publish_payload`. The publish is a LINE operation: the server
     checks `base_version_id` against the line's head and nothing about what
-    the channel runs (popcorn-backend #1985). `conversation_id` only names the
+    the channel runs. `conversation_id` only names the
     channel to install on right away; other channels on the line catch up on
     their own auto-update tick. `install_status` in the response says how that
     install went: "started", "blocked_install_in_progress",
@@ -1485,8 +1483,8 @@ def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
 def inspect_channel_config(client: APIClient, conversation: str) -> dict[str, Any]:
     """The channel's config, its flows' `$channel.*` usage, and the diff.
 
-    `comparison` is computed server-side (`compare_channel_usage`); the CLI
-    renders it and must never recompute it.
+    `comparison` is computed server-side; the CLI renders it and must never
+    recompute it.
     """
     conv_id = resolve_conversation(client, conversation)
     return client.get("/api/customer-flows/channel-config", {"conversation_id": conv_id})

@@ -17,8 +17,8 @@ command of its own, and a checkout WITHOUT it stays the way to read what a
 channel runs without touching it.
 
 A checkout is the fork line's HEAD, not what the channel happens to run. A
-publish is a line operation and must be based on the head (popcorn-backend
-#1985); the two differ only while the channel lags its line — a head whose
+publish is a line operation and must be based on the head; the two differ
+only while the channel lags its line — a head whose
 install has not landed, or failed — and that is the case where a checkout of
 the bound tree used to leave the line stuck. `checkout` says so when it
 happens; `status` shows both versions.
@@ -27,9 +27,9 @@ Two groups of commands, split by what they act on:
 
 - `list`, `lines` and `fork` act on a CHANNEL, so they take `--channel`.
   `list` takes it too, which is not an oversight: the reads require
-  `conversation_id` because that is the field the API authorizes against
-  (popcorn-backend#1801). `lines` reports the WORKSPACE's fork lines and
-  needs the channel only for that authorization.
+  `conversation_id` because that is the field the API authorizes against.
+  `lines` reports the WORKSPACE's fork lines and needs the channel only for
+  that authorization.
 - `checkout`, `publish`, `apply` and `status` act on a checkout DIRECTORY and
   read the channel out of its baseline. `--channel` stays accepted there for
   baselines written by 0.19.0, which predate the field.
@@ -39,7 +39,7 @@ working copy against the line and the channel, and with `--channel` outside
 one it answers "has my publish landed here?" from server state alone.
 
 Either way it also checks the channel's live schedules against the ones its
-bound manifest declares (KEW-2310). Most differences there are deliberate —
+bound manifest declares. Most differences there are deliberate —
 `set_app_mode` retunes cadences off prod, and a plain daily cron is moved off
 its declared minute by the de-peak offset — so `schedule_drift` classifies
 each one and only an unexplained difference, or a schedule paused with nothing
@@ -156,14 +156,13 @@ def _app_list(args: argparse.Namespace) -> None:
 
 # How many channels ride each line is the safety information `app lines`
 # exists to give, and the API does not carry it: `/apps/list` returns lineage
-# heads only, and the backend's own per-line channel count
-# (`_count_converging_channels`) lives behind `publish` and is exposed
-# nowhere. The CLI could approximate it by listing channels and reading each
+# heads only, and the count the server keeps for itself lives behind
+# `publish` and is exposed nowhere. The CLI could approximate it by listing channels and reading each
 # one's binding, and deliberately does not: that enumerates only the channels
 # the CALLER can see, so it under-counts exactly when the answer matters and
 # would report "no channels" for a line another member's channel is bound to.
 # An undercount presented as a safety check is worse than an honest gap, so
-# the command names the gap instead. KEW-2371 carries the backend half.
+# the command names the gap instead, and closing it needs a server-side count.
 _NO_CHANNEL_COUNT = (
     "How many channels ride each line is not shown: the API reports lineage "
     "heads only, with no per-line channel count."
@@ -174,7 +173,7 @@ _NO_CHANNEL_COUNT = (
 # delete` is not implemented rather than shipped as a command that dead-ends.
 _NO_DELETE = (
     "Deleting a fork line is not possible yet: the API has no endpoint for "
-    "it. Lines accumulate until it does (KEW-2371)."
+    "it. Lines accumulate until it does."
 )
 
 
@@ -212,13 +211,12 @@ def _app_lines(args: argparse.Namespace) -> None:
     `app list` answers a per-channel question (what does THIS channel run, and
     what could it run) and buries the line inventory in it, one row per line
     mixed with product entries and each row's flow list. Six throwaway lines
-    in one workspace is a routine afternoon (KEW-2371) and nothing listed them
-    on their own.
+    in one workspace is a routine afternoon and nothing listed them on their
+    own.
 
     `--channel` is required and is not a filter: `/apps/list` authorizes
-    against `conversation_id` (popcorn-backend#1801), so a workspace-level
-    read still has to name a channel it can reach. The lines that come back
-    are the workspace's.
+    against `conversation_id`, so a workspace-level read still has to name a
+    channel it can reach. The lines that come back are the workspace's.
     """
     from ..cli import _get_client, _output
 
@@ -296,9 +294,9 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # directory"; without it an existing guide is theirs to keep.
     guide = write_agent_guide(directory, force=bool(getattr(args, "force", False)))
 
-    # What the channel runs, alongside what was served. An API older than
-    # popcorn-backend #1985 sends neither field; then the served version IS
-    # the bound one and there is nothing to note.
+    # What the channel runs, alongside what was served. An older API sends
+    # neither field; then the served version IS the bound one and there is
+    # nothing to note.
     channel_id = resp.get("bound_version_id", baseline.base_version_id)
     channel_semver = str(resp.get("bound_semver") or baseline.semver)
     data = {
@@ -357,7 +355,7 @@ def _require_baseline(directory: Path) -> Baseline:
         raise PopcornError(
             f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
             error_code="not_found",
-            # No "run:" prefix — the renderer supplies the verb (KEW-2373).
+            # No "run:" prefix — the renderer supplies the verb.
             hint="popcorn app checkout --channel '#your-channel'",
         )
     return baseline
@@ -386,8 +384,8 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
     """The fork line's head, refusing when it is not the version we edited.
 
     The diff is computed against this tree, so it must be the one the
-    checkout came from — and the head is what a publish must be based on
-    (popcorn-backend #1985). What the CHANNEL runs plays no part: a channel
+    checkout came from — and the head is what a publish must be based on.
+    What the CHANNEL runs plays no part: a channel
     still behind its line (a head whose install has not landed, or failed)
     publishes fine from a checkout of that head. A head past the baseline
     means someone else published on the line; the server would refuse the
@@ -429,13 +427,12 @@ def _inferred_fork_line(client, conversation: str) -> dict | None:
     return lines[0] if len(lines) == 1 else None
 
 
-# A fork always has a line name: bundle_version's CHECK constraint ties
-# `fork_name` and `owner_workspace_id` together, so a fork row cannot carry a
-# NULL name. An absent field is therefore the server declining to report it,
-# never an unnamed line — which is why neither site below may fall back to
-# "default". That is merely the name the backend mints for a workspace's FIRST
-# line, so the guess reads as correct everywhere until someone names theirs,
-# and then states the wrong line confidently (KEW-2375).
+# A fork always has a line name — the server will not store a fork version
+# without one. An absent field is therefore the server declining to report it,
+# never an unnamed line, which is why neither site below may fall back to
+# "default". That is merely the name minted for a workspace's FIRST line, so
+# the guess reads as correct everywhere until someone names theirs, and then
+# states the wrong line confidently.
 _LINE_UNREPORTED = "not reported by this server"
 
 
@@ -444,8 +441,8 @@ def _fork(args: argparse.Namespace, client, conversation: str, name: str | None)
 
     A named fork is an explicit choice and goes straight through. A nameless
     one silently adopts whatever single line the workspace owns, wherever that
-    has got to — in one prod workspace, 23 minor versions behind product
-    (KEW-2362).
+    has got to — in one production workspace, 23 minor versions behind
+    product.
 
     The disclosure is the point, not the gate, so it prints on EVERY path: a
     bare `print` rather than `cli._status`, because `--quiet` suppresses that
@@ -558,13 +555,13 @@ def _publish_message(args: argparse.Namespace, files: dict[str, str]) -> str | N
 
     Precedence, read off the server rather than assumed: `/apps/publish`
     records the request's `changelog` and nothing else. The fallback to the
-    manifest's own `changelog:` key lives on the product publish path
-    (`publish_registry_template`) and NOT on the fork path a CLI publish
-    takes (`publish_fork_version`), so `--message` does not merely win over
-    the manifest field — the manifest field is not read at all, and a
+    manifest's own `changelog:` key lives on the product publish path and NOT
+    on the fork path a CLI publish takes, so `--message` does not merely win
+    over the manifest field — the manifest field is not read at all, and a
     manifest that declares one while no flag is given records nothing.
 
-    That silence is the whole of KEW-2368's complaint, so it gets a line.
+    Recording nothing without saying so is the failure this exists to stop,
+    so it gets a line.
     """
     from ..cli import _status
 
@@ -698,8 +695,8 @@ def _install_lines(result: dict) -> list[str]:
 
     The version is published whatever the status says; every value but
     "started" is about the INSTALL half, and `app apply` is the retry for all
-    of them. An API older than popcorn-backend #1985 sends no status, only a
-    workflow id when the install started.
+    of them. An older API sends no status, only a workflow id when the
+    install started.
     """
     status = str(result.get("install_status") or "")
     workflow_id = result.get("install_workflow_id")
@@ -707,7 +704,7 @@ def _install_lines(result: dict) -> list[str]:
         # Not "Next:" — nothing further is required of the caller here. The
         # install converges on its own; status is how you CONFIRM it, and
         # presenting it as a mandatory step is what made the loop read as
-        # more manual than it is (KEW-2373).
+        # more manual than it is.
         return [
             f"Installing on this channel: {workflow_id}",
             "It converges on its own — 'popcorn app status' confirms it landed.",
@@ -861,7 +858,7 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
 
     The question the publish loop actually raises, and before this it had no
     direct answer: `status` needed a checkout, so callers polled `app list`
-    and grepped a semver out of its prose (KEW-2370). Two version IDs from
+    and grepped a semver out of its prose. Two version IDs from
     `/apps/tree?ref=head` settle it — `bound_version_id` is what the channel
     runs, `version_id` is the line's head — and `install_state` puts the
     answer in one machine-readable field so nothing has to parse rendering.
@@ -891,8 +888,8 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
     tree = operations.get_channel_app_tree(client, conversation, ref="head")
     head_id = tree.get("version_id")
     head_semver = tree.get("semver")
-    # An API older than popcorn-backend #1985 sends no `bound_*`; then the
-    # served version IS the bound one, so the binding's own fields answer.
+    # An older API sends no `bound_*`; then the served version IS the bound
+    # one, so the binding's own fields answer.
     channel_id = tree.get("bound_version_id", binding.get("version_id"))
     channel_semver = tree.get("bound_semver", binding.get("semver"))
     behind = channel_id != head_id
@@ -970,8 +967,8 @@ def _app_status(args: argparse.Namespace) -> None:
     diff = diff_tree(base_files, local.files)
     head_id = resp.get("version_id")
     head_semver = resp.get("semver")
-    # The channel's own version rides along (popcorn-backend #1985); an older
-    # API sends only the served one, and then the two are the same.
+    # The channel's own version rides along; an older API sends only the
+    # served one, and then the two are the same.
     channel_id = resp.get("bound_version_id", head_id)
     channel_semver = resp.get("bound_semver", head_semver)
     in_sync = head_id == baseline.base_version_id

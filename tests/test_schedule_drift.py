@@ -1,11 +1,11 @@
-"""Declared-vs-live schedule drift classification (KEW-2310).
+"""Declared-vs-live schedule drift classification.
 
 The offset vectors below are the load-bearing tests. `stable_offset_seconds`
 is a port of the backend's function, and a port that has silently drifted from
 its original would not fail anywhere else: every classification would still be
 self-consistent, and every de-peaked schedule would be reported as class-4
-drift that a reader then has to disprove by hand. Pinning offsets observed
-against a real channel is what makes the port falsifiable.
+drift that a reader then has to disprove by hand. Pinning offsets computed
+with the backend's own implementation is what makes the port falsifiable.
 """
 
 from __future__ import annotations
@@ -24,19 +24,22 @@ from popcorn_core.schedule_drift import (
     stable_offset_seconds,
 )
 
-# Three schedules whose live specs were read off a real channel. Two are
-# directly checkable against what the API reports — `claim-briefing` runs at
-# cron minute 58 and `retainer-cleanup` at 37, both of which their ids must
-# derive. `claim-tick` is an interval schedule, whose phase no API field
-# carries; :51 was observed in its run history instead.
+# Three synthetic schedule ids. They name no real channel — the derivation
+# only reads the id as bytes, so a made-up id exercises it exactly as a live
+# one would. What makes these vectors worth anything is where the expected
+# values come from: each was computed by running the backend's own
+# `stable_offset_seconds` against these exact ids, so the port is pinned
+# against its original rather than merely against itself. Change an id and the
+# expected value has to be recomputed the same way, never read back off this
+# port.
 #
-# Each derivation was also computed with the backend's own
-# `stable_offset_seconds` and agreed, so these pin the port against the
-# original and not merely against itself.
-_CHANNEL = "channel:54db11a4-b6ec-4869-b980-b31da0686a53"
-_BRIEFING_ID = f"{_CHANNEL}:flow:claim_briefing:claim-briefing"
-_TICK_ID = f"{_CHANNEL}:flow:claim_tick:claim-tick"
-_RETAINER_ID = f"{_CHANNEL}:flow:retainer_cleanup:retainer-cleanup"
+# `_CLEANUP_ID` deriving 1 is the useful edge of the set: 1 is the bottom of
+# the `[1, modulus)` range, so that vector also pins the fact that the
+# derivation never returns 0.
+_CHANNEL = "channel:00000000-0000-4000-8000-000000000001"
+_BRIEFING_ID = f"{_CHANNEL}:flow:daily_briefing:daily-briefing"
+_TICK_ID = f"{_CHANNEL}:flow:sweep_tick:sweep-tick"
+_CLEANUP_ID = f"{_CHANNEL}:flow:nightly_cleanup:nightly-cleanup"
 
 
 def _live(slug: str, **over: object) -> dict:
@@ -75,22 +78,23 @@ class TestStableOffset:
 
 
 class TestPortedOffsetVectors:
-    """The port against offsets observed on a live channel."""
+    """The port against values computed with the backend's own implementation."""
 
     def test_briefing_cron_minute(self) -> None:
-        assert stable_offset_seconds(_BRIEFING_ID, 60) == 58
+        assert stable_offset_seconds(_BRIEFING_ID, 60) == 45
 
     def test_tick_interval_phase(self) -> None:
         assert stable_offset_seconds(_TICK_ID, 180) == 51
 
-    def test_retainer_cron_minute(self) -> None:
-        assert stable_offset_seconds(_RETAINER_ID, 60) == 37
+    def test_cleanup_cron_minute(self) -> None:
+        """Also the bottom of the range: the derivation never returns 0."""
+        assert stable_offset_seconds(_CLEANUP_ID, 60) == 1
 
-    def test_briefing_expected_cron_matches_live(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "deadline") == "58 8 * * *"
+    def test_briefing_expected_cron_matches_backend(self) -> None:
+        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "deadline") == "45 8 * * *"
 
-    def test_retainer_expected_cron_matches_live(self) -> None:
-        assert expected_cron(_RETAINER_ID, "0 9 * * *", "deadline") == "37 9 * * *"
+    def test_cleanup_expected_cron_matches_backend(self) -> None:
+        assert expected_cron(_CLEANUP_ID, "0 9 * * *", "deadline") == "1 9 * * *"
 
 
 class TestParseDailyCron:
@@ -127,10 +131,10 @@ class TestExpectedCron:
         assert expected_cron(_BRIEFING_ID, "0 8 * * *", "periodic") is None
 
     def test_window_spreads(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "window") == "58 8 * * *"
+        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "window") == "45 8 * * *"
 
     def test_hour_is_preserved(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 17 * * *", "deadline") == "58 17 * * *"
+        assert expected_cron(_BRIEFING_ID, "0 17 * * *", "deadline") == "45 17 * * *"
 
     def test_non_daily_shape_unspread_even_under_deadline(self) -> None:
         assert expected_cron(_BRIEFING_ID, "*/15 * * * *", "deadline") is None
@@ -304,5 +308,5 @@ class TestClassify:
 
 class TestAlarmingClasses:
     def test_only_three_and_four_alarm(self) -> None:
-        """KEW-2310's acceptance: exit non-zero only on class 3 and 4."""
+        """The agreed acceptance: exit non-zero only on class 3 and 4."""
         assert {CLASS_PAUSED, CLASS_DRIFT} == schedule_drift.ALARMING_CLASSES

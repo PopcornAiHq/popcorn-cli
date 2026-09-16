@@ -306,7 +306,7 @@ def _output(args: argparse.Namespace, data: Any, formatted: str) -> None:
 
 
 def _hint_line(hint: str) -> str:
-    """Label a `PopcornError` hint by what it actually is (KEW-2373).
+    """Label a `PopcornError` hint by what it actually is.
 
     The label used to be a flat ``Run:``, which was wrong in both directions.
     Hints that carry their own verb printed it twice — ``Run: run: popcorn app
@@ -1419,7 +1419,7 @@ def cmd_webhook(args: argparse.Namespace) -> None:
         # The ingest URL's token IS the credential — anyone holding it can post
         # to the channel — so it is opt-in rather than printed by default, and
         # the footer is what stops that decision from sending people back to
-        # `--json` to find it (KEW-2373).
+        # `--json` to find it.
         if not show_url and any(h.get("url") for h in hooks):
             lines.append("")
             lines.append("Ingest URLs hidden (they carry a secret token) — pass --show-url.")

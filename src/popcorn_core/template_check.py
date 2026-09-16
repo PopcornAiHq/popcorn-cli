@@ -95,12 +95,12 @@ _REF_RE = re.compile(flow_rules.REFERENCE_PATTERN)
 # `$steps.<id>.error` and null when the step did not fail. Every step carries
 # it, so unlike `output` and a `collect:` name there is nothing per-step to
 # consult. Both properties are strings, so nothing is reachable below them.
-# Mirrors popcorn-backend: lib/temporal/dsl/validator.py — _STEP_ERROR_SCHEMA.
+# Mirrors the shape the server's DSL validator accepts here.
 #
 # Hand-authored, which is the bug this was added for: the served schema carries
 # the reference grammar but not the per-step head rule, so `make check-rules`
-# cannot see a head the backend adds. Moving the head list into the payload is
-# tracked on KEW-2331.
+# cannot see a head the server adds. Moving the head list into the served
+# payload would close that gap; until it does, this list is maintained by hand.
 _STEP_ERROR_PROPERTIES = ("message", "type")
 
 
@@ -282,7 +282,7 @@ class _Checker:
             if not path.is_file():
                 continue
             rel = path.relative_to(self.dir)
-            # read_zip skips dotfiles and __MACOSX before anything else.
+            # The importer skips dotfiles and __MACOSX before anything else.
             if any(part.startswith(".") or part == "__MACOSX" for part in rel.parts):
                 continue
             size = path.stat().st_size
@@ -309,20 +309,20 @@ class _Checker:
         return out
 
     def _importer_key(self, path: Path) -> str:
-        """What the entry is called after read_zip flattens the zip.
+        """What the entry is called after the importer flattens the zip.
 
         Everything collapses to its basename except entries under `prompts/`
         or `templates/`, whose one path segment is preserved.
 
         Deliberately not gated on `SUBDIR_PATH_DEPTH`. That rule describes the
         TREE reader, and the endpoint publishes it for that reader only —
-        read_zip keeps the leading segment at any depth, so `prompts/a/b.md`
+        the importer keeps the leading segment at any depth, so `prompts/a/b.md`
         becomes `prompts/b.md` here and can collide with a real `prompts/b.md`.
 
         A code path keeps its WHOLE path instead, so two blocks never collide.
         The flattening model does not apply to it in either reader: the tree
         reader addresses a block file by its full path under `code/<block>/`,
-        and read_zip installs flows and seeds `prompts/`/`templates/` — a
+        and the importer installs flows and seeds `prompts/`/`templates/` — a
         `.py` is not an entry it keys at all. Modelling it as a collision made
         `template check` reject every bundle with two Python blocks, since the
         runner's convention requires each of them to carry `main.py`.
@@ -450,14 +450,14 @@ class _Checker:
     def _check_checkout_version(self) -> None:
         """Compare `version:` and `changelog:` against what was checked out.
 
-        ONLY a checkout has something to compare against. Bundle SOURCE — the
-        backend's `lib/apps/<app>/`, the example trees under
+        ONLY a checkout has something to compare against. Bundle SOURCE — an
+        app's own source tree, the example trees under
         `tests/fixtures/bundles/` — carries no `.popcorn-app.json`, so there
         is no previous version on disk and nothing here applies. Not a pass,
         not a failure: the questions are unanswerable offline without a
-        baseline, and the backend owns the equivalent rule for its own tree
-        (`backend:scripts/check_bundle_version.py`, a pre-commit hook a fork
-        author editing a checkout never runs).
+        baseline. The equivalent rule for bundle source is enforced where that
+        source lives, by a pre-commit hook a fork author editing a checkout
+        never runs.
 
         What this predicts is `app_publish.require_bump` — the refusal that
         otherwise arrives after a round trip, from the server, once the author
@@ -528,13 +528,11 @@ class _Checker:
         product checkout (or the reverse) is how `template check` ends up
         telling an author to maintain a field the very next command calls
         inert. On a fork line — every `popcorn app publish` — the server
-        records the REQUEST's changelog and never reads the manifest
-        (`backend:lib/app_bundles/services/fork.py — publish_fork_version`),
-        so the field is documentation that ships with the bundle and `-m` is
-        the note that reaches the registry. Publishing bundle source as a
-        product version is the path that does default to the manifest field
-        (`backend:lib/app_bundles/services/publish.py —
-        publish_registry_template`).
+        records the REQUEST's changelog and never reads the manifest, so the
+        field is documentation that ships with the bundle and `-m` is the note
+        that reaches the registry. Publishing bundle source as a product
+        version is the server-side path that does default to the manifest
+        field.
         """
         if kind == "fork":
             return (
@@ -1333,7 +1331,7 @@ def _when_refs(when: str) -> list[str]:
     boolean expression, a standalone `==`/`!=` comparison with lenient
     equality, a bare ref that is truth-tested, and a plain truthy literal —
     and which one a string takes is decided legacy-first by the server's own
-    `routes_to_expression`. Mirroring that offline means reimplementing the
+    expression router. Mirroring that offline means reimplementing the
     predicate parser, and a near-miss reimplementation is a false-positive
     generator: the old rule here ("exactly one comparison, no boolean
     operators") rejected 55 `when:` clauses across the five shipped backend

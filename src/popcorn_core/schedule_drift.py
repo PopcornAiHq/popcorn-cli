@@ -1,4 +1,4 @@
-"""Declared-vs-live schedule drift for an installed channel (KEW-2310).
+"""Declared-vs-live schedule drift for an installed channel.
 
 A channel's manifest declares `schedules:`, and the installer creates them —
 but it does not create them verbatim, and neither does it keep them that way.
@@ -6,9 +6,9 @@ Two platform mechanisms rewrite an installed schedule in place:
 
 * the `set_app_mode` bundle flow retunes cadences and pauses schedules when a
   channel leaves prod, recording what it did in the schedule's `note`;
-* the deterministic de-peak offset (KEW-1887) moves a plain daily cron off the
-  minute it declares, so a fleet of "daily at 08:00" declarations spreads
-  across the hour instead of stacking on `:00`.
+* the deterministic de-peak offset moves a plain daily cron off the minute it
+  declares, so a fleet of "daily at 08:00" declarations spreads across the
+  hour instead of stacking on `:00`.
 
 So a naive differ is worse than nothing: the common differences are the
 intended ones, and burying the real drift under them is how a checker gets
@@ -16,13 +16,15 @@ ignored. Everything here exists to tell those apart — `classify` sorts each
 difference into one of four classes, and only two of them are worth an alarm.
 
 The de-peak half is exact rather than approximate. `stable_offset_seconds` is
-a pure function of the schedule id, ported from the backend's
-`lib/temporal/schedule_classes.py`, so an expected cron minute is computed and
-compared for equality with no tolerance. The port is deliberate — the CLI does
-not depend on backend libs — and `tests/test_schedule_drift.py` pins it
-against offsets observed on a live channel, each also computed with the
-backend's own function, so a drift between the port and its original fails
-there rather than in a user's report.
+a pure function of the schedule id and a deliberate re-implementation of the
+server's own derivation, so an expected cron minute is computed and compared
+for equality with no tolerance. Re-implementing rather than importing is the
+point — the CLI depends on no server-side library — and
+`tests/test_schedule_drift.py` pins it against vectors whose expected values
+were computed by the server's own implementation, so a drift between this
+derivation and the server's fails there rather than in a user's report. That
+cross-check is what makes the port falsifiable; a test written only against
+this file's own output would agree with itself no matter how far it drifted.
 
 What this cannot see: the interval **phase**. `resolve_schedule` derives one
 for every interval schedule regardless of class, but no field of the
@@ -37,9 +39,9 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# `M H * * *` and nothing else, matching the backend's `_DAILY_CRON`. A minute
-# list, a step, or a day restriction has no single minute to move, so the
-# installer leaves those unspread and so does the expectation here.
+# `M H * * *` and nothing else, matching the only shape the server spreads. A
+# minute list, a step, or a day restriction has no single minute to move, so
+# the installer leaves those unspread and so does the expectation here.
 _DAILY_CRON = re.compile(r"^\s*(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*\s*$")
 
 # Only these two classes compile a plain daily cron into a spread calendar.
@@ -55,9 +57,9 @@ _DEFAULT_SCHEDULE_CLASS = "periodic"
 _APP_MODE_MARKERS = ("set_app_mode", "app_mode off")
 _ARCHIVE_MARKER = "channel archived"
 
-# Class numbers are KEW-2310's, and the ticket's acceptance is written in
-# terms of them, so they are part of the interface rather than an internal
-# detail — `--json` consumers switch on `drift_class`.
+# The class numbers are part of this tool's interface rather than an internal
+# detail — `--json` consumers switch on `drift_class`, and the exit-code rule
+# below is stated in terms of them — so they must stay stable.
 CLASS_APP_MODE = 1
 CLASS_DEPEAK = 2
 CLASS_PAUSED = 3
@@ -71,14 +73,14 @@ ALARMING_CLASSES = frozenset({CLASS_PAUSED, CLASS_DRIFT})
 def stable_offset_seconds(schedule_id: str, modulus: int) -> int:
     """A permanent phase in ``[1, modulus)`` for this schedule id.
 
-    Ported from the backend's `schedule_classes.py — stable_offset_seconds`;
-    see this module's docstring for why it is a port. Two properties are
-    load-bearing and both are pinned by tests:
+    A re-implementation of the server's own derivation; see this module's
+    docstring for why it is re-implemented rather than imported. Two
+    properties are load-bearing and both are pinned by tests:
 
     * It is blake2b, not `hash()` — `PYTHONHASHSEED` randomizes str hashing
       per process, so a hash-derived offset would not even agree with itself
       between two runs of this command.
-    * It never returns 0 for ``modulus > 1``. The backend shifts the range to
+    * It never returns 0 for ``modulus > 1``. The server shifts the range to
       ``[1, modulus)`` because temporalio drops a zero phase on the wire; the
       consequence here is that a computed expectation of 0 means the modulus
       is wrong, not that the schedule has no offset.
@@ -219,7 +221,7 @@ def classify(
     live: list[dict[str, Any]],
     app_mode: str | None = None,
 ) -> DriftReport:
-    """Sort every declared-vs-live difference into KEW-2310's four classes.
+    """Sort every declared-vs-live difference into one of the four classes.
 
     `declared` is the bound manifest's `schedules:` list; `live` is the
     scheduled-flow list response. They are matched by `slug`, which is the
@@ -378,8 +380,8 @@ def _classify_cadence(
                 drift_class=CLASS_DEPEAK,
                 summary=(
                     f"de-peaked off {declared_cron!r} to {want!r} — the "
-                    "deterministic per-schedule offset (KEW-1887), matched "
-                    "exactly, not approximately"
+                    "deterministic per-schedule offset, matched exactly, not "
+                    "approximately"
                 ),
                 declared=declared_cadence,
                 live=live_cadence,

@@ -5,11 +5,12 @@ channel into an application: tables to hold state, flows to do work, schedules
 and webhooks to invoke them.
 
 > **Which path you are on decides how fast you can iterate.** A *new* app type
-> is still a backend PR: installable templates are a fixed set checked into the
-> backend repo and published to the registry from inside the VPC. But *editing*
-> an app that already exists is now a pure CLI loop — `popcorn app fork`,
-> `checkout`, `publish` — with no deploy in it. Both paths are §2.
-> `popcorn flow import` is gone and neither path replaces it.
+> is not self-serve: the set of installable templates is fixed on the server,
+> and adding to it takes an internal change plus a deploy that no CLI command
+> and no public endpoint can perform. But *editing* an app that already exists
+> is a pure CLI loop — `popcorn app fork`, `checkout`, `publish` — with no
+> deploy in it. Both paths are §2. `popcorn flow import` is gone and neither
+> path replaces it.
 >
 > Everything else in this guide applies to both: the grammar, the manifest
 > semantics, and `popcorn template check` are about the bundle itself, not
@@ -75,39 +76,42 @@ bundle with one flow and no manifest is a legal template.
 ## 2. How a bundle gets installed
 
 **Two paths, and which one you are on depends on whether the app already
-exists.** Creating a new app type is still a backend deploy. *Changing* one is
-now entirely a CLI loop.
+exists.** Creating a new app type still costs a server deploy. *Changing* one
+is now entirely a CLI loop.
 
-### 2a. A new app type — backend deploy
+### 2a. A new app type — not self-serve
 
-Only the first step is yours to write:
+Only the first and last steps are yours. The two in the middle happen on the
+Popcorn side and are not exposed through the CLI or the public API:
 
 ```
 your bundle dir                                    (author here)
       │
-      ├─▶ popcorn-backend  lib/temporal/flows/<name>/
-      │   + register the name in templates.py — CHANNEL_TEMPLATES
+      ├─▶ the new app type is registered and the workers
+      │   that run its flows are deployed            (internal)
       │
-      ├─▶ deploy the backend                       (workers must exist first)
-      │
-      ├─▶ intranet /app-bundles → Publish          (runs inside the VPC)
+      ├─▶ the bundle is published to the template registry
+      │                                              (internal)
       │
       └─▶ popcorn channel create '#chan' --template <name>
 ```
 
-Publish **after** the deploy. A bundle whose flows call a new activity must not
-become installable before the workers that can run it exist; nothing enforces
-that ordering for you.
+**Publish after the deploy** — that ordering is the part worth carrying even
+though you do not run either step. A bundle whose flows call a new activity
+must not become installable before the workers that can run it exist: a channel
+created from it inside that window installs cleanly and then fails on the first
+run, with nothing to point at. Nothing enforces the ordering; it is release
+discipline.
 
-There is still no endpoint that takes a *new* app you have locally:
-`publish_registry_template` reads from disk and `channel create --template`
-resolves against the hardcoded `CHANNEL_TEMPLATES`, so a genuinely new
-`app_type` needs the PR.
+No public endpoint takes a *new* app off your disk. `channel create --template`
+only resolves names the server already carries, so a genuinely new `app_type`
+has to go through that internal path — and `popcorn channel templates` is how
+you check whether it has landed.
 
 ### 2b. Changing an app that exists — `popcorn app`
 
 A channel already running a bundle can be edited from the CLI, with no deploy
-and no intranet visit:
+and no hand-off to anyone:
 
 ```bash
 # fork onto this workspace's own line, then check its head out — one command
@@ -735,7 +739,7 @@ takes the channel from the checkout's baseline, the same way `app publish`
 and `app status` do; pass `--channel <id>` anywhere else.
 
 The **middle** loop is the fork loop from §2b, and it is the one to reach for
-whenever the app already exists. No deploy, no intranet, seconds per turn:
+whenever the app already exists. No deploy, no hand-off, seconds per turn:
 
 ```bash
 popcorn app publish ./<app> --bump patch -m "..."    # mint the next version
@@ -761,11 +765,11 @@ is not connected, and a connected account whose provider contradicts a
 declaration. The two `unused_*` findings are informational; a shared config
 legitimately carries keys one flow does not read.
 
-The **outer** loop is only for a NEW app type, and costs a backend deploy plus
+The **outer** loop is only for a NEW app type, and costs a server deploy plus
 a publish (§2a), so get the inner one clean first:
 
 ```bash
-# ... land the bundle in popcorn-backend, deploy, publish from /app-bundles
+# ... the app type is registered, deployed and published (§2a, internal)
 
 popcorn channel templates                            # is my version installable?
 popcorn channel create '#chan' --template mytemplate # note the UUID — see below

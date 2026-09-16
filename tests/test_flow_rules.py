@@ -115,7 +115,7 @@ def test_the_bundle_layout_rules():
 
 def test_the_code_block_rules():
     """The third classification, and the one the payload carried nothing about
-    until backend#1923 — which is why `template check` reported a false
+    until a server-side change — which is why `template check` reported a false
     `basename-collision` on any bundle with two Python blocks.
 
     `CODE_MIN_PATH_DEPTH` is a floor where `SUBDIR_PATH_DEPTH` is exact: a

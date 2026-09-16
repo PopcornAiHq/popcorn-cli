@@ -15,8 +15,7 @@ of the bundle" reason, and for one the baseline cannot serve: a coding agent
 asked to reword an email in this directory has nothing in the REQUEST naming
 Popcorn, so no skill of ours can trigger on it, and it edits a file and ships
 nothing. A `CLAUDE.md` in the directory loads when the agent reads a file in
-the directory — the trigger and the failure window become the same event
-(KEW-2380).
+the directory — the trigger and the failure window become the same event.
 """
 
 from __future__ import annotations

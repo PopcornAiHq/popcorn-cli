@@ -22,7 +22,7 @@ description: >
 
   It used to spend one `agent.transform` per run — 288 LLM calls a day — purely
   to subtract two durations from `now`, because nothing in the DSL could do
-  date arithmetic. `foundation.math.offset` (popcorn-backend PR #1714) closed
+  date arithmetic. `foundation.math.offset` closed
   that gap, and the two `*_cutoff` steps below replaced the LLM call and the
   recognition guard that had to police it.
 

@@ -129,37 +129,39 @@ instability that matters is not field drift, it is confident fabrication.
 
 ```json
 {
-  "Fingerprint": "cloudwatch:popcorn-dev-ops-api:dev",
-  "Title": "ECS CPU High: popcorn-dev-ops-api CPU at 96.5% (threshold 85%)",
+  "Fingerprint": "cloudwatch:example-api:dev",
+  "Title": "ECS CPU High: example-api CPU at 96.5% (threshold 85%)",
   "Source": "cloudwatch",
   "Severity": "critical",
   "Env": "dev",
-  "Resource": "popcorn-dev-ops-api",
+  "Resource": "example-api",
   "Status": "firing",
   "First Seen": "2026-08-07T23:17:13+00:00",
   "Last Seen": "2026-08-07T23:17:44+00:00",
   "Seen At": "2026-08-07T23:17:13+00:00\n2026-08-07T23:17:44+00:00",
-  "Post Message Id": "019fde84-42c2-7399-b835-f4adb6b070b1"
+  "Post Message Id": "01900000-0000-7000-8000-000000000003"
 }
 ```
 
 `created`/`updated` behaved exactly as the spec predicts: `created == 1` only
 for a genuinely new fingerprint, which is what gates the single channel post
 per incident. The fingerprint the model derived
-(`cloudwatch:popcorn-dev-ops-api:dev`) was stable across both fires.
+(`cloudwatch:example-api:dev`) was stable across both fires.
 
 ## Environment
 
-- Channel `#alerts-dev` = `567f1fcb-1a23-415c-91ec-502fe6c220a2`, workspace
-  `Popcorn` (`ce0467aa-e67f-4081-b52d-a9ccfac56520`) on dev. Dedicated, as the
-  untyped bundle requires.
+- A dedicated channel — `#alerts-dev`, conversation id
+  `00000000-0000-4000-8000-000000000002` in workspace
+  `00000000-0000-4000-8000-000000000001` — as the untyped bundle requires.
+  Identifiers throughout this log are synthetic; the real run used different
+  ones and nothing here depends on their values.
 - CLI v0.13.0.
 - `fixtures/cloudwatch-alarm.json` is the CloudWatch **notification body**
   (what SNS puts inside `Message`), not the SNS envelope. Real SNS wiring —
   including the `SubscriptionConfirmation` handshake and the nested
   JSON-string `Message` — is deferred per the plan's "Not in this plan".
-  Account id is redacted to `123456789012`; this bundle is destined for the
-  public repo.
+  Resource names in the fixtures are placeholders, and the account id is the
+  standard documentation value `123456789012`.
 
 ---
 
@@ -170,10 +172,11 @@ confirmed against the real validator or a live query, not by reading alone.
 
 ## 18. `when:` has only `==` and `!=`, and exactly one comparison
 
-`backend:lib/temporal/dsl/spec.py:110` — the grammar is
+The grammar the server accepted was
 `^(?P<lhs>\$ref)\s*(==|!=)\s*(?P<rhs>.+)$`. There is no `<`, `>`, `<=`, `>=`,
 and `&&`/`||` are explicitly rejected as compound expressions. A step gate can
-express "equals this value" and nothing else.
+express "equals this value" and nothing else. Confirmed by feeding each form
+to `popcorn flow validate`.
 
 ## 19. A column name containing a space is unreferenceable
 
@@ -197,7 +200,7 @@ channel, or accept both.
 
 ## 20. The agent-store filter DSL is far more capable than the DSL itself
 
-`backend:services/agent_store/filter_dsl.py` allows
+The store's row filter accepts
 `$eq · $ne · $gt · $gte · $lt · $lte · $in · $exists · $contains`, and ordering
 comparisons on ISO-8601 strings are correct because they are lexicographic.
 Verified live against `#alerts-dev`:
@@ -218,12 +221,13 @@ arguments and returns `{unix, unix_str, iso}`; there is no activity that adds
 or subtracts a duration, and gotcha 12 already established there is no
 arithmetic anywhere. So "older than N hours" cannot be computed by a flow.
 
-The only in-repo precedent, `app.delivery.pool.prune`, does its age cutoff
-inside a bespoke Python activity — an `app`-tier activity a portable bundle
-cannot call (gotcha 10).
+The only precedent in the catalog, `app.delivery.pool.prune`, does its age
+cutoff inside a bespoke Python activity — an `app`-tier activity a portable
+bundle cannot call (gotcha 10).
 
-**CLOSED** by `foundation.math.offset` (popcorn-backend PR #1714, which
-superseded the shorter-lived `foundation.workflow.offset` from PR #1701).
+**CLOSED** by `foundation.math.offset`, a server-side addition that superseded
+the shorter-lived `foundation.workflow.offset`. Check `flow activities` for
+which of the two your server serves.
 
 Before it existed, `alert_tick` spent one `agent.transform` per run turning
 `{now, nudge_after_minutes, auto_resolve_hours}` into two ISO cutoff strings,
@@ -316,11 +320,10 @@ Both halves of this are fixed; kept for the diagnosis, which was not obvious.
 
 `popcorn flow list` showed `seed_test_alert`, but `flow run seed_test_alert`
 returned `flow 'seed_test_alert' not found on this channel` — and that was the
-SERVER's message, not the CLI's. The API does support by-name addressing
-(`backend:services/api/customer_flows.py:1477`), but it resolves through the
-channel_app binding, which only covers flows installed as a bound bundle. A
-bundle installed ad-hoc by `flow import` is a UUID-addressed `customer_flows`
-row, so its own name never matched.
+SERVER's message, not the CLI's. The API does support by-name addressing, but
+it resolves through the channel's app binding, which only covers flows
+installed as a bound bundle. A bundle installed ad-hoc by `flow import` was an
+unbound, UUID-addressed flow, so its own name never matched.
 
 Fixed client-side: `run_flow` now maps a non-UUID ref through `flow list`
 before calling the API, and passes an unmatched name through untouched so the

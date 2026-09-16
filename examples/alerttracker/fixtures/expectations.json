@@ -17,9 +17,9 @@
         "Source": "cloudwatch",
         "Severity": "critical",
         "Env": "dev",
-        "Resource": "popcorn-dev-ops-api",
+        "Resource": "example-api",
         "Status": "firing",
-        "Fingerprint": "cloudwatch:popcorn-dev-ops-api:dev"
+        "Fingerprint": "cloudwatch:example-api:dev"
       },
       "agrees": true,
       "note": "Confirmed in Step 0'; fingerprint was stable across two fires."
@@ -29,9 +29,9 @@
         "Source": "alertmanager",
         "Severity": "critical",
         "Env": "prod",
-        "Resource": "popcorn-prod-api",
+        "Resource": "example-web",
         "Status": "firing",
-        "Fingerprint": "alertmanager:popcorn-prod-api:prod"
+        "Fingerprint": "alertmanager:example-web:prod"
       },
       "agrees": true,
       "note": "Every field is present verbatim in labels (severity, env, job); no inference needed."
@@ -41,9 +41,9 @@
         "Source": "manual",
         "Severity": "warning",
         "Env": "tools",
-        "Resource": "popcorn-tools-s3-bridge",
+        "Resource": "example-bridge",
         "Status": "firing",
-        "Fingerprint": "manual:popcorn-tools-s3-bridge:tools"
+        "Fingerprint": "manual:example-bridge:tools"
       },
       "agrees": true,
       "note": "Payload already carries the target vocabulary; a pass-through case."
@@ -52,7 +52,7 @@
       "expect": {
         "Source": "github",
         "Severity": "warning",
-        "Resource": "popcorn-backend",
+        "Resource": "example-service",
         "Status": "firing"
       },
       "observed": {

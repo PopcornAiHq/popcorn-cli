@@ -1,4 +1,4 @@
-"""Check the shipped backend templates — opt-in, skipped without them.
+"""Check the shipped server-side templates — opt-in, skipped without them.
 
 **These are the fixtures that matter, and they cannot live in this repo.** The
 checker was written against the two bundles now under `tests/fixtures/bundles/`,
@@ -10,21 +10,21 @@ real templates, all of them wrong — and nothing in this repo could have caught
 that, because nothing in this repo had ever been run against a bundle somebody
 shipped.
 
-Vendoring copies here would fix that for exactly as long as it took the backend
-to change one, so this reads the real checkout instead: `popcorn-backend` at
-`lib/apps/`, or wherever `POPCORN_BACKEND_FLOWS` points. Absent, the module
-skips.
+Vendoring copies here would fix that for exactly as long as it took the server
+to change one, so this reads a real checkout instead: point
+`POPCORN_BACKEND_FLOWS` at the directory holding the shipped bundles — one
+subdirectory per bundle, each with a `manifest.yaml`. Unset, the module skips.
 
-That pointer is load-bearing and fails silently when it rots: the bundles moved
-from `lib/temporal/flows/` to `lib/apps/` and this kept skipping, green and
-mute, because a skip on a missing checkout is indistinguishable from a skip on
-a moved one. If this file has not reported on a real bundle in a while, check
-the path before believing the silence.
+That pointer is load-bearing and fails silently when it rots. The bundles have
+moved within their own repo before, and this kept skipping, green and mute,
+because a skip on an unset variable is indistinguishable from a skip on a stale
+one. If this file has not reported on a real bundle in a while, check where the
+variable points before believing the silence.
 
 The consequence is real and worth stating plainly: **this does not run in CI.**
 CI's guard is the grammar-feature coverage in `test_template_check.py`, which is
 derived from what these templates do but is not the same as reading them. When
-a backend template starts using a DSL feature nobody wrote a unit test for,
+a shipped template starts using a DSL feature nobody wrote a unit test for,
 this file is what notices, and only if someone runs it.
 """
 
@@ -40,21 +40,20 @@ from popcorn_core.flow_rules import CODE_SUBDIR
 from popcorn_core.template_check import check_bundle
 
 _ENV = "POPCORN_BACKEND_FLOWS"
-_DEFAULT = Path.home() / "popcorn" / "backend" / "lib" / "apps"
 
 
 def _bundles() -> list[Path]:
-    root = Path(os.environ[_ENV]) if os.environ.get(_ENV) else _DEFAULT
-    if not root.is_dir():
+    root = os.environ.get(_ENV)
+    if not root or not Path(root).is_dir():
         return []
-    return sorted(p for p in root.iterdir() if p.is_dir() and (p / "manifest.yaml").is_file())
+    return sorted(p for p in Path(root).iterdir() if p.is_dir() and (p / "manifest.yaml").is_file())
 
 
 _BUNDLES = _bundles()
 
 pytestmark = pytest.mark.skipif(
     not _BUNDLES,
-    reason=f"no backend template checkout ({_ENV} unset and {_DEFAULT} absent)",
+    reason=f"no shipped-template checkout ({_ENV} unset or holding no bundles)",
 )
 
 

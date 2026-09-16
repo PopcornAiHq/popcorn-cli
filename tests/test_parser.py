@@ -638,7 +638,7 @@ class TestWebhook:
                     "#general",
                     "my-hook",
                     "--trigger-flow-id",
-                    "0a3d046c-1c50-40ba-b6c5-b138a439af98",
+                    "00000000-0000-4000-8000-000000000011",
                     "--trigger-flow-name",
                     "alert_webhook",
                 ]
@@ -1079,7 +1079,7 @@ class TestNewFlags:
 _WEBHOOKS = {
     "webhooks": [
         {
-            "id": "6e453d05-efaf-4aa6-bc39-76e4bafb69c7",
+            "id": "00000000-0000-4000-8000-000000000012",
             "name": "Intake",
             "url": "https://hooks.popcorn.ai/ingest/s3cr3t-token",
         }
@@ -1088,7 +1088,7 @@ _WEBHOOKS = {
 
 
 class TestWebhookListUrl:
-    """KEW-2373: the ingest URL was reachable only through `--json`.
+    """The ingest URL was reachable only through `--json`.
 
     The token in that URL is the credential — holding it is enough to post to
     the channel — so the decision here was to keep it out of default human
@@ -1191,7 +1191,8 @@ class TestAppSurfaceListings:
 
 
 # The channel a command acts on, spelled both ways. The pairs are the survey
-# behind KEW-2369: every command in the site/message/channel/webhook families
+# behind the dual-spelling work: every command in the site/message/channel/webhook
+# families
 # that names a channel, and for each the positional form callers already use
 # alongside the `--channel` form that now works everywhere.
 _CHANNEL_SPELLINGS = [
@@ -1253,9 +1254,9 @@ _DIRECTORY_SPELLINGS = [
 
 
 class TestDirectoryArgument:
-    """One directory, two spellings, one namespace attribute (KEW-2369).
+    """One directory, two spellings, one namespace attribute.
 
-    The channel half of the ticket shipped first; this is the remainder. The
+    The channel half of this shipped first; this is the remainder. The
     machinery is shared — `registry.add_dual_spelled_argument` — so these
     guard the wiring and the cases the channel's own tests cannot reach: a
     REQUIRED positional (`template check`), and the `--fork` collision.
@@ -1319,7 +1320,7 @@ class TestDirectoryArgument:
 
 
 class TestChannelArgument:
-    """One channel, two spellings, one namespace attribute (KEW-2369).
+    """One channel, two spellings, one namespace attribute.
 
     The site/message/channel/webhook families take the channel positionally
     and the registry families take `--channel`; the split is an artifact of

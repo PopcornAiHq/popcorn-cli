@@ -201,7 +201,7 @@ class TestErrorCode:
 
 
 class TestHintRendering:
-    """KEW-2373: the hint label used to be a flat "Run:", which was wrong both
+    """The hint label used to be a flat "Run:", which was wrong both
     ways — it doubled up on hints carrying their own verb, and it told people
     to type things that are not commands."""
 
