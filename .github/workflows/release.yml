@@ -16,23 +16,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Get previous tag
-        id: prev
-        run: |
-          prev=$(git describe --tags --abbrev=0 "${{ github.ref_name }}^" 2>/dev/null || git rev-list --max-parents=0 HEAD)
-          echo "tag=$prev" >> "$GITHUB_OUTPUT"
-
-      - name: Generate release notes
-        id: notes
-        run: |
-          notes=$(git log --pretty=format:"- %s" "${{ steps.prev.outputs.tag }}..${{ github.ref_name }}" | grep -v "^- chore:")
-          {
-            echo "notes<<EOF"
-            echo "$notes"
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
+      # Notes reach `gh` as a FILE, never as shell text. They are built from
+      # commit subjects, and this repo's subjects are full of backticks
+      # (`--dir`, `--channel`, `changelog:`) — interpolating one into a
+      # double-quoted `run:` string makes it a command substitution the runner
+      # executes, with a write-scoped token in the environment. That is how
+      # v0.33.0's release failed, on `say what `changelog:` is for`.
+      #
+      # `github.ref_name` goes through `env:` for the same reason: a `${{ }}`
+      # expansion is pasted into the script before bash ever sees it, so the
+      # quoting that would make it safe is not applied to it.
       - name: Create release
-        run: gh release create "${{ github.ref_name }}" --title "${{ github.ref_name }}" --notes "${{ steps.notes.outputs.notes }}"
+        run: |
+          prev=$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null \
+                 || git rev-list --max-parents=0 HEAD)
+          # `grep -v` exits 1 when it filters everything out, which under
+          # `set -e` would fail a release whose every commit was a chore.
+          git log --pretty=format:"- %s" "${prev}..${TAG}" \
+            | grep -v "^- chore:" > release-notes.md || true
+          gh release create "$TAG" --title "$TAG" --notes-file release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
