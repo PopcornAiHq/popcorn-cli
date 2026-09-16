@@ -18,6 +18,7 @@ import contextlib
 import json
 import re
 import sys
+from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -43,7 +44,7 @@ from popcorn_core.app_publish import (
     require_bump,
     unrecognized_code_paths,
 )
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import APIError, PopcornError
 
 _CONV = "11111111-2222-3333-4444-555555555555"
 
@@ -979,6 +980,19 @@ class TestPublishInstallStatus:
         assert "Installing on this channel: wf-1" in out["rendered"]
 
 
+def _no_declared_schedules():
+    """Patches for the schedule-drift read `app status` now performs.
+
+    A bundle whose manifest declares no `schedules:` produces an empty report
+    and renders nothing, which is what every test in these two classes assumed
+    before the drift check existed. Tests that care about drift stub these
+    themselves — see `TestScheduleDriftInStatus`.
+    """
+    return patch.object(
+        operations, "get_channel_app_file", return_value={"content": "version: 0.2.0\n"}
+    )
+
+
 class TestStatusCommand:
     def _run(self, tmp_path, files_response, args):
         from popcorn_cli.commands import app as mod
@@ -993,6 +1007,7 @@ class TestStatusCommand:
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output", _capture),
             patch.object(operations, "get_channel_app_files", return_value=files_response),
+            _no_declared_schedules(),
         ):
             mod._app_status(args)
         return captured
@@ -1538,6 +1553,7 @@ class TestChannelScopedStatus:
             ),
             patch.object(operations, "list_channel_apps", return_value=listing or _binding()),
             patch.object(operations, "get_channel_app_tree", return_value=tree or _tree_response()),
+            _no_declared_schedules(),
         ):
             mod._app_status(args)
         return captured
@@ -1584,6 +1600,7 @@ class TestChannelScopedStatus:
             patch("popcorn_cli.cli._output"),
             patch.object(operations, "list_channel_apps", return_value=_binding()),
             patch.object(operations, "get_channel_app_tree", _tree),
+            _no_declared_schedules(),
         ):
             mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
         assert refs == ["head"], "a status that reads ref=bound can never see a pending install"
@@ -1643,6 +1660,7 @@ class TestChannelScopedStatus:
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
             patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            _no_declared_schedules(),
         ):
             mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
         # The checkout view, not the channel view: it carries the working copy.
@@ -1725,3 +1743,151 @@ class TestApplyReadsAsRecovery:
         rendered = "\n".join(mod._fork_lines({"status": "adopting", "app": "a", "semver": "1.0.0"}))
         assert "popcorn app status --channel" in rendered
         assert "popcorn app list" not in rendered
+
+
+class TestScheduleDriftInStatus:
+    """The drift check wired into `app status` (KEW-2310).
+
+    The classification itself is covered by `tests/test_schedule_drift.py`;
+    what matters here is the wiring — that the bound manifest is what gets
+    read, that the report reaches both renderings, and that only an alarming
+    class turns the command non-zero.
+    """
+
+    _MANIFEST = "version: 0.2.0\nschedules:\n  - flow: tick\n    slug: tick\n    interval: 900\n"
+
+    def _run(self, live, manifest=None, app_mode="prod"):
+        from popcorn_cli.commands import app as mod
+
+        captured = {}
+        patches = [
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "list_channel_apps", return_value=_binding()),
+            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(
+                operations,
+                "get_channel_app_file",
+                return_value={"content": manifest or self._MANIFEST},
+            ),
+            patch.object(
+                operations, "list_scheduled_flows", return_value={"scheduled_flows": live}
+            ),
+            patch.object(operations, "get_scalar", return_value={"scalar": {"value": app_mode}}),
+        ]
+        with ExitStack() as stack:
+            for p in patches:
+                stack.enter_context(p)
+            error = None
+            try:
+                mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+            except PopcornError as exc:
+                error = exc
+        captured["error"] = error
+        return captured
+
+    @staticmethod
+    def _tick(**over):
+        item = {
+            "schedule_id": "channel:c:flow:tick:tick",
+            "slug": "tick",
+            "cron_expr": None,
+            "interval_seconds": 900,
+            "paused": False,
+            "note": None,
+        }
+        item.update(over)
+        return item
+
+    def test_a_matching_schedule_exits_zero(self):
+        out = self._run([self._tick()])
+        assert out["error"] is None
+        assert out["data"]["schedule_drift"]["alarming"] == 0
+        assert "OK    tick" in out["rendered"]
+
+    def test_an_unexplained_pause_exits_non_zero(self):
+        """Class 3 — the failure mode with no other detector."""
+        out = self._run([self._tick(paused=True)])
+        assert out["error"] is not None
+        assert "tick" in str(out["error"])
+        assert out["data"]["schedule_drift"]["alarming"] == 1
+        assert "DRIFT tick" in out["rendered"]
+
+    def test_an_explained_retune_exits_zero(self):
+        """Class 1 — reported, but not an alarm."""
+        out = self._run(
+            [self._tick(interval_seconds=180, note="auto-resumed: set_app_mode")],
+            app_mode="test",
+        )
+        assert out["error"] is None
+        assert out["data"]["schedule_drift"]["explained"] == 1
+        assert "note  tick" in out["rendered"]
+
+    def test_a_missing_schedule_exits_non_zero(self):
+        out = self._run([])
+        assert out["error"] is not None
+        assert "not installed" in out["rendered"]
+
+    def test_a_bundle_declaring_no_schedules_renders_nothing(self):
+        out = self._run([self._tick()], manifest="version: 0.2.0\n")
+        assert out["error"] is None
+        assert "Schedules:" not in out["rendered"]
+        assert out["data"]["schedule_drift"]["findings"] == []
+
+    def test_it_reads_the_bound_manifest_not_the_head(self):
+        """The live schedules came from the bound version, so that is the
+        only manifest they can be judged against."""
+        from popcorn_cli.commands import app as mod
+
+        seen = {}
+
+        def _file(client, conversation, path, **kw):
+            seen["path"] = path
+            return {"content": self._MANIFEST}
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch("popcorn_cli.cli._output"),
+            patch.object(operations, "list_channel_apps", return_value=_binding()),
+            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(operations, "get_channel_app_file", _file),
+            patch.object(
+                operations,
+                "list_scheduled_flows",
+                return_value={"scheduled_flows": [self._tick()]},
+            ),
+            patch.object(operations, "get_scalar", return_value={"scalar": {"value": "prod"}}),
+        ):
+            mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+        assert seen["path"] == "manifest.yaml"
+
+    def test_an_unreadable_schedule_list_is_reported_not_raised(self):
+        """A Temporal outage must not take down the version reporting that is
+        this command's main job — but it must not pass silently either."""
+        from popcorn_cli.commands import app as mod
+
+        captured = {}
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(operations, "list_channel_apps", return_value=_binding()),
+            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(
+                operations, "get_channel_app_file", return_value={"content": self._MANIFEST}
+            ),
+            patch.object(
+                operations,
+                "list_scheduled_flows",
+                side_effect=APIError("temporal_unavailable", status_code=503),
+            ),
+        ):
+            mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+        assert captured["data"]["schedule_drift"] is None
+        assert "not checked" in captured["rendered"]
+        assert captured["data"]["schedule_drift_error"]
