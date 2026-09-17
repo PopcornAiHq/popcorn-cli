@@ -57,23 +57,56 @@ def test_parsed_namespace_is_unchanged(case, parser):
     assert _normalise(parser.parse_args(case["argv"])) == case["namespace"]
 
 
-def test_the_fixture_covers_every_unmigrated_family():
-    """A family dropped from the fixture would silently lose its safety net."""
-    import popcorn_cli.commands  # noqa: F401  — registers the families
-    from popcorn_cli import registry
+# Rows recorded per family, pinned so that deleting coverage is a failure
+# rather than a quieter test run. Hardcoded on purpose: deriving these from the
+# fixture would make the assertion agree with whatever the fixture happens to
+# contain, which is the thing being guarded. Raise a number when you genuinely
+# add rows; never lower one to make a diff pass.
+_MINIMUM_ROWS = {
+    "app": 13,
+    "auth": 8,
+    "channel": 30,
+    "channel-config": 7,
+    "flow": 10,
+    "message": 24,
+    "schedule": 2,
+    "site": 22,
+    "table": 10,
+    "template": 3,
+    "vm": 4,
+    "webhook": 22,
+    "workspace": 10,
+}
 
-    registered = {c.name for c in registry.COMMANDS}
-    recorded = {c["argv"][0] for c in _CASES}
-    parser_families = set()
+
+def test_no_family_loses_its_recorded_coverage():
+    """These rows are the whole safety net for the families already migrated.
+
+    The earlier form of this check compared the parser's families against the
+    registry's and passed trivially once everything was migrated — at which
+    point the ~100 rows could be deleted wholesale and the suite stayed green.
+    """
+    import collections
+
+    counts = collections.Counter(c["argv"][0] for c in _CASES)
+    thin = {
+        family: (counts[family], floor)
+        for family, floor in _MINIMUM_ROWS.items()
+        if counts[family] < floor
+    }
+    assert not thin, f"families with fewer recorded rows than pinned: {thin}"
+
+
+def test_every_family_with_subcommands_is_recorded():
+    """A newly added family has to join the fixture, migrated or not."""
     import argparse
 
     p = build_parser()
     top = next(a for a in p._actions if isinstance(a, argparse._SubParsersAction))
-    for name, sub in top.choices.items():
-        if any(isinstance(a, argparse._SubParsersAction) for a in sub._actions):
-            parser_families.add(name)
-
-    # A family leaves the fixture only by being migrated — at which point its
-    # rows have already done their job and proved the new declaration matches.
-    missing = parser_families - registered - recorded
-    assert not missing, f"unmigrated families with no parity coverage: {sorted(missing)}"
+    with_subcommands = {
+        name
+        for name, sub in top.choices.items()
+        if any(isinstance(a, argparse._SubParsersAction) for a in sub._actions)
+    }
+    missing = with_subcommands - set(_MINIMUM_ROWS)
+    assert not missing, f"families with no parity coverage: {sorted(missing)}"

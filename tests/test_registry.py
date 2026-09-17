@@ -965,6 +965,11 @@ class TestLateBoundHandlers:
     AttributeError the first time a user runs the command. Three names were
     wrong on the first draft of the `message` family; this is what makes that a
     test failure instead of a field report.
+
+    Its limit is worth knowing, because the surface-only convention leans on
+    it: this proves a name RESOLVES, never that it is the right one. Binding
+    `message delete` to `cmd_delete_channel` would pass here. Only reading the
+    declaration against the handler catches that.
     """
 
     def test_every_late_bound_name_exists(self):

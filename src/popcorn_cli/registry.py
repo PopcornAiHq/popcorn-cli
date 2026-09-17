@@ -192,6 +192,27 @@ class Argument:
             kwargs["default"] = self.default
         if self.positional:
             if self.flag_alias:
+                # `add_dual_spelled_argument` hardcodes nargs="?" and
+                # default=None and takes no type or choices, so anything else
+                # declared here would be accepted and silently dropped — the
+                # same shape of failure as the `--limit` default that shipped
+                # broken in 0.34.0, reachable through this branch instead.
+                unsupported = [
+                    field
+                    for field, value in (
+                        ("type", self.type),
+                        ("choices", self.choices),
+                        ("default", self.default),
+                        ("const", self.const),
+                    )
+                    if value is not None
+                ]
+                if unsupported:
+                    raise ValueError(
+                        f"{self.name}: flag_alias cannot be combined with "
+                        f"{', '.join(unsupported)} — a dual-spelled argument is "
+                        "always an optional untyped string"
+                    )
                 add_dual_spelled_argument(
                     parser,
                     self.name,

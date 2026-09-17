@@ -144,7 +144,8 @@ declared but never reached the parser.
 
 ## Migration status
 
-Every family with subcommands is now registry-declared.
+Every family with subcommands is registry-declared except the two deprecated
+ones, which are staying where they are.
 
 | Family | Declared in | Handlers |
 |---|---|---|
@@ -184,8 +185,12 @@ name resolves on `cli`; three of `message`'s nine were wrong on first draft.
 
 `tests/test_parser_parity.py` records the exact `Namespace` each subcommand
 parses to, invoked minimally, with every optional argument named, and — where
-an argument is dual-spelled — through its flag form. Re-declaring a family has
-to reproduce all of it. This exists because a migration deletes the
+an argument is dual-spelled — through its flag form. Every family is covered,
+migrated or not. Re-declaring a family has to reproduce all of it.
+
+It pins parsed VALUES, not argparse metadata, so a change to how an option is
+spelled or ordered in `--help` passes through it silently. Check
+`popcorn commands --json` by hand when you touch a declaration's flags. This exists because a migration deletes the
 hand-written parser in the same commit, so there is otherwise nothing left to
 diff against, and two behaviour losses had already gone through that gap.
 
