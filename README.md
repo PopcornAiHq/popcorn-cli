@@ -78,7 +78,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 
 | Command | Purpose |
 |---------|---------|
-| **Sites** | |
+| **Sites** — *deprecated; still supported* | |
 | `popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check]` | Deploy site to a channel |
 | `popcorn site export [channel] [--version V] [-o PATH] [--force] [--revert]` | Export site code from VM to local |
 | `popcorn site status [channel]` | Show site deployment status |
@@ -139,7 +139,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
 | `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |
-| **VM** | |
+| **VM** — *deprecated; still supported* | |
 | `popcorn vm monitor [--watch] [-n INTERVAL] [--raw]` | Show active workers and queue |
 | `popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]` | Token and cost analytics |
 | **Auth & identity** | |

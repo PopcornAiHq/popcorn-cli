@@ -1060,3 +1060,71 @@ class TestHoistedGlobalFlags:
         from popcorn_cli.cli import _hoist_global_flags
 
         assert parser.parse_args(_hoist_global_flags(list(argv))).workspace == "W1"
+
+
+class TestDeprecatedFamilies:
+    """A deprecation nobody can see is a decision, not a deprecation.
+
+    `site` and `vm` were deprecated in `docs/architecture-commands.md` — an
+    internal doc explaining why they were not migrated to the registry — while
+    `--help`, the README and `commands --json` all presented them as ordinary
+    commands. An agent doing schema discovery, which `CLAUDE.md` names as the
+    supported way to find out what this CLI can do, had no way to learn it.
+
+    Both surfaces are covered here because they have independent sources: the
+    schema reads `_command_deprecations`, and `--help` is a hand-written
+    epilog string that nothing else validates.
+    """
+
+    def _schema(self, capsys) -> dict:
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        return json.loads(capsys.readouterr().out)
+
+    def test_deprecated_families_are_marked_in_the_schema(self, capsys):
+        by_name = {c["name"]: c for c in self._schema(capsys)["commands"]}
+        for name in ("site", "vm"):
+            assert by_name[name].get("deprecated"), f"{name} is not marked deprecated"
+
+    def test_nothing_else_is_marked(self, capsys):
+        """The mark means something only while it is not on everything."""
+        marked = {c["name"] for c in self._schema(capsys)["commands"] if c.get("deprecated")}
+        assert marked == {"site", "vm"}
+
+    def test_deprecated_families_are_marked_in_help(self, parser):
+        epilog = parser.epilog or ""
+        for line in epilog.splitlines():
+            stripped = line.strip()
+            for name in ("site", "vm"):
+                if stripped.startswith(f"{name} ") and "commands (" in stripped:
+                    assert "[DEPRECATED]" in stripped, f"{name}'s help line is not marked"
+
+    def test_registry_families_can_carry_a_deprecation(self):
+        """The field exists on `Command`, not only in the hand-declared map.
+
+        `site` and `vm` are the two families still declared by hand, so today
+        the map is the only live source. When either moves or a registry family
+        is retired, the declaration should travel with the command rather than
+        being remembered separately — this pins that path open.
+        """
+        retired = registry.Command(
+            name="retired-family",
+            category="other",
+            description="Gone",
+            deprecated="Deprecated. Use `popcorn app` instead.",
+        )
+        assert retired.deprecated == "Deprecated. Use `popcorn app` instead."
+
+        registry.COMMANDS.append(retired)
+        try:
+            assert registry.deprecations()["retired-family"] == retired.deprecated
+        finally:
+            registry.COMMANDS.remove(retired)
+
+        assert "retired-family" not in registry.deprecations()
+
+    def test_a_family_without_the_field_is_absent_not_null(self):
+        """Absent, so `if "deprecated" in cmd` is a valid test for agents."""
+        assert all(c.deprecated is None for c in registry.COMMANDS)
+        assert registry.deprecations() == {}

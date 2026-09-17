@@ -166,6 +166,24 @@ ones, which are staying where they are.
 `dispatch()` returning `False` is still the seam, and still needed: the
 deprecated families and the flat commands go through the hand-written chain.
 
+Their deprecation is no longer only recorded here. Both are marked
+`[DEPRECATED]` in `--help` and carry a `deprecated` key in
+`popcorn commands --json`, declared in `cli.py — _COMMAND_DEPRECATIONS`
+because neither family is registry-declared. A registry family sets
+`Command.deprecated` instead, and `cli.py — _command_deprecations` merges the
+two the same way categories and descriptions are merged.
+
+Marking a family takes two edits either way. The declaration drives the schema;
+the `--help` listing is a hand-written epilog string in
+`cli.py — build_parser` that nothing generates, so it has to be marked by hand
+in the same commit. `tests/test_registry.py — TestDeprecatedFamilies` asserts
+both surfaces, which is what stops the pair drifting apart.
+
+The distinction matters when one of them is eventually deleted rather than
+deprecated: `popcorn site` is the deploy path the Claude Code plugin's skills
+call (`site targets`, `site deploy`, `site export`, `site trace`), so removing
+it is a change to that repo before it is a change to this one.
+
 ### Surface-only migrations
 
 A family can be declared here while its handler bodies stay in `cli.py`,
