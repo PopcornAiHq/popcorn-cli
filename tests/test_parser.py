@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import pytest
 
+import popcorn_cli
 from popcorn_cli import registry
 from popcorn_cli.cli import build_parser
 from popcorn_cli.registry import dispatch
@@ -1380,3 +1381,57 @@ class TestChannelArgument:
             for a in _introspect_parser(leaves[("site", "status")])
         }
         assert optional["channel"]["required"] is False
+
+
+class TestVersionUpdateNotice:
+    """Plain `popcorn version` should say when a newer version exists.
+
+    `version` is exempt from the auto-upgrade path (upgrading underneath
+    someone who only asked what they are running is the wrong behaviour), so
+    before this it was the one command that could truthfully report an old
+    version forever while every other command silently self-upgraded.
+    """
+
+    @staticmethod
+    def _run(parser, argv):
+        from popcorn_cli.cli import cmd_version
+
+        cmd_version(parser.parse_args(argv))
+
+    def test_stdout_is_only_the_version(self, parser, capsys, monkeypatch):
+        """Anything parsing this must not start seeing an update notice."""
+        monkeypatch.setattr("popcorn_cli.cli._read_version_cache", lambda: ("99.0.0", 2**31))
+        self._run(parser, ["version"])
+        captured = capsys.readouterr()
+        assert captured.out.strip() == f"popcorn {popcorn_cli.__version__}"
+        assert "99.0.0" in captured.err
+
+    def test_says_nothing_when_up_to_date(self, parser, capsys, monkeypatch):
+        monkeypatch.setattr(
+            "popcorn_cli.cli._read_version_cache",
+            lambda: (popcorn_cli.__version__, 2**31),
+        )
+        self._run(parser, ["version"])
+        assert capsys.readouterr().err == ""
+
+    def test_a_stale_cache_is_refreshed_from_the_network(self, parser, capsys, monkeypatch):
+        """Otherwise someone who only runs `version` never warms the cache."""
+        monkeypatch.setattr("popcorn_cli.cli._read_version_cache", lambda: (None, 0))
+        monkeypatch.setattr("popcorn_cli.cli._fetch_latest_version", lambda: "99.0.0")
+        monkeypatch.setattr("popcorn_cli.cli._write_version_cache", lambda v: None)
+        self._run(parser, ["version"])
+        assert "99.0.0" in capsys.readouterr().err
+
+    def test_offline_is_silent_not_an_error(self, parser, capsys, monkeypatch):
+        monkeypatch.setattr("popcorn_cli.cli._read_version_cache", lambda: (None, 0))
+        monkeypatch.setattr("popcorn_cli.cli._fetch_latest_version", lambda: None)
+        self._run(parser, ["version"])
+        captured = capsys.readouterr()
+        assert captured.out.strip() == f"popcorn {popcorn_cli.__version__}"
+        assert captured.err == ""
+
+    def test_the_opt_out_is_honoured(self, parser, capsys, monkeypatch):
+        monkeypatch.setenv("POPCORN_NO_UPDATE_CHECK", "1")
+        monkeypatch.setattr("popcorn_cli.cli._read_version_cache", lambda: ("99.0.0", 2**31))
+        self._run(parser, ["version"])
+        assert capsys.readouterr().err == ""

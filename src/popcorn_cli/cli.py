@@ -1935,11 +1935,44 @@ def _check_and_update() -> None:
         os.execvp(popcorn_path, ["popcorn", *sys.argv[1:]])
 
 
+def _update_notice() -> str | None:
+    """ "An update is available" line, or None — best-effort, never fatal.
+
+    Reuses the same cache `_check_and_update` writes, and only reaches the
+    network when that cache is stale. `version` is excluded from the
+    auto-upgrade path, so without its own check its cache would never warm up
+    for someone who runs nothing else — which is the case this exists for.
+
+    Honours the same opt-outs as the auto-upgrade: a script that has said it
+    does not want update chatter does not get it here either.
+    """
+    if os.environ.get("POPCORN_NO_UPDATE_CHECK") or _quiet:
+        return None
+
+    cached, checked_at = _read_version_cache()
+    if (time.time() - checked_at) < _VERSION_CACHE_TTL:
+        latest = cached
+    else:
+        latest = _fetch_latest_version()
+        if latest is not None:
+            _write_version_cache(latest)
+
+    if latest is None or not _is_outdated(__version__, latest):
+        return None
+    return f"{latest} available — run: popcorn upgrade"
+
+
 def cmd_version(args: argparse.Namespace) -> None:
     """Print version, optionally check for updates."""
     check = getattr(args, "check", False)
     if not check:
-        print(f"popcorn {__version__}")
+        # stdout stays exactly `popcorn X.Y.Z`, flushed before the check can
+        # touch the network: anything parsing this gets its answer at once,
+        # and the notice goes to stderr where it cannot corrupt that.
+        print(f"popcorn {__version__}", flush=True)
+        notice = _update_notice()
+        if notice:
+            print(notice, file=sys.stderr)
         return
 
     latest = _fetch_latest_version()
@@ -3541,7 +3574,11 @@ Other:
     )
     sub.add_parser("help", help=_h)
     version_p = sub.add_parser("version", help=_h)
-    version_p.add_argument("--check", action="store_true", help="Check for updates")
+    version_p.add_argument(
+        "--check",
+        action="store_true",
+        help="Force an update check and report the result on stdout",
+    )
     sub.add_parser("upgrade", help=_h)
     sub.add_parser("doctor", help=_h)
 
