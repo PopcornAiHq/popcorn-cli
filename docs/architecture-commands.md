@@ -144,26 +144,50 @@ declared but never reached the parser.
 
 ## Migration status
 
-| Family | Declared in | |
-|---|---|---|
-| `flow` | `commands/flow.py` | registry |
-| `table` | `commands/table.py` | registry |
-| `webhook` | `commands/webhook.py` | registry |
-| `app` | `commands/app.py` | registry |
-| `channel-config` | `commands/channel_config.py` | registry |
-| `schedule` | `commands/schedule.py` | registry |
-| `template` | `commands/template.py` | registry |
-| `auth` | `cli.py` | pending |
-| `channel` | `cli.py` | pending |
-| `message` | `cli.py` | pending |
-| `site` | `cli.py` | pending |
-| `vm` | `cli.py` | pending |
-| `workspace` | `cli.py` | pending |
-| flat commands (`api`, `commands`, `completion`, `doctor`, `env`, `upgrade`, `version`, `whoami`) | `cli.py` `_COMMANDS` | pending |
+Every family with subcommands is now registry-declared.
 
-Registry and hand-written families coexist indefinitely — `dispatch()` returning
-`False` is the seam. Migrate opportunistically when you are already editing a
-family.
+| Family | Declared in | Handlers |
+|---|---|---|
+| `app` | `commands/app.py` | alongside |
+| `channel` | `commands/channel.py` | `cli.py`, late-bound |
+| `channel-config` | `commands/channel_config.py` | alongside |
+| `flow` | `commands/flow.py` | alongside |
+| `message` | `commands/message.py` | `cli.py`, late-bound |
+| `schedule` | `commands/schedule.py` | alongside |
+| `table` | `commands/table.py` | alongside |
+| `template` | `commands/template.py` | alongside |
+| `webhook` | `commands/webhook.py` | alongside |
+| `auth` | `commands/auth.py` | `cli.py`, late-bound |
+| `workspace` | `commands/workspace.py` | `cli.py`, late-bound |
+| `site`, `vm` | `cli.py` | deprecated — not migration candidates |
+| flat commands (`api`, `commands`, `completion`, `doctor`, `env`, `upgrade`, `version`, `whoami`) | `cli.py` `_COMMANDS` | no subcommands; the registry has nothing to collapse |
+
+`dispatch()` returning `False` is still the seam, and still needed: the
+deprecated families and the flat commands go through the hand-written chain.
+
+### Surface-only migrations
+
+A family can be declared here while its handler bodies stay in `cli.py`,
+resolved at call time by `commands/_late.py — late_handler`. The registry's
+guarantee is that the **surface** is declared once — argparse, dispatch, both
+completions and `commands --json` cannot drift apart. Where a function body
+lives is a separate question, and moving one buys nothing the registry cares
+about: `cmd_auth_login` alone is ~150 lines of OAuth flow with its own test
+module importing it by name.
+
+The cost is that a handler name is a string resolved at call time, so a typo
+survives every argument-parsing test and fails only when a user runs the
+command. `test_registry.py — TestLateBoundHandlers` asserts every late-bound
+name resolves on `cli`; three of `message`'s nine were wrong on first draft.
+
+### Before you migrate a family
+
+`tests/test_parser_parity.py` records the exact `Namespace` each subcommand
+parses to, invoked minimally, with every optional argument named, and — where
+an argument is dual-spelled — through its flag form. Re-declaring a family has
+to reproduce all of it. This exists because a migration deletes the
+hand-written parser in the same commit, so there is otherwise nothing left to
+diff against, and two behaviour losses had already gone through that gap.
 
 ## How to add a family
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 from . import (
     app,
     auth,
+    channel,
     channel_config,
     flow,
     message,
@@ -18,6 +19,7 @@ from . import (
 __all__ = [
     "app",
     "auth",
+    "channel",
     "channel_config",
     "flow",
     "message",

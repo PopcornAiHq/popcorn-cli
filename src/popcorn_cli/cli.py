@@ -2648,9 +2648,6 @@ _popcorn_completions() {
         site)
             COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
             ;;
-        channel)
-            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
-            ;;
         vm)
             COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
             ;;
@@ -2671,7 +2668,6 @@ _popcorn() {
     local -a commands
     commands=(
         'api:Raw API call'
-        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)'
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
@@ -2693,7 +2689,6 @@ _popcorn() {
         args)
             case "${words[1]}" in
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
-                channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
@@ -2709,7 +2704,6 @@ _popcorn "$@"
 # Registry families are merged in at render time — do not add one here.
 _STATIC_TOP_LEVEL = [
     "api",
-    "channel",
     "commands",
     "completion",
     "env",
@@ -2836,7 +2830,6 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
 
 _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
-    "channel": "channels",
     "vm": "vm",
     "env": "auth",
     "whoami": "auth",
@@ -2848,7 +2841,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
-    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
     "vm": "VM commands (monitor, usage)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
@@ -3478,66 +3470,6 @@ Other:
 
     # --- Message group ---
 
-    # --- Channel group ---
-
-    ch_parser = sub.add_parser("channel", help=_h)
-    ch_sub = ch_parser.add_subparsers(dest="channel_command")
-
-    ch_archive_p = ch_sub.add_parser("archive", help="Archive or unarchive a channel")
-    _add_channel_argument(ch_archive_p, "conversation", "Channel name (#general) or UUID")
-    ch_archive_p.add_argument("--undo", action="store_true", help="Unarchive instead")
-
-    ch_create_p = ch_sub.add_parser("create", help="Create a channel")
-    ch_create_p.add_argument("name", help="Channel name")
-    ch_create_p.add_argument(
-        "--type",
-        choices=["public_channel", "private_channel"],
-        default="public_channel",
-        help="Conversation type",
-    )
-    ch_create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
-    ch_create_p.add_argument(
-        "--template",
-        type=str,
-        help="Install a channel template (see `popcorn channel templates`)",
-    )
-    ch_create_p.add_argument(
-        "--if-not-exists",
-        action="store_true",
-        help="Return existing channel instead of failing on duplicate name",
-    )
-
-    ch_del_p = ch_sub.add_parser("delete", help="Delete a channel")
-    _add_channel_argument(ch_del_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_edit_p = ch_sub.add_parser("edit", help="Update channel name or description")
-    _add_channel_argument(ch_edit_p, "conversation", "Channel name (#general) or UUID")
-    ch_edit_p.add_argument("--name", type=str, help="New name")
-    ch_edit_p.add_argument("--description", type=str, help="New description")
-
-    ch_info_p = ch_sub.add_parser("info", help="Show channel info and members")
-    _add_channel_argument(ch_info_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_invite_p = ch_sub.add_parser("invite", help="Invite users to a channel")
-    _add_channel_argument(ch_invite_p, "conversation", "Channel name (#general) or UUID")
-    ch_invite_p.add_argument("user_ids", help="Comma-separated user IDs")
-
-    ch_join_p = ch_sub.add_parser("join", help="Join a channel")
-    _add_channel_argument(ch_join_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_kick_p = ch_sub.add_parser("kick", help="Remove a user from a channel")
-    _add_channel_argument(ch_kick_p, "conversation", "Channel name (#general) or UUID")
-    ch_kick_p.add_argument("user_id", help="User UUID to remove")
-
-    ch_leave_p = ch_sub.add_parser("leave", help="Leave a channel")
-    _add_channel_argument(ch_leave_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_list_p = ch_sub.add_parser("list", help="List channels")
-    ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
-    ch_list_p.add_argument("--dms", action="store_true", help="List DMs instead of channels")
-
-    ch_sub.add_parser("templates", help="List available channel templates")
-
     # --- Escape hatch ---
 
     api_p = sub.add_parser("api", help=_h)
@@ -3648,7 +3580,6 @@ _ALL_COMMAND_NAMES.extend(
         *_COMMANDS.keys(),
         "vm",
         "site",
-        "channel",
         *registry.descriptions(),
     ]
 )
@@ -3754,28 +3685,6 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn site [cancel|deploy|export|log|rollback|status|targets|trace]"
-                )
-        elif args.command == "channel":
-            ch_sub = {
-                "archive": cmd_archive_channel,
-                "create": cmd_create_channel,
-                "delete": cmd_delete_channel,
-                "edit": cmd_edit_channel,
-                "info": cmd_info,
-                "invite": cmd_invite,
-                "join": cmd_join_channel,
-                "kick": cmd_kick,
-                "leave": cmd_leave_channel,
-                "list": cmd_channel_list,
-                "templates": cmd_channel_templates,
-            }
-            handler = ch_sub.get(getattr(args, "channel_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn channel"
-                    " [archive|create|delete|edit|info|invite|join|kick|leave|list|templates]"
                 )
         elif args.command == "vm":
             vm_sub = {
