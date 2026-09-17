@@ -18,6 +18,15 @@ repos:
         pass_filenames: false
         verbose: true
 
+      # Scans the whole index, not just the staged paths, so it needs no
+      # filenames and must run even for a commit that touches nothing.
+      - id: check-public-repo
+        name: check for internal-only references (this repo is public)
+        entry: scripts/check-public-repo.sh
+        language: script
+        always_run: true
+        pass_filenames: false
+
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.10
     hooks:

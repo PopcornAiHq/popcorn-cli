@@ -14,6 +14,21 @@ permissions:
   contents: read
 
 jobs:
+  # Separate from `test` rather than a step inside it: the scan is a few
+  # milliseconds and its answer does not vary by interpreter, so running it
+  # once beats running it on all four matrix legs.
+  public-repo:
+    name: No internal-only references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A hook only sees what someone with `pre-commit install` staged. This is
+      # the check that holds for a contributor who never ran it, and for content
+      # that is already committed.
+      - name: Check for internal-only references
+        run: scripts/check-public-repo.sh
+
   test:
     runs-on: ubuntu-latest
     strategy:
