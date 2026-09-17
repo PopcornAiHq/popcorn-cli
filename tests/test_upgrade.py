@@ -59,9 +59,14 @@ class TestDetectInstaller:
 
 
 class TestCmdUpgrade:
+    """`cmd_upgrade` resolves the newest tag before installing, so each test
+    has to state what that lookup returns — otherwise it reaches the network."""
+
     def test_upgrade_success(self, capsys):
         with (
             patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value="0.5.6"),
+            patch("popcorn_cli.cli._write_version_cache"),
             patch("subprocess.run") as mock_run,
             patch("subprocess.check_output", return_value="popcorn 0.5.6\n"),
         ):
@@ -76,6 +81,8 @@ class TestCmdUpgrade:
     def test_upgrade_already_current(self, capsys):
         with (
             patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value="0.5.5"),
+            patch("popcorn_cli.cli._write_version_cache"),
             patch("subprocess.run") as mock_run,
             patch("subprocess.check_output", return_value="popcorn 0.5.5\n"),
         ):
@@ -88,6 +95,8 @@ class TestCmdUpgrade:
     def test_upgrade_unknown_installer(self, capsys):
         with (
             patch("popcorn_cli.cli._detect_installer", return_value=None),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value="0.5.6"),
+            patch("popcorn_cli.cli._write_version_cache"),
             pytest.raises(SystemExit) as exc_info,
         ):
             cmd_upgrade(MagicMock())
@@ -101,6 +110,8 @@ class TestCmdUpgrade:
     def test_upgrade_subprocess_failure(self, capsys):
         with (
             patch("popcorn_cli.cli._detect_installer", return_value="pipx"),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value="0.5.6"),
+            patch("popcorn_cli.cli._write_version_cache"),
             patch("subprocess.run") as mock_run,
         ):
             mock_run.return_value = MagicMock(returncode=1)
@@ -306,3 +317,81 @@ class TestCmdVersion:
         ):
             cmd_version(MagicMock(check=True))
         assert "could not check" in capsys.readouterr().out
+
+
+class TestPinnedUpgradeTarget:
+    """The thing installed must be the thing that was compared against.
+
+    Unpinned, `git+…` resolves to the default branch's HEAD, while the decision
+    to upgrade is made against the newest TAG. They agree only while tagging
+    keeps pace with merges — otherwise an upgrade triggered by tag N quietly
+    delivers every untagged commit after it.
+    """
+
+    def test_url_is_pinned_to_the_tag(self):
+        from popcorn_cli.cli import _github_url
+
+        assert _github_url("0.35.1").endswith("popcorn-cli.git@v0.35.1")
+
+    def test_url_falls_back_to_head_when_no_version_is_known(self):
+        from popcorn_cli.cli import _github_url
+
+        assert "@" not in _github_url(None).split("github.com")[1]
+
+    @pytest.mark.parametrize("installer", ["uv_tool", "uv_pip", "pipx", "pip"])
+    def test_every_installer_gets_the_pin(self, installer):
+        from popcorn_cli.cli import _upgrade_command
+
+        assert any(a.endswith("@v0.35.1") for a in _upgrade_command(installer, "0.35.1"))
+
+    def test_auto_upgrade_installs_the_version_it_compared(self, monkeypatch):
+        """The auto path already knows the tag; it must not re-resolve to HEAD."""
+        from popcorn_cli.cli import _check_and_update
+
+        # Same defensive clear every _check_and_update test in this file does:
+        # the re-exec test above sets POPCORN_NO_UPDATE_CHECK from production
+        # code, and monkeypatch then restores that "1" at teardown, so it leaks
+        # into whatever runs next.
+        monkeypatch.setattr("popcorn_cli.cli._quiet", False)
+        monkeypatch.delenv("POPCORN_NO_UPDATE_CHECK", raising=False)
+
+        with (
+            patch("popcorn_cli.cli._read_version_cache", return_value=("99.0.0", 2**31)),
+            patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
+            patch("popcorn_cli.cli.__version__", "0.1.0"),
+            patch("popcorn_cli.cli.sys.argv", ["popcorn", "whoami"]),
+            patch("shutil.which", return_value=None),
+            patch("subprocess.run") as mock_run,
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            _check_and_update()
+            installed = mock_run.call_args[0][0]
+        assert any(a.endswith("@v99.0.0") for a in installed)
+
+    def test_manual_instructions_name_the_pinned_target(self, capsys):
+        """A user copying the printed command should get the same build."""
+        from popcorn_cli.cli import cmd_upgrade
+
+        with (
+            patch("popcorn_cli.cli._detect_installer", return_value=None),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value="0.35.1"),
+            patch("popcorn_cli.cli._write_version_cache"),
+            pytest.raises(SystemExit),
+        ):
+            cmd_upgrade(MagicMock())
+        assert capsys.readouterr().err.count("@v0.35.1") == 4
+
+    def test_an_unreachable_tag_list_still_upgrades(self, capsys):
+        """Falling back to HEAD beats refusing to upgrade at all."""
+        from popcorn_cli.cli import cmd_upgrade
+
+        with (
+            patch("popcorn_cli.cli._detect_installer", return_value="uv_tool"),
+            patch("popcorn_cli.cli._fetch_latest_version", return_value=None),
+            patch("subprocess.run") as mock_run,
+            patch("subprocess.check_output", return_value="popcorn 0.5.5\n"),
+        ):
+            mock_run.return_value = MagicMock(returncode=0)
+            cmd_upgrade(MagicMock())
+        assert not any("@v" in a for a in mock_run.call_args[0][0])
+        assert "installing HEAD" in capsys.readouterr().err
