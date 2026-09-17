@@ -2645,9 +2645,6 @@ _popcorn_completions() {
         popcorn)
             COMPREPLY=($(compgen -W "{top_level} --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
-        auth)
-            COMPREPLY=($(compgen -W "login logout status token" -- "$cur"))
-            ;;
         workspace)
             COMPREPLY=($(compgen -W "check-access list switch users" -- "$cur"))
             ;;
@@ -2680,7 +2677,6 @@ _popcorn() {
     local -a commands
     commands=(
         'api:Raw API call'
-        'auth:Authentication commands'
         'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)'
         'check-access:Check repo access'
         'completion:Generate shell completions'
@@ -2704,7 +2700,6 @@ _popcorn() {
         cmds) _describe 'command' commands ;;
         args)
             case "${words[1]}" in
-                auth) _values 'subcommand' login logout status token ;;
                 workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
@@ -2724,7 +2719,6 @@ _popcorn "$@"
 # Registry families are merged in at render time — do not add one here.
 _STATIC_TOP_LEVEL = [
     "api",
-    "auth",
     "channel",
     "commands",
     "completion",
@@ -2857,7 +2851,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "message": "messages",
     "channel": "channels",
     "vm": "vm",
-    "auth": "auth",
     "workspace": "auth",
     "env": "auth",
     "whoami": "auth",
@@ -2872,7 +2865,6 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
     "vm": "VM commands (monitor, usage)",
-    "auth": "Auth commands (login, logout, status, token)",
     "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
@@ -3404,23 +3396,6 @@ Other:
     # --- Auth & identity ---
     _h = argparse.SUPPRESS  # hide from default subparser listing; epilog handles display
 
-    auth_parser = sub.add_parser("auth", help=_h)
-    auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    login_p = auth_sub.add_parser("login", help="Log in via browser OAuth")
-    # Note: --env is intentionally NOT redefined here. The global -e/--env (on the
-    # root parser) is hoisted ahead of the subcommand by _hoist_global_flags; a
-    # duplicate subparser --env with the same dest would re-apply its None default
-    # and clobber the hoisted value (e.g. `auth login --env prod` would silently
-    # reuse the current default profile).
-    login_p.add_argument("--with-token", action="store_true", help="Read token from stdin")
-    login_p.add_argument("--force", action="store_true", help="Re-authenticate")
-    login_p.add_argument(
-        "--workspace", type=str, help="Select workspace by name or ID (skips interactive prompt)"
-    )
-    auth_sub.add_parser("logout", help="Clear stored tokens")
-    auth_sub.add_parser("status", help="Show current auth status")
-    auth_sub.add_parser("token", help="Print auth token to stdout")
-
     ws_parser = sub.add_parser("workspace", help=_h)
     ws_sub = ws_parser.add_subparsers(dest="ws_command")
 
@@ -3790,7 +3765,6 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend(
     [
         *_COMMANDS.keys(),
-        "auth",
         "workspace",
         "vm",
         "site",
@@ -3884,19 +3858,7 @@ def main() -> None:
         if registry.dispatch(args):
             return
 
-        if args.command == "auth":
-            sub = {
-                "login": cmd_auth_login,
-                "logout": cmd_auth_logout,
-                "status": cmd_auth_status,
-                "token": cmd_auth_token,
-            }
-            handler = sub.get(getattr(args, "auth_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError("Usage: popcorn auth [login|logout|status|token]")
-        elif args.command == "workspace":
+        if args.command == "workspace":
             sub = {
                 "check-access": cmd_check_access,
                 "inbox": cmd_inbox,
