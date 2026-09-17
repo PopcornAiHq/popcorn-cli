@@ -1728,12 +1728,32 @@ def _poll_verify(
 
 _GITHUB_URL = "git+https://github.com/PopcornAiHq/popcorn-cli.git"
 
-_UPGRADE_COMMANDS: dict[str, list[str]] = {
-    "uv_tool": ["uv", "tool", "install", "--force", _GITHUB_URL],
-    "uv_pip": ["uv", "pip", "install", "--python", sys.executable, "--upgrade", _GITHUB_URL],
-    "pipx": ["pipx", "install", "--force", _GITHUB_URL],
-    "pip": [sys.executable, "-m", "pip", "install", "--upgrade", _GITHUB_URL],
-}
+
+def _github_url(version: str | None = None) -> str:
+    """The install URL, pinned to a released tag when one is known.
+
+    Unpinned, pip and uv resolve `git+…` to the default branch's HEAD — so an
+    upgrade installed whatever `main` happened to be, while the decision to
+    upgrade at all was made by comparing against the newest TAG. The two agree
+    only while tagging keeps pace with merges; the moment it does not, an
+    upgrade triggered by tag N silently delivers every untagged commit after
+    it. Pinning makes the thing installed the thing that was compared.
+
+    `version` is the bare version as `_fetch_latest_version` returns it; tags
+    carry a leading `v`.
+    """
+    return f"{_GITHUB_URL}@v{version}" if version else _GITHUB_URL
+
+
+def _upgrade_command(installer: str, version: str | None = None) -> list[str]:
+    """The shell command that installs `version` (or HEAD) via `installer`."""
+    url = _github_url(version)
+    return {
+        "uv_tool": ["uv", "tool", "install", "--force", url],
+        "uv_pip": ["uv", "pip", "install", "--python", sys.executable, "--upgrade", url],
+        "pipx": ["pipx", "install", "--force", url],
+        "pip": [sys.executable, "-m", "pip", "install", "--upgrade", url],
+    }[installer]
 
 
 def _detect_installer() -> str | None:
@@ -1774,19 +1794,32 @@ def cmd_upgrade(_args: argparse.Namespace) -> None:
     old_version = __version__
     installer = _detect_installer()
 
+    # Resolve the tag to install before doing anything, so the manual
+    # instructions below name the same pinned target the automatic path uses.
+    # A failed lookup falls back to the branch HEAD rather than refusing: an
+    # unpinned upgrade is what this command has always done, and it still
+    # beats leaving someone stuck.
+    target = _fetch_latest_version()
+    if target is not None:
+        _write_version_cache(target)
+    url = _github_url(target)
+
     if installer is None:
         print(
             "Could not detect how popcorn was installed. Run one of:\n"
-            f"  uv pip install --upgrade {_GITHUB_URL}\n"
-            f"  uv tool install --force {_GITHUB_URL}\n"
-            f"  pipx install --force {_GITHUB_URL}\n"
-            f"  pip install --upgrade {_GITHUB_URL}",
+            f"  uv pip install --upgrade {url}\n"
+            f"  uv tool install --force {url}\n"
+            f"  pipx install --force {url}\n"
+            f"  pip install --upgrade {url}",
             file=sys.stderr,
         )
         sys.exit(EXIT_VALIDATION)
 
-    _status(f"Upgrading via {installer}...")
-    cmd = _UPGRADE_COMMANDS[installer]
+    if target is None:
+        _status(f"Upgrading via {installer} (could not reach the tag list — installing HEAD)...")
+    else:
+        _status(f"Upgrading via {installer} to v{target}...")
+    cmd = _upgrade_command(installer, target)
     result = subprocess.run(cmd)
 
     if result.returncode != 0:
@@ -1920,7 +1953,7 @@ def _check_and_update() -> None:
         return
 
     _status(f"Updating popcorn {__version__} → {latest}...")
-    upgrade_cmd = _UPGRADE_COMMANDS[installer]
+    upgrade_cmd = _upgrade_command(installer, latest)
     result = subprocess.run(upgrade_cmd, capture_output=True)
 
     if result.returncode != 0:
