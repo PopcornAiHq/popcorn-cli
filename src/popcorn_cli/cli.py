@@ -2923,6 +2923,16 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
+# `site` and `vm` are the two families still declared by hand in this module
+# rather than through the registry, so their deprecation is declared here too.
+# The note is addressed to a caller deciding what to do, so it says where to go
+# instead — or, as now, that nothing replaces these yet and they keep working.
+_COMMAND_DEPRECATIONS: dict[str, str] = {
+    "site": "Deprecated. Still supported; no replacement yet.",
+    "vm": "Deprecated. Still supported; no replacement yet.",
+}
+
+
 def _command_categories() -> dict[str, str]:
     """Hand-declared categories, plus every registry family's."""
     return {**_COMMAND_CATEGORIES, **registry.categories()}
@@ -2931,6 +2941,11 @@ def _command_categories() -> dict[str, str]:
 def _command_descriptions() -> dict[str, str]:
     """Hand-declared descriptions, plus every registry family's."""
     return {**_COMMAND_DESCRIPTIONS, **registry.descriptions()}
+
+
+def _command_deprecations() -> dict[str, str]:
+    """Hand-declared deprecations, plus every registry family's."""
+    return {**_COMMAND_DEPRECATIONS, **registry.deprecations()}
 
 
 def cmd_commands(args: argparse.Namespace) -> None:
@@ -2954,6 +2969,7 @@ def cmd_commands(args: argparse.Namespace) -> None:
 
     categories = _command_categories()
     descriptions = _command_descriptions()
+    deprecations = _command_deprecations()
 
     commands: list[dict[str, Any]] = []
     if sub_action:
@@ -2963,6 +2979,8 @@ def cmd_commands(args: argparse.Namespace) -> None:
                 cmd["category"] = categories[name]
             if name in descriptions:
                 cmd["description"] = descriptions[name]
+            if name in deprecations:
+                cmd["deprecated"] = deprecations[name]
             # Check for nested subcommands (auth, workspace, webhook, flow, …);
             # recurses for multi-level groups like `flow runs list`.
             subcmds = _describe_subcommands(sub_parser)
@@ -3367,7 +3385,8 @@ def _fold_dual_spelled_arguments(args: argparse.Namespace) -> None:
 def build_parser() -> PopcornParser:
     epilog = """\
 Sites:
-  site            Site commands (cancel, deploy, log, rollback, status, trace)
+  site            [DEPRECATED] Site commands (cancel, deploy, export, log,
+                  rollback, status, targets, trace)
 
 Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
@@ -3394,7 +3413,7 @@ Webhooks:
                   override-rules, deliveries, event-types, send)
 
 VM:
-  vm              VM commands (monitor, usage)
+  vm              [DEPRECATED] VM commands (monitor, usage)
 
 Auth & identity:
   auth            Auth commands (login, logout, status, token)

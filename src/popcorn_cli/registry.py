@@ -253,6 +253,15 @@ class Command:
     category: str
     description: str
     subcommands: list[Subcommand] = field(default_factory=list)
+    # One line telling a caller where to go instead, or that nothing replaces
+    # this yet. It reaches the `deprecated` key in `commands --json`, so an
+    # agent doing schema discovery — the documented way to find out what this
+    # CLI can do — sees it without reading the repo. A family deprecated only
+    # in a design doc is deprecated to nobody.
+    #
+    # It does NOT reach `--help`: that listing is a hand-written epilog in
+    # `cli.py — build_parser`, so mark the family there in the same commit.
+    deprecated: str | None = None
 
 
 COMMANDS: list[Command] = []
@@ -401,3 +410,13 @@ def descriptions() -> dict[str, str]:
 
 def categories() -> dict[str, str]:
     return {c.name: c.category for c in COMMANDS}
+
+
+def deprecations() -> dict[str, str]:
+    """Registry families carrying a deprecation note, by name.
+
+    Families still declared by hand in `cli.py` are merged in by
+    `cli.py — _command_deprecations`, the same way categories and
+    descriptions are.
+    """
+    return {c.name: c.deprecated for c in COMMANDS if c.deprecated}
