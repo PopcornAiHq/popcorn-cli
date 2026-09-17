@@ -10,7 +10,7 @@ import pytest
 
 import popcorn_cli
 from popcorn_cli import registry
-from popcorn_cli.cli import build_parser
+from popcorn_cli.cli import _hoist_global_flags, build_parser
 from popcorn_cli.registry import dispatch
 from popcorn_core.errors import EXIT_SERVER, APIError, PopcornError
 
@@ -428,7 +428,17 @@ class TestAuthCommands:
         assert args.with_token is True
 
     def test_auth_login_workspace(self, parser):
-        args = parser.parse_args(["auth", "login", "--workspace", "acme"])
+        """Parsed the way `main()` parses, which is the only way it is reached.
+
+        This asserted the same thing against raw argv, and passed while the
+        behaviour was broken for every real caller: `auth login` declared its
+        own `--workspace`, so raw `parse_args` let the subparser consume the
+        value, while a real invocation went through the hoist and had the
+        subparser's `None` default copied back over it. The flag is gone and
+        the global spelling does the work; hoisting here is what makes the test
+        see what a user sees.
+        """
+        args = parser.parse_args(_hoist_global_flags(["auth", "login", "--workspace", "acme"]))
         assert args.workspace == "acme"
 
     def test_auth_status(self, parser):

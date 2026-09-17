@@ -170,7 +170,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `-q` / `--quiet` | Suppress informational stderr messages |
 | `--timeout N` | HTTP request timeout in seconds (default: 30) |
 | `-e` / `--env` | Profile name to use |
-| `--workspace <uuid>` | Override workspace |
+| `--workspace <name-or-uuid>` | Override workspace; at login, selects it instead of prompting |
 | `--no-color` | Disable color output |
 | `--debug` | Log HTTP requests/responses to stderr |
 | `-y` / `--yes` | Auto-confirm prompts (also `POPCORN_ASSUME_YES=1`) |

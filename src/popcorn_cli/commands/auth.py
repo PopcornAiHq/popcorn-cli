@@ -28,19 +28,22 @@ register(
                 "Log in via browser OAuth",
                 late_handler("cmd_auth_login"),
                 [
-                    # `--env` is deliberately NOT declared here. The global
-                    # -e/--env is hoisted ahead of the subcommand by
-                    # `cli.py — _hoist_global_flags`; a subcommand flag sharing
-                    # its dest would re-apply its own None default afterwards
-                    # and clobber the hoisted value, so `auth login --env prod`
-                    # would silently log in against the current default profile.
+                    # Neither `--env` nor `--workspace` is declared here, and
+                    # both are still accepted: `cli.py — _hoist_global_flags`
+                    # moves the global spelling ahead of the subcommand, so
+                    # `auth login --workspace W` and `--workspace W auth login`
+                    # reach the same place. Redeclaring one here does not add a
+                    # flag, it breaks the flag — argparse copies the subparser's
+                    # namespace back over the parent's, so the subcommand copy
+                    # re-applies its own None default on top of the hoisted
+                    # value and wins. `--workspace` was declared here and lost
+                    # exactly that way, with the login prompting interactively
+                    # however it was invoked.
+                    #
+                    # `tests/test_registry.py — test_no_subcommand_redefines_a_hoisted_global`
+                    # fails if any subcommand reintroduces the collision.
                     Argument("with-token", "Read token from stdin", action="store_true"),
                     Argument("force", "Re-authenticate", action="store_true"),
-                    Argument(
-                        "workspace",
-                        "Select workspace by name or ID (skips interactive prompt)",
-                        type=str,
-                    ),
                 ],
             ),
             Subcommand("logout", "Clear stored tokens", late_handler("cmd_auth_logout")),

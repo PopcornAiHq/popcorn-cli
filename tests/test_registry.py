@@ -989,3 +989,74 @@ class TestLateBoundHandlers:
         for cmd in registry.COMMANDS:
             walk(cmd.subcommands, cmd.name)
         assert not missing, "late-bound handlers that do not resolve: " + "; ".join(missing)
+
+
+class TestHoistedGlobalFlags:
+    """A subcommand must not redeclare a flag that `_hoist_global_flags` moves.
+
+    `popcorn --workspace W channel list` and `popcorn channel list --workspace W`
+    are the same invocation because the hoist rewrites the second into the
+    first before argparse runs. That only holds while the root parser is the
+    only one declaring the flag. Redeclare it on a subcommand and argparse
+    copies the subparser's namespace back over the parent's afterwards,
+    re-applying the subcommand's own `None` default on top of the hoisted value
+    — so the flag parses, appears in `--help`, and silently does nothing.
+
+    `auth login --workspace` shipped that way and prompted interactively
+    however it was invoked. A hand-written comment warning about `--env` sat
+    directly above the argument it had already happened to, which is the
+    argument for enforcing it rather than describing it.
+    """
+
+    def test_no_subcommand_redefines_a_hoisted_global(self, parser):
+        from popcorn_cli.cli import _HOISTED_BOOLEAN_FLAGS, _HOISTED_VALUE_FLAGS
+
+        hoisted = set(_HOISTED_BOOLEAN_FLAGS) | set(_HOISTED_VALUE_FLAGS)
+        # Resolve to dests: the collision is on the attribute, not the spelling,
+        # so a subcommand declaring only `--workspace` still clobbers a value
+        # the root stored under the same dest via `-w`.
+        clobberable = {a.dest for a in parser._actions if set(a.option_strings) & hoisted}
+
+        collisions = []
+
+        def walk(node, path):
+            for action in node._actions:
+                if isinstance(action, argparse._SubParsersAction):
+                    for name, sub in action.choices.items():
+                        walk(sub, [*path, name])
+                elif action.option_strings and action.dest in clobberable:
+                    collisions.append(
+                        f"{' '.join(path)} redeclares {'/'.join(action.option_strings)}"
+                    )
+
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for name, sub in action.choices.items():
+                    walk(sub, [name])
+
+        assert not collisions, (
+            "these subcommands redeclare a hoisted global flag and will silently "
+            "drop its value: " + "; ".join(collisions)
+        )
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["auth", "login", "--workspace", "W1"],
+            ["--workspace", "W1", "auth", "login"],
+            ["channel", "list", "--workspace", "W1"],
+            ["--workspace", "W1", "channel", "list"],
+        ],
+        ids=lambda a: " ".join(a),
+    )
+    def test_workspace_survives_the_real_pipeline(self, parser, argv):
+        """Parse the way `main()` does — hoist first.
+
+        `tests/test_parser_parity.py` calls `parse_args` on raw argv, so it
+        records what the parser does rather than what an invocation does. That
+        is the right job for pinning a migration, and it is also why it recorded
+        a working `--workspace` for a command where it had never worked.
+        """
+        from popcorn_cli.cli import _hoist_global_flags
+
+        assert parser.parse_args(_hoist_global_flags(list(argv))).workspace == "W1"

@@ -644,7 +644,11 @@ def cmd_auth_login(args: argparse.Namespace) -> None:
     save_config(cfg)
 
     client = APIClient(profile)
-    _select_workspace(client, profile)
+    # Same forwarding as the --with-token path above. Omitting it here made
+    # `--workspace` a no-op on the browser flow, which is the default login —
+    # so the flag prompted interactively for exactly the callers who passed it
+    # to avoid the prompt.
+    _select_workspace(client, profile, getattr(args, "workspace", None))
     save_config(cfg)
     print(f"\nLogged in as {tokens['email']} in workspace {profile.workspace_name}")
 
@@ -3412,7 +3416,15 @@ Other:
     )
     parser.add_argument("--version", action="version", version=f"popcorn {__version__}")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--workspace", type=str, help="Override workspace ID")
+    parser.add_argument(
+        "--workspace",
+        type=str,
+        # Every consumer resolves it by name or ID, case-insensitively
+        # (`_get_client`, `_select_workspace`), and this is the only
+        # spelling — `auth login` used to carry its own copy, which broke
+        # rather than added to it.
+        help="Workspace name or ID (at login, selects it instead of prompting)",
+    )
     parser.add_argument("-e", "--env", type=str, help="Profile/environment name to use")
     parser.add_argument("--no-color", action="store_true", help="Disable color output")
     parser.add_argument(
@@ -3664,6 +3676,16 @@ def _agent_mode_enabled() -> bool:
     return val in ("1", "true", "yes")
 
 
+# The global flags `_hoist_global_flags` moves ahead of the subcommand. Named
+# rather than inline because a subcommand that redeclares one of these silently
+# breaks it — argparse copies the subparser's namespace back over the parent's,
+# so the subcommand's own default lands on top of the hoisted value. The test
+# that enforces that reads these, so it cannot fall out of step with the list
+# actually being hoisted.
+_HOISTED_BOOLEAN_FLAGS = ("--json", "--quiet", "-q", "--debug", "--no-color", "--yes", "-y")
+_HOISTED_VALUE_FLAGS = ("--timeout", "--workspace", "--env", "-e")
+
+
 def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
     """Move global flags to before the subcommand so they're parsed correctly.
 
@@ -3687,13 +3709,13 @@ def _hoist_global_flags(argv: list[str] | None = None) -> list[str]:
             hoisted.append("--no-color")
 
     # Boolean flags
-    for flag in ("--json", "--quiet", "-q", "--debug", "--no-color", "--yes", "-y"):
+    for flag in _HOISTED_BOOLEAN_FLAGS:
         if flag in args:
             hoisted.append(flag)
             args = [a for a in args if a != flag]
 
     # Value flags (--flag VALUE)
-    for flag in ("--timeout", "--workspace", "--env", "-e"):
+    for flag in _HOISTED_VALUE_FLAGS:
         if flag in args:
             idx = args.index(flag)
             hoisted.append(args[idx])
