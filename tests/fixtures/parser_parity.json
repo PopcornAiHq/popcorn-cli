@@ -1,0 +1,1780 @@
+[
+  {
+    "argv": [
+      "auth",
+      "login"
+    ],
+    "namespace": {
+      "auth_command": "login",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "force": false,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "with_token": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "login",
+      "--with-token",
+      "--force",
+      "--workspace",
+      "x"
+    ],
+    "namespace": {
+      "auth_command": "login",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "force": true,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "with_token": true,
+      "workspace": "x",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "logout"
+    ],
+    "namespace": {
+      "auth_command": "logout",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "logout"
+    ],
+    "namespace": {
+      "auth_command": "logout",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "status"
+    ],
+    "namespace": {
+      "auth_command": "status",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "status"
+    ],
+    "namespace": {
+      "auth_command": "status",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "token"
+    ],
+    "namespace": {
+      "auth_command": "token",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "auth",
+      "token"
+    ],
+    "namespace": {
+      "auth_command": "token",
+      "command": "auth",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "vm",
+      "monitor"
+    ],
+    "namespace": {
+      "command": "vm",
+      "debug": false,
+      "env": null,
+      "interval": 5,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "raw": false,
+      "timeout": null,
+      "vm_command": "monitor",
+      "watch": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "vm",
+      "monitor",
+      "--watch",
+      "--interval",
+      "7",
+      "--raw"
+    ],
+    "namespace": {
+      "command": "vm",
+      "debug": false,
+      "env": null,
+      "interval": 7,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "raw": true,
+      "timeout": null,
+      "vm_command": "monitor",
+      "watch": true,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "vm",
+      "usage"
+    ],
+    "namespace": {
+      "command": "vm",
+      "days": null,
+      "debug": false,
+      "env": null,
+      "hours": null,
+      "json": false,
+      "limit": 20,
+      "no_color": false,
+      "queue": null,
+      "quiet": false,
+      "raw": false,
+      "timeout": null,
+      "vm_command": "usage",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "vm",
+      "usage",
+      "--hours",
+      "1.5",
+      "--days",
+      "7",
+      "--queue",
+      "x",
+      "--limit",
+      "7",
+      "--raw"
+    ],
+    "namespace": {
+      "command": "vm",
+      "days": 7,
+      "debug": false,
+      "env": null,
+      "hours": 1.5,
+      "json": false,
+      "limit": 7,
+      "no_color": false,
+      "queue": "x",
+      "quiet": false,
+      "raw": true,
+      "timeout": null,
+      "vm_command": "usage",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "check-access",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "repo": "x",
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "check-access",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "check-access",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "repo": "x",
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "check-access",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "inbox"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": null,
+      "no_color": false,
+      "offset": null,
+      "quiet": false,
+      "read": false,
+      "timeout": null,
+      "unread": false,
+      "workspace": null,
+      "ws_command": "inbox",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "inbox",
+      "--unread",
+      "--limit",
+      "7",
+      "--offset",
+      "7"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": 7,
+      "no_color": false,
+      "offset": 7,
+      "quiet": false,
+      "read": false,
+      "timeout": null,
+      "unread": true,
+      "workspace": null,
+      "ws_command": "inbox",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "list"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "list",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "list"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "list",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "switch",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": "x",
+      "ws_command": "switch",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "switch",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": "x",
+      "ws_command": "switch",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "users",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "users",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "workspace",
+      "users",
+      "x"
+    ],
+    "namespace": {
+      "command": "workspace",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "ws_command": "users",
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "cancel",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "item": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "cancel",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "cancel",
+      "x",
+      "--item",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "item": "x",
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "cancel",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "deploy",
+      "x"
+    ],
+    "namespace": {
+      "command": "site",
+      "context": "",
+      "context_from_git": false,
+      "debug": false,
+      "env": null,
+      "force": false,
+      "json": false,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "site_command": "deploy",
+      "skip_check": false,
+      "target": null,
+      "timeout": null,
+      "verbose": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "deploy",
+      "x",
+      "--context",
+      "x",
+      "-f",
+      "-v",
+      "--skip-check",
+      "--target",
+      "x"
+    ],
+    "namespace": {
+      "command": "site",
+      "context": "x",
+      "context_from_git": false,
+      "debug": false,
+      "env": null,
+      "force": true,
+      "json": false,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "site_command": "deploy",
+      "skip_check": true,
+      "target": "x",
+      "timeout": null,
+      "verbose": true,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "export",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "force": false,
+      "json": false,
+      "no_color": false,
+      "output": null,
+      "quiet": false,
+      "revert": false,
+      "site_command": "export",
+      "target": null,
+      "timeout": null,
+      "version": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "export",
+      "x",
+      "--version",
+      "x",
+      "-f",
+      "--output",
+      "x",
+      "--target",
+      "x",
+      "--revert"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "force": true,
+      "json": false,
+      "no_color": false,
+      "output": "x",
+      "quiet": false,
+      "revert": true,
+      "site_command": "export",
+      "target": "x",
+      "timeout": null,
+      "version": "x",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "log",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": 10,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "log",
+      "target": null,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "log",
+      "x",
+      "--limit",
+      "7",
+      "--target",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": 7,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "log",
+      "target": "x",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "rollback",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "raw": false,
+      "site_command": "rollback",
+      "timeout": null,
+      "version": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "rollback",
+      "x",
+      "--version",
+      "7",
+      "--raw"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "raw": true,
+      "site_command": "rollback",
+      "timeout": null,
+      "version": 7,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "status",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "status",
+      "target": null,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "status",
+      "x",
+      "--target",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "status",
+      "target": "x",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "targets"
+    ],
+    "namespace": {
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "targets",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "targets"
+    ],
+    "namespace": {
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "site_command": "targets",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "trace",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "item_id": "x",
+      "json": false,
+      "limit": 10,
+      "list": false,
+      "no_color": false,
+      "quiet": false,
+      "raw": false,
+      "site_command": "trace",
+      "status": null,
+      "timeout": null,
+      "watch": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "site",
+      "trace",
+      "x",
+      "x",
+      "--list",
+      "--watch",
+      "--status",
+      "x",
+      "--raw",
+      "--limit",
+      "7"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "site",
+      "debug": false,
+      "env": null,
+      "item_id": "x",
+      "json": false,
+      "limit": 7,
+      "list": true,
+      "no_color": false,
+      "quiet": false,
+      "raw": true,
+      "site_command": "trace",
+      "status": "x",
+      "timeout": null,
+      "watch": true,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "delete",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "delete",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "delete",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "delete",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "download",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "file_key": "x",
+      "json": false,
+      "message_command": "download",
+      "no_color": false,
+      "output": null,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "download",
+      "x",
+      "--output",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "file_key": "x",
+      "json": false,
+      "message_command": "download",
+      "no_color": false,
+      "output": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "edit",
+      "x",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "content": "x",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "edit",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "edit",
+      "x",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "content": "x",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "edit",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "get",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "get",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "get",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "message_command": "get",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "list",
+      "x"
+    ],
+    "namespace": {
+      "after": null,
+      "before": null,
+      "command": "message",
+      "conversation": "x",
+      "count": null,
+      "debug": false,
+      "env": null,
+      "interval": 3,
+      "json": false,
+      "limit": null,
+      "max_wait": null,
+      "message_command": "list",
+      "no_color": false,
+      "quiet": false,
+      "thread": null,
+      "timeout": null,
+      "watch": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "list",
+      "x",
+      "--thread",
+      "x",
+      "--limit",
+      "7",
+      "--before",
+      "x",
+      "--after",
+      "x",
+      "--watch",
+      "--interval",
+      "7",
+      "--count",
+      "7",
+      "--max-wait",
+      "1.5"
+    ],
+    "namespace": {
+      "after": "x",
+      "before": "x",
+      "command": "message",
+      "conversation": "x",
+      "count": 7,
+      "debug": false,
+      "env": null,
+      "interval": 7,
+      "json": false,
+      "limit": 7,
+      "max_wait": 1.5,
+      "message_command": "list",
+      "no_color": false,
+      "quiet": false,
+      "thread": "x",
+      "timeout": null,
+      "watch": true,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "react",
+      "x",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "emoji": "x",
+      "env": null,
+      "json": false,
+      "message_command": "react",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "remove": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "react",
+      "x",
+      "x",
+      "x",
+      "--remove"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "emoji": "x",
+      "env": null,
+      "json": false,
+      "message_command": "react",
+      "message_id": "x",
+      "no_color": false,
+      "quiet": false,
+      "remove": true,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "search",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": null,
+      "message_command": "search",
+      "no_color": false,
+      "offset": null,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "search",
+      "x",
+      "--limit",
+      "7",
+      "--offset",
+      "7"
+    ],
+    "namespace": {
+      "command": "message",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": 7,
+      "message_command": "search",
+      "no_color": false,
+      "offset": 7,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "send",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "batch": false,
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "fail_fast": false,
+      "file": null,
+      "json": false,
+      "message": "x",
+      "message_command": "send",
+      "no_color": false,
+      "quiet": false,
+      "thread": null,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "send",
+      "x",
+      "x",
+      "--thread",
+      "x",
+      "--file",
+      "x",
+      "--batch",
+      "--fail-fast"
+    ],
+    "namespace": {
+      "batch": true,
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "fail_fast": true,
+      "file": "x",
+      "json": false,
+      "message": "x",
+      "message_command": "send",
+      "no_color": false,
+      "quiet": false,
+      "thread": "x",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "threads",
+      "x"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": null,
+      "message_command": "threads",
+      "no_color": false,
+      "offset": null,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "message",
+      "threads",
+      "x",
+      "--limit",
+      "7",
+      "--offset",
+      "7"
+    ],
+    "namespace": {
+      "command": "message",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "limit": 7,
+      "message_command": "threads",
+      "no_color": false,
+      "offset": 7,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "archive",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "archive",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "undo": false,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "archive",
+      "x",
+      "--undo"
+    ],
+    "namespace": {
+      "channel_command": "archive",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "undo": true,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "create",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "create",
+      "command": "channel",
+      "debug": false,
+      "env": null,
+      "if_not_exists": false,
+      "json": false,
+      "members": null,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "template": null,
+      "timeout": null,
+      "type": "public_channel",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "create",
+      "x",
+      "--type",
+      "public_channel",
+      "--members",
+      "x",
+      "--template",
+      "x",
+      "--if-not-exists"
+    ],
+    "namespace": {
+      "channel_command": "create",
+      "command": "channel",
+      "debug": false,
+      "env": null,
+      "if_not_exists": true,
+      "json": false,
+      "members": "x",
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "template": "x",
+      "timeout": null,
+      "type": "public_channel",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "delete",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "delete",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "delete",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "delete",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "edit",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "edit",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "description": null,
+      "env": null,
+      "json": false,
+      "name": null,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "edit",
+      "x",
+      "--name",
+      "x",
+      "--description",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "edit",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "description": "x",
+      "env": null,
+      "json": false,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "info",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "info",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "info",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "info",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "invite",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "invite",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "user_ids": "x",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "invite",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "invite",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "user_ids": "x",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "join",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "join",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "join",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "join",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "kick",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "kick",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "user_id": "x",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "kick",
+      "x",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "kick",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "user_id": "x",
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "leave",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "leave",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "leave",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "leave",
+      "command": "channel",
+      "conversation": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "list",
+      "x"
+    ],
+    "namespace": {
+      "channel_command": "list",
+      "command": "channel",
+      "debug": false,
+      "dms": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "list",
+      "x",
+      "--dms"
+    ],
+    "namespace": {
+      "channel_command": "list",
+      "command": "channel",
+      "debug": false,
+      "dms": true,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "query": "x",
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "templates"
+    ],
+    "namespace": {
+      "channel_command": "templates",
+      "command": "channel",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "channel",
+      "templates"
+    ],
+    "namespace": {
+      "channel_command": "templates",
+      "command": "channel",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  }
+]
