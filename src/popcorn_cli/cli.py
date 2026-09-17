@@ -2645,9 +2645,6 @@ _popcorn_completions() {
         popcorn)
             COMPREPLY=($(compgen -W "{top_level} --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
-        workspace)
-            COMPREPLY=($(compgen -W "check-access list switch users" -- "$cur"))
-            ;;
         site)
             COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
             ;;
@@ -2685,7 +2682,6 @@ _popcorn() {
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
         'whoami:Show current user and workspace'
-        'workspace:Workspace commands (check-access, inbox, list, switch, users)'
 {registry_commands}    )
 
     _arguments \
@@ -2700,7 +2696,6 @@ _popcorn() {
         cmds) _describe 'command' commands ;;
         args)
             case "${words[1]}" in
-                workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 message) _values 'subcommand' delete download edit get list react search send threads ;;
                 channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
@@ -2730,7 +2725,6 @@ _STATIC_TOP_LEVEL = [
     "version",
     "vm",
     "whoami",
-    "workspace",
 ]
 
 
@@ -2851,7 +2845,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
     "message": "messages",
     "channel": "channels",
     "vm": "vm",
-    "workspace": "auth",
     "env": "auth",
     "whoami": "auth",
     "api": "other",
@@ -2865,7 +2858,6 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
     "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
     "vm": "VM commands (monitor, usage)",
-    "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -3396,26 +3388,6 @@ Other:
     # --- Auth & identity ---
     _h = argparse.SUPPRESS  # hide from default subparser listing; epilog handles display
 
-    ws_parser = sub.add_parser("workspace", help=_h)
-    ws_sub = ws_parser.add_subparsers(dest="ws_command")
-
-    ws_check_p = ws_sub.add_parser("check-access", help="Check repository access")
-    ws_check_p.add_argument("repo", help="Repository (owner/repo)")
-
-    ws_inbox_p = ws_sub.add_parser("inbox", help="Show notifications")
-    ws_inbox_grp = ws_inbox_p.add_mutually_exclusive_group()
-    ws_inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
-    ws_inbox_grp.add_argument("--read", action="store_true", help="Show only read")
-    ws_inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
-    ws_inbox_p.add_argument("--offset", type=int, help="Pagination offset")
-
-    ws_sub.add_parser("list", help="List available workspaces")
-    switch_p = ws_sub.add_parser("switch", help="Switch active workspace")
-    switch_p.add_argument("workspace", nargs="?", default=None, help="Workspace name or UUID")
-
-    ws_users_p = ws_sub.add_parser("users", help="List workspace users")
-    ws_users_p.add_argument("query", nargs="?", default="", help="Filter query")
-
     env_p = sub.add_parser("env", help=_h)
     env_p.add_argument("target_env", nargs="?", default=None, help="Profile name to switch to")
 
@@ -3765,7 +3737,6 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend(
     [
         *_COMMANDS.keys(),
-        "workspace",
         "vm",
         "site",
         "message",
@@ -3858,22 +3829,7 @@ def main() -> None:
         if registry.dispatch(args):
             return
 
-        if args.command == "workspace":
-            sub = {
-                "check-access": cmd_check_access,
-                "inbox": cmd_inbox,
-                "list": cmd_workspace_list,
-                "switch": cmd_workspace_switch,
-                "users": cmd_search_users,
-            }
-            handler = sub.get(getattr(args, "ws_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn workspace [check-access|inbox|list|switch|users]"
-                )
-        elif args.command == "site":
+        if args.command == "site":
             site_sub = {
                 "cancel": cmd_vm_cancel,
                 "deploy": cmd_pop,

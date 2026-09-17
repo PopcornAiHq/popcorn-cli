@@ -268,7 +268,7 @@
       "repo": "x",
       "timeout": null,
       "workspace": null,
-      "ws_command": "check-access",
+      "workspace_command": "check-access",
       "yes": false
     }
   },
@@ -288,7 +288,7 @@
       "repo": "x",
       "timeout": null,
       "workspace": null,
-      "ws_command": "check-access",
+      "workspace_command": "check-access",
       "yes": false
     }
   },
@@ -310,7 +310,7 @@
       "timeout": null,
       "unread": false,
       "workspace": null,
-      "ws_command": "inbox",
+      "workspace_command": "inbox",
       "yes": false
     }
   },
@@ -337,7 +337,7 @@
       "timeout": null,
       "unread": true,
       "workspace": null,
-      "ws_command": "inbox",
+      "workspace_command": "inbox",
       "yes": false
     }
   },
@@ -355,7 +355,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": null,
-      "ws_command": "list",
+      "workspace_command": "list",
       "yes": false
     }
   },
@@ -373,7 +373,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": null,
-      "ws_command": "list",
+      "workspace_command": "list",
       "yes": false
     }
   },
@@ -392,7 +392,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": "x",
-      "ws_command": "switch",
+      "workspace_command": "switch",
       "yes": false
     }
   },
@@ -411,7 +411,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": "x",
-      "ws_command": "switch",
+      "workspace_command": "switch",
       "yes": false
     }
   },
@@ -431,7 +431,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": null,
-      "ws_command": "users",
+      "workspace_command": "users",
       "yes": false
     }
   },
@@ -451,7 +451,7 @@
       "quiet": false,
       "timeout": null,
       "workspace": null,
-      "ws_command": "users",
+      "workspace_command": "users",
       "yes": false
     }
   },

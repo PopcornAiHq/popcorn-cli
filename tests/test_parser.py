@@ -507,7 +507,7 @@ class TestReadingCommands:
     def test_users_list(self, parser):
         args = parser.parse_args(["workspace", "users"])
         assert args.command == "workspace"
-        assert args.ws_command == "users"
+        assert args.workspace_command == "users"
 
 
 class TestWritingCommands:
@@ -935,7 +935,7 @@ class TestCheckAccess:
     def test_check_access(self, parser):
         args = parser.parse_args(["workspace", "check-access", "acme/widgets"])
         assert args.command == "workspace"
-        assert args.ws_command == "check-access"
+        assert args.workspace_command == "check-access"
         assert args.repo == "acme/widgets"
 
 
