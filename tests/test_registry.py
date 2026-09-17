@@ -954,3 +954,38 @@ class TestAppPublishFlags:
         # agent holding an old script needs to find out what replaced it.
         assert ("--message", "-m", "--changelog") in by_flag
         assert by_flag[("--bump",)]["choices"] == ["major", "minor", "patch"]
+
+
+class TestLateBoundHandlers:
+    """Every late-bound handler name must resolve on `cli`.
+
+    A surface-only migration leaves handler bodies in cli.py and refers to them
+    by string, resolved at call time — so a typo or a renamed handler is
+    invisible to every test that only parses arguments, and surfaces as an
+    AttributeError the first time a user runs the command. Three names were
+    wrong on the first draft of the `message` family; this is what makes that a
+    test failure instead of a field report.
+
+    Its limit is worth knowing, because the surface-only convention leans on
+    it: this proves a name RESOLVES, never that it is the right one. Binding
+    `message delete` to `cmd_delete_channel` would pass here. Only reading the
+    declaration against the handler catches that.
+    """
+
+    def test_every_late_bound_name_exists(self):
+        from popcorn_cli import cli, registry
+
+        missing = []
+
+        def walk(subs, path):
+            for sub in subs:
+                if sub.subcommands:
+                    walk(sub.subcommands, f"{path} {sub.name}")
+                    continue
+                name = getattr(sub.handler, "__name__", "")
+                if name.startswith("cmd_") and not hasattr(cli, name):
+                    missing.append(f"{path} {sub.name} -> cli.{name}")
+
+        for cmd in registry.COMMANDS:
+            walk(cmd.subcommands, cmd.name)
+        assert not missing, "late-bound handlers that do not resolve: " + "; ".join(missing)

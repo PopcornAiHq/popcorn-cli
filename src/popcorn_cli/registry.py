@@ -149,6 +149,14 @@ class Argument:
     # additional spelling, never a replacement. Only meaningful with
     # `positional`; `add_to` routes it through `add_dual_spelled_argument`.
     flag_alias: str | None = None
+    # Only meaningful alongside `flag_alias`: the positionals declared AFTER
+    # this one that are themselves optional. Naming them is what lets
+    # `cli.py — _shift_trailing_positionals` put a value back where the caller
+    # meant it — argparse fills positionals left to right, so with the flag
+    # form given, `message send --channel '#ops' "hi"` lands "hi" in the
+    # channel's slot and leaves the message empty. Empty when nothing optional
+    # follows, which is the common case.
+    trailing: tuple[str, ...] = ()
 
     @property
     def is_required(self) -> bool:
@@ -184,12 +192,34 @@ class Argument:
             kwargs["default"] = self.default
         if self.positional:
             if self.flag_alias:
+                # `add_dual_spelled_argument` hardcodes nargs="?" and
+                # default=None and takes no type or choices, so anything else
+                # declared here would be accepted and silently dropped — the
+                # same shape of failure as the `--limit` default that shipped
+                # broken in 0.34.0, reachable through this branch instead.
+                unsupported = [
+                    field
+                    for field, value in (
+                        ("type", self.type),
+                        ("choices", self.choices),
+                        ("default", self.default),
+                        ("const", self.const),
+                    )
+                    if value is not None
+                ]
+                if unsupported:
+                    raise ValueError(
+                        f"{self.name}: flag_alias cannot be combined with "
+                        f"{', '.join(unsupported)} — a dual-spelled argument is "
+                        "always an optional untyped string"
+                    )
                 add_dual_spelled_argument(
                     parser,
                     self.name,
                     self.help,
                     flag=self.flag_alias,
                     required=self.is_required,
+                    trailing=self.trailing,
                 )
                 return
             parser.add_argument(self.name, **kwargs)

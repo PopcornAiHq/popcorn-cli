@@ -2,6 +2,30 @@
 
 from __future__ import annotations
 
-from . import app, channel_config, flow, schedule, table, template, webhook
+from . import (
+    app,
+    auth,
+    channel,
+    channel_config,
+    flow,
+    message,
+    schedule,
+    table,
+    template,
+    webhook,
+    workspace,
+)
 
-__all__ = ["app", "channel_config", "flow", "schedule", "table", "template", "webhook"]
+__all__ = [
+    "app",
+    "auth",
+    "channel",
+    "channel_config",
+    "flow",
+    "message",
+    "schedule",
+    "table",
+    "template",
+    "webhook",
+    "workspace",
+]

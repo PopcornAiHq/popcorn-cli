@@ -2645,20 +2645,8 @@ _popcorn_completions() {
         popcorn)
             COMPREPLY=($(compgen -W "{top_level} --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
-        auth)
-            COMPREPLY=($(compgen -W "login logout status token" -- "$cur"))
-            ;;
-        workspace)
-            COMPREPLY=($(compgen -W "check-access list switch users" -- "$cur"))
-            ;;
         site)
             COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
-            ;;
-        message)
-            COMPREPLY=($(compgen -W "delete download edit get list react search send threads" -- "$cur"))
-            ;;
-        channel)
-            COMPREPLY=($(compgen -W "archive create delete edit info invite join kick leave list templates" -- "$cur"))
             ;;
         vm)
             COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
@@ -2680,16 +2668,12 @@ _popcorn() {
     local -a commands
     commands=(
         'api:Raw API call'
-        'auth:Authentication commands'
-        'channel:Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)'
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
-        'message:Message commands (delete, download, edit, get, list, react, search, send, threads)'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'vm:Workspace VM commands (monitor, usage)'
         'whoami:Show current user and workspace'
-        'workspace:Workspace commands (check-access, inbox, list, switch, users)'
 {registry_commands}    )
 
     _arguments \
@@ -2704,11 +2688,7 @@ _popcorn() {
         cmds) _describe 'command' commands ;;
         args)
             case "${words[1]}" in
-                auth) _values 'subcommand' login logout status token ;;
-                workspace) _values 'subcommand' check-access inbox list switch users ;;
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
-                message) _values 'subcommand' delete download edit get list react search send threads ;;
-                channel) _values 'subcommand' archive create delete edit info invite join kick leave list templates ;;
                 vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
@@ -2724,19 +2704,15 @@ _popcorn "$@"
 # Registry families are merged in at render time — do not add one here.
 _STATIC_TOP_LEVEL = [
     "api",
-    "auth",
-    "channel",
     "commands",
     "completion",
     "env",
     "help",
-    "message",
     "site",
     "upgrade",
     "version",
     "vm",
     "whoami",
-    "workspace",
 ]
 
 
@@ -2854,11 +2830,7 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
 
 _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
-    "message": "messages",
-    "channel": "channels",
     "vm": "vm",
-    "auth": "auth",
-    "workspace": "auth",
     "env": "auth",
     "whoami": "auth",
     "api": "other",
@@ -2869,11 +2841,7 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
-    "message": "Message commands (delete, download, edit, get, list, react, search, send, threads)",
-    "channel": "Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)",
     "vm": "VM commands (monitor, usage)",
-    "auth": "Auth commands (login, logout, status, token)",
-    "workspace": "Workspace commands (check-access, inbox, list, switch, users)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -3404,43 +3372,6 @@ Other:
     # --- Auth & identity ---
     _h = argparse.SUPPRESS  # hide from default subparser listing; epilog handles display
 
-    auth_parser = sub.add_parser("auth", help=_h)
-    auth_sub = auth_parser.add_subparsers(dest="auth_command")
-    login_p = auth_sub.add_parser("login", help="Log in via browser OAuth")
-    # Note: --env is intentionally NOT redefined here. The global -e/--env (on the
-    # root parser) is hoisted ahead of the subcommand by _hoist_global_flags; a
-    # duplicate subparser --env with the same dest would re-apply its None default
-    # and clobber the hoisted value (e.g. `auth login --env prod` would silently
-    # reuse the current default profile).
-    login_p.add_argument("--with-token", action="store_true", help="Read token from stdin")
-    login_p.add_argument("--force", action="store_true", help="Re-authenticate")
-    login_p.add_argument(
-        "--workspace", type=str, help="Select workspace by name or ID (skips interactive prompt)"
-    )
-    auth_sub.add_parser("logout", help="Clear stored tokens")
-    auth_sub.add_parser("status", help="Show current auth status")
-    auth_sub.add_parser("token", help="Print auth token to stdout")
-
-    ws_parser = sub.add_parser("workspace", help=_h)
-    ws_sub = ws_parser.add_subparsers(dest="ws_command")
-
-    ws_check_p = ws_sub.add_parser("check-access", help="Check repository access")
-    ws_check_p.add_argument("repo", help="Repository (owner/repo)")
-
-    ws_inbox_p = ws_sub.add_parser("inbox", help="Show notifications")
-    ws_inbox_grp = ws_inbox_p.add_mutually_exclusive_group()
-    ws_inbox_grp.add_argument("--unread", action="store_true", help="Show only unread")
-    ws_inbox_grp.add_argument("--read", action="store_true", help="Show only read")
-    ws_inbox_p.add_argument("--limit", type=int, help="Max results (default 20)")
-    ws_inbox_p.add_argument("--offset", type=int, help="Pagination offset")
-
-    ws_sub.add_parser("list", help="List available workspaces")
-    switch_p = ws_sub.add_parser("switch", help="Switch active workspace")
-    switch_p.add_argument("workspace", nargs="?", default=None, help="Workspace name or UUID")
-
-    ws_users_p = ws_sub.add_parser("users", help="List workspace users")
-    ws_users_p.add_argument("query", nargs="?", default="", help="Filter query")
-
     env_p = sub.add_parser("env", help=_h)
     env_p.add_argument("target_env", nargs="?", default=None, help="Profile name to switch to")
 
@@ -3538,149 +3469,6 @@ Other:
     )
 
     # --- Message group ---
-
-    msg_parser = sub.add_parser("message", help=_h)
-    msg_sub = msg_parser.add_subparsers(dest="message_command")
-
-    msg_del_p = msg_sub.add_parser("delete", help="Delete a message")
-    _add_channel_argument(msg_del_p, "conversation", "Channel name (#general) or UUID")
-    msg_del_p.add_argument("message_id", help="Message UUID")
-
-    msg_dl_p = msg_sub.add_parser("download", help="Download a file attachment")
-    msg_dl_p.add_argument("file_key", help="File key (from message media part URL field)")
-    msg_dl_p.add_argument(
-        "-o", "--output", type=str, help="Output path (default: original filename)"
-    )
-
-    msg_edit_p = msg_sub.add_parser("edit", help="Edit a message")
-    _add_channel_argument(msg_edit_p, "conversation", "Channel name (#general) or UUID")
-    msg_edit_p.add_argument("message_id", help="Message UUID")
-    msg_edit_p.add_argument("content", help="New message content")
-
-    msg_get_p = msg_sub.add_parser("get", help="Get a single message by ID")
-    msg_get_p.add_argument("message_id", help="Message UUID")
-
-    msg_list_p = msg_sub.add_parser("list", help="Read message history")
-    _add_channel_argument(msg_list_p, "conversation", "Channel name (#general) or UUID")
-    msg_list_p.add_argument("--thread", type=str, help="Thread ID to read replies")
-    msg_list_p.add_argument("--limit", type=int, help="Max messages (default 25)")
-    msg_list_p.add_argument("--before", type=str, help="Message ID — show messages before this")
-    msg_list_p.add_argument("--after", type=str, help="Message ID — show messages after this")
-    msg_list_p.add_argument("--watch", action="store_true", help="Tail new messages (polling)")
-    msg_list_p.add_argument(
-        "--interval", type=int, default=3, help="Poll interval in seconds (default 3, with --watch)"
-    )
-    msg_list_p.add_argument(
-        "--count", type=int, default=None, help="Exit after receiving N messages (with --watch)"
-    )
-    msg_list_p.add_argument(
-        "--max-wait",
-        type=float,
-        default=None,
-        help="Exit after N seconds even if no messages received (with --watch)",
-    )
-
-    msg_react_p = msg_sub.add_parser("react", help="React to a message")
-    _add_channel_argument(msg_react_p, "conversation", "Channel name (#general) or UUID")
-    msg_react_p.add_argument("message_id", help="Message UUID")
-    msg_react_p.add_argument("emoji", help='Emoji (e.g. "thumbs up")')
-    msg_react_p.add_argument(
-        "--remove", action="store_true", help="Remove reaction instead of adding"
-    )
-
-    msg_search_p = msg_sub.add_parser("search", help="Full-text message search")
-    msg_search_p.add_argument("query", nargs="?", default="", help="Search query")
-    msg_search_p.add_argument("--limit", type=int, help="Max results (default 50)")
-    msg_search_p.add_argument("--offset", type=int, help="Pagination offset")
-
-    msg_send_p = msg_sub.add_parser("send", help="Send a message")
-    _add_channel_argument(
-        msg_send_p,
-        "conversation",
-        "Channel name (#general) or UUID",
-        required=False,
-        trailing=("message",),
-    )
-    msg_send_p.add_argument(
-        "message", nargs="?", default=None, help='Message text (use "-" for stdin)'
-    )
-    msg_send_p.add_argument("--thread", type=str, help="Reply to thread ID")
-    msg_send_p.add_argument("--file", type=str, help="File path to upload and attach")
-    msg_send_p.add_argument(
-        "--batch",
-        action="store_true",
-        help='Read NDJSON from stdin: {"conversation": "...", "message": "..."}',
-    )
-    msg_send_p.add_argument(
-        "--fail-fast",
-        action="store_true",
-        help="Stop batch processing on first error",
-    )
-
-    msg_threads_p = msg_sub.add_parser("threads", help="List threads in a channel")
-    _add_channel_argument(msg_threads_p, "conversation", "Channel name (#general) or UUID")
-    msg_threads_p.add_argument("--limit", type=int, help="Max threads (default 50)")
-    msg_threads_p.add_argument("--offset", type=int, help="Pagination offset")
-
-    # --- Channel group ---
-
-    ch_parser = sub.add_parser("channel", help=_h)
-    ch_sub = ch_parser.add_subparsers(dest="channel_command")
-
-    ch_archive_p = ch_sub.add_parser("archive", help="Archive or unarchive a channel")
-    _add_channel_argument(ch_archive_p, "conversation", "Channel name (#general) or UUID")
-    ch_archive_p.add_argument("--undo", action="store_true", help="Unarchive instead")
-
-    ch_create_p = ch_sub.add_parser("create", help="Create a channel")
-    ch_create_p.add_argument("name", help="Channel name")
-    ch_create_p.add_argument(
-        "--type",
-        choices=["public_channel", "private_channel"],
-        default="public_channel",
-        help="Conversation type",
-    )
-    ch_create_p.add_argument("--members", type=str, help="Comma-separated user IDs")
-    ch_create_p.add_argument(
-        "--template",
-        type=str,
-        help="Install a channel template (see `popcorn channel templates`)",
-    )
-    ch_create_p.add_argument(
-        "--if-not-exists",
-        action="store_true",
-        help="Return existing channel instead of failing on duplicate name",
-    )
-
-    ch_del_p = ch_sub.add_parser("delete", help="Delete a channel")
-    _add_channel_argument(ch_del_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_edit_p = ch_sub.add_parser("edit", help="Update channel name or description")
-    _add_channel_argument(ch_edit_p, "conversation", "Channel name (#general) or UUID")
-    ch_edit_p.add_argument("--name", type=str, help="New name")
-    ch_edit_p.add_argument("--description", type=str, help="New description")
-
-    ch_info_p = ch_sub.add_parser("info", help="Show channel info and members")
-    _add_channel_argument(ch_info_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_invite_p = ch_sub.add_parser("invite", help="Invite users to a channel")
-    _add_channel_argument(ch_invite_p, "conversation", "Channel name (#general) or UUID")
-    ch_invite_p.add_argument("user_ids", help="Comma-separated user IDs")
-
-    ch_join_p = ch_sub.add_parser("join", help="Join a channel")
-    _add_channel_argument(ch_join_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_kick_p = ch_sub.add_parser("kick", help="Remove a user from a channel")
-    _add_channel_argument(ch_kick_p, "conversation", "Channel name (#general) or UUID")
-    ch_kick_p.add_argument("user_id", help="User UUID to remove")
-
-    ch_leave_p = ch_sub.add_parser("leave", help="Leave a channel")
-    _add_channel_argument(ch_leave_p, "conversation", "Channel name (#general) or UUID")
-
-    ch_list_p = ch_sub.add_parser("list", help="List channels")
-    ch_list_p.add_argument("query", nargs="?", default="", help="Filter query")
-    ch_list_p.add_argument("--dms", action="store_true", help="List DMs instead of channels")
-
-    ch_sub.add_parser("templates", help="List available channel templates")
 
     # --- Escape hatch ---
 
@@ -3790,12 +3578,8 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend(
     [
         *_COMMANDS.keys(),
-        "auth",
-        "workspace",
         "vm",
         "site",
-        "message",
-        "channel",
         *registry.descriptions(),
     ]
 )
@@ -3884,34 +3668,7 @@ def main() -> None:
         if registry.dispatch(args):
             return
 
-        if args.command == "auth":
-            sub = {
-                "login": cmd_auth_login,
-                "logout": cmd_auth_logout,
-                "status": cmd_auth_status,
-                "token": cmd_auth_token,
-            }
-            handler = sub.get(getattr(args, "auth_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError("Usage: popcorn auth [login|logout|status|token]")
-        elif args.command == "workspace":
-            sub = {
-                "check-access": cmd_check_access,
-                "inbox": cmd_inbox,
-                "list": cmd_workspace_list,
-                "switch": cmd_workspace_switch,
-                "users": cmd_search_users,
-            }
-            handler = sub.get(getattr(args, "ws_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn workspace [check-access|inbox|list|switch|users]"
-                )
-        elif args.command == "site":
+        if args.command == "site":
             site_sub = {
                 "cancel": cmd_vm_cancel,
                 "deploy": cmd_pop,
@@ -3928,48 +3685,6 @@ def main() -> None:
             else:
                 raise PopcornError(
                     "Usage: popcorn site [cancel|deploy|export|log|rollback|status|targets|trace]"
-                )
-        elif args.command == "message":
-            msg_sub = {
-                "delete": cmd_delete_message,
-                "download": cmd_download,
-                "edit": cmd_edit_message,
-                "get": cmd_get_message,
-                "list": cmd_list_messages,
-                "react": cmd_react,
-                "search": cmd_search_messages,
-                "send": cmd_send_message,
-                "threads": cmd_list_threads,
-            }
-            handler = msg_sub.get(getattr(args, "message_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn message"
-                    " [delete|download|edit|get|list|react|search|send|threads]"
-                )
-        elif args.command == "channel":
-            ch_sub = {
-                "archive": cmd_archive_channel,
-                "create": cmd_create_channel,
-                "delete": cmd_delete_channel,
-                "edit": cmd_edit_channel,
-                "info": cmd_info,
-                "invite": cmd_invite,
-                "join": cmd_join_channel,
-                "kick": cmd_kick,
-                "leave": cmd_leave_channel,
-                "list": cmd_channel_list,
-                "templates": cmd_channel_templates,
-            }
-            handler = ch_sub.get(getattr(args, "channel_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn channel"
-                    " [archive|create|delete|edit|info|invite|join|kick|leave|list|templates]"
                 )
         elif args.command == "vm":
             vm_sub = {
