@@ -38,6 +38,7 @@ test-cov:  ## Run tests with coverage
 check: lint typecheck test  ## Run all checks (lint + typecheck + test)
 
 ci:  ## Non-mutating check for CI — same gates, but fails instead of fixing
+	scripts/check-public-repo.sh
 	uv run ruff check .
 	uv run ruff format --check .
 	uv run mypy src/popcorn_core src/popcorn_cli

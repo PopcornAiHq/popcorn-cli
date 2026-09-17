@@ -2,6 +2,42 @@
 
 CLI for the Popcorn API, installing the `popcorn` command. **Not published to PyPI** — it is installed and upgraded straight from this GitHub repo.
 
+## This repository is public
+
+`PopcornAiHq/popcorn-cli` is public; the backend repo it talks to is private.
+Internal-only references must not be written here: issue-tracker ids, private
+repo PR numbers, backend source paths, real infrastructure identifiers,
+employee email addresses, and production record ids.
+
+**Cite behaviour, never the thing that proves it.** "The server rejects a
+webhook update that changes its trigger flow" belongs here; the ticket number
+and the private source file that implement that rule do not. A comment that
+needs the citation to make sense is under-written — say the thing.
+
+Fixture identifiers are synthetic, never copied from a live system:
+`example-*` names and `00000000-0000-4000-8000-0000000000NN` uuids.
+
+This cuts directly against the private repo's own conventions, which encourage
+citing `KEW-NNNN`, PR numbers and `lib/<domain>/…` paths as durable references.
+That is correct there. Do not carry it across a `cd`.
+
+`scripts/check-public-repo.sh` enforces the mechanical part of this, as a
+pre-commit hook and as its own CI job — it scans the index for the patterns that
+have zero false positives here. It catches an id or a path; it cannot catch a
+paragraph that describes internal architecture, so the judgement above is still
+yours.
+
+**Audit with `git ls-files`, not `ls`, `grep -r`, `find` or `wc`.** Those walk
+gitignored scratch directories and over-report, in the direction that
+manufactures false alarms — a previous audit claimed private planning documents
+were sitting in this repo when the directory holding them has never had a
+tracked file. Confirm any individual hit with `git ls-files <path>` or
+`git check-ignore -v <path>`.
+
+Removing something from `HEAD` does not unpublish it. Commit messages, release
+notes and merged diffs are already public; the check exists to stop the next one,
+not to repair the last.
+
 ## Structure
 
 ```
@@ -10,7 +46,8 @@ popcorn-cli/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
 ├── tests/                     ← pytest (~590 tests)
-├── scripts/                   ← test-install.sh (Docker install tests), sync_flow_rules.py
+├── scripts/                   ← test-install.sh (Docker install tests), sync_flow_rules.py,
+│                                 check-public-repo.sh (public-repo guard)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check, dev, sync-rules
 └── .pre-commit-config.yaml
@@ -301,4 +338,5 @@ This CLI is designed to be consumed by LLM agents as well as humans. Treat the f
 - Color output respects `NO_COLOR` env var and `--no-color` flag
 - All API errors surfaced as `PopcornError` subclasses (no tracebacks for users)
 - Channel name resolution cached 5 min (`#name` → UUID)
-- Pre-commit runs ruff (format + lint) and version-bump reminder on every commit
+- Pre-commit runs ruff (format + lint), the version-bump reminder, and the
+  public-repo reference check on every commit
