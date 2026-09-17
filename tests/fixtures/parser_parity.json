@@ -24,9 +24,7 @@
       "auth",
       "login",
       "--with-token",
-      "--force",
-      "--workspace",
-      "x"
+      "--force"
     ],
     "namespace": {
       "auth_command": "login",
@@ -39,7 +37,7 @@
       "quiet": false,
       "timeout": null,
       "with_token": true,
-      "workspace": "x",
+      "workspace": null,
       "yes": false
     }
   },
