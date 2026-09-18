@@ -268,22 +268,9 @@ def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def vm_trace_list(client: APIClient, queue_id: str, limit: int = 10) -> dict[str, Any]:
-    """List recent work items for a queue (from usage endpoint)."""
-    return client.get(
-        "/api/appchannels/usage",
-        {"queue": queue_id, "limit": limit},
-    )
-
-
 def _normalize_item_id(item_id: str) -> str:
     """Strip queue prefix from item_id (e.g. 'project-foo/slug' → 'slug')."""
     return item_id.split("/")[-1] if "/" in item_id else item_id
-
-
-def vm_trace(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
-    """Fetch full execution trace for a work item."""
-    return client.get(f"/api/appchannels/trace/{queue_id}/{_normalize_item_id(item_id)}", {})
 
 
 def vm_trace_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
@@ -296,66 +283,6 @@ def vm_trace_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
         if e.status_code == 404:
             return None
         raise
-
-
-def vm_trace_latest(
-    client: APIClient,
-    queue_id: str,
-    status: str | None = None,
-) -> dict[str, Any] | None:
-    """Fetch the latest trace for a queue, optionally filtered by status."""
-    usage = client.get(
-        "/api/appchannels/usage",
-        {"queue": queue_id, "limit": 20},
-    )
-    items = usage.get("recent_items", [])
-    if status:
-        items = [i for i in items if i.get("status") == status]
-    if not items:
-        return None
-    latest = items[0]
-    item_id = latest["item_id"]
-    return client.get(f"/api/appchannels/trace/{queue_id}/{_normalize_item_id(item_id)}", {})
-
-
-def vm_cancel(client: APIClient, queue_id: str, item_id: str) -> dict[str, Any]:
-    """Cancel a specific work item."""
-    return client.post(
-        f"/api/appchannels/queues/{queue_id}/items/{_normalize_item_id(item_id)}/cancel"
-    )
-
-
-def vm_cancel_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
-    """Cancel the currently processing item in a queue.
-
-    Returns the cancel response, or None if no processing item found.
-    """
-    monitor = client.get("/api/appchannels/monitor", {})
-    items = monitor.get("items", [])
-    processing = [
-        i for i in items if i.get("queue_id") == queue_id and i.get("status") == "processing"
-    ]
-    if not processing:
-        return None
-    item_id = processing[0]["item_id"]
-    return client.post(
-        f"/api/appchannels/queues/{queue_id}/items/{_normalize_item_id(item_id)}/cancel"
-    )
-
-
-def vm_rollback(
-    client: APIClient,
-    site_name: str,
-    version: int | None = None,
-) -> dict[str, Any]:
-    """Roll back a site to a previous version."""
-    data: dict[str, Any] = {}
-    if version is not None:
-        data["version"] = version
-    return client.post(
-        f"/api/appchannels/sites/{site_name}/rollback",
-        data=data,
-    )
 
 
 def leave_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
@@ -1162,153 +1089,9 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def deploy_create(client: APIClient, site_name: str) -> dict[str, Any]:
-    """Create a channel with a provisioned site."""
-    return client.post(
-        "/api/conversations/create",
-        data={
-            "name": site_name,
-            "conversation_type": "workspace_channel",
-            "site_name": site_name,
-        },
-    )
-
-
-def deploy_presign(client: APIClient, conversation_id: str) -> dict[str, Any]:
-    """Get a presigned S3 upload URL for the conversation's site."""
-    return client.post(
-        "/api/conversations/presigned-url",
-        data={"conversation_id": conversation_id, "method": "PUT"},
-    )
-
-
-def deploy_publish(
-    client: APIClient,
-    conversation_id: str,
-    s3_key: str,
-    context: str = "",
-    force: bool = False,
-    verify: bool = False,
-) -> dict[str, Any]:
-    """Publish a tarball from S3 to the conversation's site."""
-    data: dict[str, Any] = {"conversation_id": conversation_id, "s3_key": s3_key}
-    if context:
-        data["context"] = context
-    if force:
-        data["force"] = True
-    if verify:
-        data["verify"] = True
-    return client.post("/api/conversations/publish", data=data)
-
-
-def deploy_upload(
-    upload_url: str,
-    upload_fields: dict[str, str],
-    tarball_path: str,
-) -> None:
-    """Upload a tarball to a presigned S3 URL."""
-    path = Path(tarball_path)
-    if not path.is_file():
-        raise PopcornError(f"Tarball not found: {tarball_path}")
-    file_data = path.read_bytes()
-    try:
-        resp = httpx.post(
-            upload_url,
-            data=upload_fields,
-            files={"file": ("push.tar.gz", file_data, "application/gzip")},
-            timeout=120.0,
-        )
-    except httpx.TimeoutException as e:
-        raise APIError(f"Deploy upload timed out ({len(file_data)} bytes)") from e
-    except httpx.HTTPError as e:
-        raise APIError(f"Deploy upload network error: {e}") from e
-    if resp.status_code not in (200, 201, 204):
-        raise APIError(f"Deploy upload failed: HTTP {resp.status_code}\n{resp.text[:300]}")
-
-
 # ---------------------------------------------------------------------------
 # Site status
 # ---------------------------------------------------------------------------
-
-
-def deploy_verify_status(
-    client: APIClient, conversation_id: str, task_id: str, site_name: str
-) -> dict[str, Any]:
-    """Poll the verify task status after a publish with verify=true."""
-    return client.get(
-        "/api/conversations/verify-status",
-        {"task_id": task_id, "site_name": site_name, "conversation": conversation_id},
-    )
-
-
-def site_url_from_subdomain(subdomain: str, api_url: str) -> str:
-    """Construct a public site URL from a subdomain and the current API URL.
-
-    Dev environments (api hostname contains '.dev.') use .dev.popcorn.ing,
-    production uses .popcorn.ing.
-    """
-    host = urlparse(api_url).hostname or ""
-    if host.startswith("dev.") or ".dev." in host:
-        return f"https://{subdomain}.dev.popcorn.ing"
-    return f"https://{subdomain}.popcorn.ing"
-
-
-def site_url_from_metadata(metadata: dict[str, Any], api_url: str) -> str | None:
-    """Extract subdomain from conversation metadata and build the site URL."""
-    subdomain = metadata.get("subdomain")
-    if subdomain:
-        return site_url_from_subdomain(subdomain, api_url)
-    return None
-
-
-def get_site_url(client: APIClient, conversation_id: str) -> str | None:
-    """Derive the public site URL from conversation metadata, if available."""
-    try:
-        info = client.get("/api/conversations/info", {"conversation": conversation_id})
-        metadata = info.get("conversation", {}).get("metadata", {})
-        return site_url_from_metadata(metadata, client.profile.api_url)
-    except (APIError, PopcornError):
-        pass
-    return None
-
-
-def export_site(
-    client: APIClient,
-    conversation_id: str,
-    version: str | None = None,
-) -> dict[str, Any]:
-    """Export site code from VM as a downloadable tarball.
-
-    Returns dict with download_url, s3_key, version, commit_hash.
-    """
-    data: dict[str, Any] = {}
-    if version is not None:
-        data["version"] = version
-    return client.post(
-        f"/api/conversations/{conversation_id}/site/export",
-        data=data,
-    )
-
-
-def get_site_status(client: APIClient, conversation_id: str) -> dict[str, Any]:
-    """Get site deployment status, falling back to conversation info."""
-    try:
-        return client.get(f"/api/conversations/{conversation_id}/site/status")
-    except APIError as e:
-        if e.status_code == 404:
-            info = client.get("/api/conversations/info", {"conversation": conversation_id})
-            return {"conversation": info.get("conversation", {}), "fallback": True}
-        raise
-
-
-def get_site_log(client: APIClient, conversation_id: str, limit: int = 10) -> dict[str, Any]:
-    """Get site version history."""
-    try:
-        return client.get(f"/api/conversations/{conversation_id}/site/log", {"limit": limit})
-    except APIError as e:
-        if e.status_code == 404:
-            return {"versions": [], "fallback": True}
-        raise
 
 
 # ---------------------------------------------------------------------------

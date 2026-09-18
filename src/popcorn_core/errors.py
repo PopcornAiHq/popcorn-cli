@@ -11,7 +11,7 @@ EXIT_VALIDATION = 1  # Bad input, missing args, invalid state
 EXIT_AUTH = 2  # Auth failures — re-login required
 EXIT_CLIENT = 3  # 4xx API errors — request is wrong
 EXIT_SERVER = 4  # 5xx API errors — retryable
-EXIT_UNHEALTHY = 5  # Deploy succeeded but site is unhealthy
+EXIT_UNHEALTHY = 5  # Ran fine; what it inspected is not healthy
 EXIT_TIMEOUT = 6  # Client-side wait elapsed — the operation may still be running
 EXIT_INTERRUPT = 130  # Ctrl+C
 
@@ -45,7 +45,13 @@ ERROR_CODES: list[dict[str, str]] = [
     {"code": ERROR_CODE_CLIENT, "description": "Other 4xx error — request is wrong"},
     {"code": ERROR_CODE_SERVER, "description": "5xx error — retryable with backoff"},
     {"code": ERROR_CODE_NETWORK, "description": "Transport failure (no HTTP response)"},
-    {"code": ERROR_CODE_UNHEALTHY, "description": "Deploy succeeded but site is unhealthy"},
+    {
+        "code": ERROR_CODE_UNHEALTHY,
+        "description": (
+            "The command succeeded but the thing it checked is unhealthy "
+            "(`channel-config show --strict` with fatal findings)"
+        ),
+    },
     {
         "code": ERROR_CODE_TIMEOUT,
         "description": "Client-side wait elapsed before the operation finished",

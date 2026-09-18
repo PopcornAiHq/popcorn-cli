@@ -1,6 +1,6 @@
 # Popcorn CLI
 
-CLI for the [Popcorn](https://popcorn.ai) API. Deploy sites, send messages, search conversations, and manage your workspace from the terminal.
+CLI for the [Popcorn](https://popcorn.ai) API. Send messages, search conversations, publish app bundles, and manage your workspace from the terminal.
 
 > **Using this from an agent or script?** Set `POPCORN_AGENT=1` to enable agent-friendly defaults (`--json`, `--quiet`, `--no-color`, no upgrade prompts). Every command supports `--json`, which returns a stable envelope (`{"ok": true, "data": ...}`) with machine-readable `error_code` and semantic exit codes. Run `popcorn commands --json` to discover the full schema. For the formal contract, see [SPEC.md](./SPEC.md). Quick overview below.
 
@@ -36,8 +36,6 @@ popcorn auth login
 # See who you are
 popcorn whoami
 
-# Deploy a site
-popcorn site deploy
 
 # Read messages
 popcorn message list '#general'
@@ -78,14 +76,6 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 
 | Command | Purpose |
 |---------|---------|
-| **Sites** — *deprecated; still supported* | |
-| `popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check]` | Deploy site to a channel |
-| `popcorn site export [channel] [--version V] [-o PATH] [--force] [--revert]` | Export site code from VM to local |
-| `popcorn site status [channel]` | Show site deployment status |
-| `popcorn site log [channel] [--limit N]` | Show site version history |
-| `popcorn site trace <ch> [item] [--list] [--watch] [--raw]` | Show agent execution trace |
-| `popcorn site cancel <ch> [--item ID]` | Cancel active agent task |
-| `popcorn site rollback <ch> [--version N] [--raw]` | Roll back to previous version |
 | **Messages** | |
 | `popcorn message send <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
 | `popcorn message list <conv> [--thread ID] [--limit N] [--before ID] [--after ID]` | Read message history |
@@ -206,7 +196,7 @@ $ popcorn channel info '#nope' --json
 | `2` | Auth — re-login required |
 | `3` | 4xx API error — request is wrong |
 | `4` | 5xx API error — retryable with backoff |
-| `5` | Deploy succeeded but site unhealthy |
+| `5` | Ran fine, but what it checked is unhealthy |
 | `130` | Interrupted (Ctrl+C) |
 
 **Error codes** (stable `error_code` enum):

@@ -1063,65 +1063,56 @@ class TestHoistedGlobalFlags:
 
 
 class TestDeprecatedFamilies:
-    """A deprecation nobody can see is a decision, not a deprecation.
+    """The deprecation mechanism, with nothing currently deprecated.
 
-    `site` was deprecated in `docs/architecture-commands.md` — an internal doc
-    explaining why it was not migrated to the registry — while `--help`, the
-    README and `commands --json` all presented it as an ordinary command. An agent doing schema discovery, which `CLAUDE.md` names as the
-    supported way to find out what this CLI can do, had no way to learn it.
+    `site` and `vm` were the two families that carried a `deprecated` note,
+    and both have since been removed outright rather than left marked. The
+    mechanism stays because the reason it was added still holds: `CLAUDE.md`
+    names schema discovery as the supported way for an agent to learn what
+    this CLI can do, so a future deprecation has to reach `commands --json`
+    and not only a design doc.
 
-    Both surfaces are covered here because they have independent sources: the
-    schema reads `_command_deprecations`, and `--help` is a hand-written
-    epilog string that nothing else validates.
+    These tests therefore exercise the path directly rather than asserting
+    that some family is marked — there is deliberately no such family now.
     """
 
-    def _schema(self, capsys) -> dict:
+    def test_no_family_is_currently_deprecated(self):
+        assert registry.deprecations() == {}
+        assert all(c.deprecated is None for c in registry.COMMANDS)
+
+    def test_the_key_is_absent_not_null(self, capsys):
+        """Absent, so `if "deprecated" in cmd` is a valid test for agents."""
         from popcorn_cli.cli import cmd_commands
 
         cmd_commands(argparse.Namespace(command="commands", groups=None))
-        return json.loads(capsys.readouterr().out)
+        schema = json.loads(capsys.readouterr().out)
+        assert all("deprecated" not in c for c in schema["commands"])
 
-    def test_deprecated_families_are_marked_in_the_schema(self, capsys):
-        by_name = {c["name"]: c for c in self._schema(capsys)["commands"]}
-        assert by_name["site"].get("deprecated"), "site is not marked deprecated"
+    def test_a_declared_deprecation_reaches_the_schema(self, capsys):
+        """`Command.deprecated` -> `commands --json`, end to end.
 
-    def test_nothing_else_is_marked(self, capsys):
-        """The mark means something only while it is not on everything."""
-        marked = {c["name"] for c in self._schema(capsys)["commands"] if c.get("deprecated")}
-        assert marked == {"site"}
-
-    def test_deprecated_families_are_marked_in_help(self, parser):
-        epilog = parser.epilog or ""
-        for line in epilog.splitlines():
-            stripped = line.strip()
-            if stripped.startswith("site ") and "commands (" in stripped:
-                assert "[DEPRECATED]" in stripped, "site's help line is not marked"
-
-    def test_registry_families_can_carry_a_deprecation(self):
-        """The field exists on `Command`, not only in the hand-declared map.
-
-        `site` is the one family still declared by hand, so today the map is
-        the only live source. When either moves or a registry family
-        is retired, the declaration should travel with the command rather than
-        being remembered separately — this pins that path open.
+        Registered temporarily: with no deprecated family left, this is the
+        only way to prove the wiring still works rather than merely that it
+        compiles.
         """
+        from popcorn_cli.cli import cmd_commands
+
         retired = registry.Command(
             name="retired-family",
             category="other",
             description="Gone",
             deprecated="Deprecated. Use `popcorn app` instead.",
         )
-        assert retired.deprecated == "Deprecated. Use `popcorn app` instead."
-
         registry.COMMANDS.append(retired)
         try:
             assert registry.deprecations()["retired-family"] == retired.deprecated
+            cmd_commands(argparse.Namespace(command="commands", groups=None))
+            schema = json.loads(capsys.readouterr().out)
+            by_name = {c["name"]: c for c in schema["commands"]}
+            # It reaches the schema only once it also reaches the parser, which
+            # is built per call — so this covers the merge, not just the dict.
+            assert by_name["retired-family"]["deprecated"] == retired.deprecated
         finally:
             registry.COMMANDS.remove(retired)
 
         assert "retired-family" not in registry.deprecations()
-
-    def test_a_family_without_the_field_is_absent_not_null(self):
-        """Absent, so `if "deprecated" in cmd` is a valid test for agents."""
-        assert all(c.deprecated is None for c in registry.COMMANDS)
-        assert registry.deprecations() == {}

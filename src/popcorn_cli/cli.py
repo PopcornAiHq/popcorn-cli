@@ -13,12 +13,6 @@ Usage:
     popcorn workspace switch [name]
     popcorn workspace users [query]
     popcorn whoami
-    popcorn site cancel <channel> [--item ID]
-    popcorn site deploy [NAME] [--context "..."] [--force] [--skip-check] [--target T]
-    popcorn site log [channel] [--limit N] [--target T]
-    popcorn site rollback <channel> [--version N]
-    popcorn site status [channel] [--target T]
-    popcorn site trace <channel> [item] [--list] [--watch] [--raw]
     popcorn message delete <conversation> <message_id>
     popcorn message download <file_key> [-o PATH]
     popcorn message edit <conversation> <message_id> "content"
@@ -92,7 +86,6 @@ Custom environments can be configured via environment variables:
 from __future__ import annotations
 
 import argparse
-import contextlib
 import difflib
 import json
 import os
@@ -102,7 +95,7 @@ import shutil
 import sys
 import time
 import webbrowser
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -110,7 +103,6 @@ from urllib.parse import urlencode
 
 from popcorn_cli import __version__
 from popcorn_core import APIClient, load_config, operations, save_config
-from popcorn_core.archive import create_tarball
 from popcorn_core.auth import (
     CallbackHandler,
     assert_token_env_match,
@@ -142,15 +134,6 @@ from popcorn_core.errors import (
     AuthError,
     PopcornError,
 )
-from popcorn_core.local_state import (
-    AmbiguousTargetError,
-    Target,
-    load_local_state,
-    make_target,
-    resolve_target,
-    save_local_state,
-    upsert_target,
-)
 from popcorn_core.validation import extract
 
 from . import commands as _registered_commands  # noqa: F401  — registers the families
@@ -161,11 +144,6 @@ from .formatting import (
     fmt_conversation,
     fmt_message,
     fmt_user,
-    fmt_vm_cost,
-    fmt_vm_duration,
-    fmt_vm_trace,
-    fmt_vm_trace_event,
-    fmt_vm_trace_list,
     format_timestamp,
     set_color,
 )
@@ -1370,359 +1348,6 @@ def cmd_channel_templates(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pop (push site resources to a channel)
-# ---------------------------------------------------------------------------
-
-
-def _save_deploy_target(
-    conversation_id: str,
-    site_name: str,
-    workspace_id: str,
-    workspace_name: str = "",
-    profile: str = "",
-) -> None:
-    """Persist deploy target to .popcorn.local.json (v2 format)."""
-    state = load_local_state()
-    target = make_target(
-        workspace_id=workspace_id,
-        conversation_id=conversation_id,
-        site_name=site_name,
-        workspace_name=workspace_name,
-        profile=profile,
-    )
-    upsert_target(state, target)
-    save_local_state(state)
-
-
-def _validate_channel(client: APIClient, conversation_id: str) -> bool:
-    """Check if a conversation still exists.
-
-    Returns True if valid, False if stale (404).
-    Raises APIError for unexpected failures.
-    """
-    try:
-        client.get("/api/conversations/info", {"conversation_id": conversation_id})
-        return True
-    except APIError as e:
-        if e.status_code == 404:
-            return False
-        raise
-
-
-def _resolve_conversation_id_from_local(args: argparse.Namespace, client: APIClient) -> str:
-    """Resolve conversation_id from channel arg, --target, or .popcorn.local.json."""
-    channel = getattr(args, "channel", None)
-    if channel:
-        from popcorn_core.resolve import resolve_conversation
-
-        return resolve_conversation(client, channel)
-
-    # Try .popcorn.local.json
-    state = load_local_state()
-    target_name = getattr(args, "target", None) or ""
-    try:
-        target = resolve_target(
-            state,
-            workspace_id=client.profile.workspace_id,
-            target_name=target_name,
-        )
-    except AmbiguousTargetError as e:
-        raise PopcornError(
-            f"Multiple deploy targets found, none matching current workspace.\n"
-            f"  Available targets: {', '.join(e.available)}\n"
-            f"  Use --target <name> to specify.",
-            error_code="validation",
-        ) from e
-    if not target and target_name:
-        available = ", ".join(state.targets.keys()) if state.targets else "(none)"
-        raise PopcornError(
-            f"Target '{target_name}' not found in .popcorn.local.json.\n"
-            f"  Available targets: {available}\n"
-            f"  Run 'popcorn site deploy' without --target to create new.",
-            error_code="not_found",
-        )
-    if target and target.conversation_id:
-        return target.conversation_id
-
-    raise PopcornError(
-        "No channel specified and no deploy target found.\n"
-        "  Run 'popcorn site deploy' first, or specify a channel."
-    )
-
-
-def _create_with_collision_retry(
-    client: APIClient, site_name: str, json_mode: bool
-) -> tuple[dict[str, Any], str]:
-    """Create a deploy channel, retrying with random suffixes on 409.
-
-    Returns (create_result, effective_site_name).
-    """
-    import random
-    import string
-
-    try:
-        result = operations.deploy_create(client, site_name)
-        return result, site_name
-    except APIError as e:
-        if e.status_code == 400 and _extract_error_code(e) == "already_exists":
-            # Channel exists but wasn't created via deploy flow — provision site.
-            # If the server says it exists but the user can't see it (ghost
-            # channel — not in their channel list), resolve_conversation raises
-            # not_found. Re-raise as a clearer conflict error so agents/users
-            # don't see the confusing "channel not found" when the server just
-            # said it exists.
-            try:
-                info = operations.get_conversation_info(client, site_name)
-            except PopcornError as resolve_err:
-                if resolve_err.error_code == "not_found":
-                    raise PopcornError(
-                        f"Channel '{site_name}' exists but isn't accessible in "
-                        f"your workspace. Try a different name.",
-                        error_code="conflict",
-                    ) from resolve_err
-                raise
-            conv = info["conversation"]
-            conv_id = conv["id"]
-            metadata = conv.get("metadata") or {}
-            if not metadata.get("site_name"):
-                operations.update_conversation(
-                    client,
-                    conv_id,
-                    conv_type="workspace_channel",
-                    site_name=site_name,
-                )
-            return info, site_name
-        if e.status_code != 409:
-            raise
-
-    # Name taken — try up to 5 random suffixes
-    attempted: list[str] = []
-    for _ in range(5):
-        suffix = "".join(random.choices(string.ascii_lowercase, k=4))
-        candidate = f"{site_name}-{suffix}"
-        attempted.append(candidate)
-        try:
-            result = operations.deploy_create(client, candidate)
-            if not json_mode:
-                _status(f"'{site_name}' is taken. Created as '{candidate}' instead.")
-            return result, candidate
-        except APIError as e2:
-            if e2.status_code != 409:
-                raise
-
-    if json_mode:
-        print(
-            json.dumps(
-                {
-                    "error": f"Could not find available name for '{site_name}'",
-                    "code": "PopcornError",
-                    "retryable": False,
-                    "attempted_names": attempted,
-                }
-            )
-        )
-        sys.exit(EXIT_VALIDATION)
-    raise PopcornError(
-        f"Could not find available name for '{site_name}'. Tried: {', '.join(attempted)}"
-    )
-
-
-def _publish_with_retry(
-    client: APIClient,
-    conversation_id: str,
-    s3_key: str,
-    context: str,
-    force: bool,
-    json_mode: bool,
-    verify: bool = False,
-) -> dict[str, Any]:
-    """Call deploy_publish with retry on 502 (up to 3 retries, exponential backoff)."""
-    import time
-
-    max_retries = 3
-    for attempt in range(max_retries + 1):
-        try:
-            return operations.deploy_publish(
-                client, conversation_id, s3_key, context, force=force, verify=verify
-            )
-        except APIError as e:
-            if e.status_code != 502 or attempt == max_retries:
-                raise
-            delay = 2**attempt  # 1, 2, 4
-            if not json_mode:
-                _status(f"Retrying publish (attempt {attempt + 2}/{max_retries + 1})...")
-            time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
-
-
-def _parse_vm_error(e: APIError) -> str | None:
-    """Try to extract the real VM error from an APIError body."""
-    if not e.body:
-        return None
-    try:
-        body = json.loads(e.body)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    for key in ("vm_error", "upstream_error", "error"):
-        val = body.get(key)
-        if isinstance(val, str):
-            return val
-    return None
-
-
-def _build_git_context(
-    client: APIClient,
-    conversation_id: str | None,
-    progress: Callable[[str], None],
-) -> str:
-    """Auto-generate deploy context from git commits since last deploy."""
-    import subprocess
-
-    # Check we're in a git repo
-    try:
-        subprocess.run(
-            ["git", "rev-parse", "--git-dir"],
-            capture_output=True,
-            check=True,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return "Deploy (no git repo)"
-
-    # Get last deployed commit hash
-    deployed_hash = None
-    if conversation_id:
-        progress("Fetching last deployed version...")
-        try:
-            status = operations.get_site_status(client, conversation_id)
-            deployed_hash = status.get("commit_hash")
-        except Exception:
-            pass  # First deploy or status unavailable — fall through
-
-    # Build git log
-    if deployed_hash:
-        # Verify the hash exists locally
-        check = subprocess.run(
-            ["git", "cat-file", "-t", deployed_hash],
-            capture_output=True,
-        )
-        if check.returncode == 0:
-            result = subprocess.run(
-                ["git", "log", "--oneline", f"{deployed_hash}..HEAD"],
-                capture_output=True,
-                text=True,
-            )
-            lines = result.stdout.strip().splitlines()
-            if not lines:
-                return "Redeploy (no new commits)"
-            n = len(lines)
-            header = f"{n} commit{'s' if n != 1 else ''} since last deploy:"
-            # Cap at 20 lines to keep context reasonable
-            if n > 20:
-                shown = "\n".join(f"  {ln}" for ln in lines[:20])
-                return f"{header}\n{shown}\n  ... and {n - 20} more"
-            return header + "\n" + "\n".join(f"  {ln}" for ln in lines)
-
-    # No deployed hash — first deploy or hash not in local history
-    result = subprocess.run(
-        ["git", "log", "--oneline", "-5"],
-        capture_output=True,
-        text=True,
-    )
-    lines = result.stdout.strip().splitlines()
-    if lines:
-        return "Initial deploy. Recent commits:\n" + "\n".join(f"  {ln}" for ln in lines)
-    return "Initial deploy"
-
-
-def _extract_error_code(e: APIError) -> str | None:
-    """Extract the error code from an API error body.
-
-    Looks for {"detail": {"error": "<code>"}} or {"error": "<code>"}.
-    """
-    if not e.body:
-        return None
-    try:
-        body = json.loads(e.body)
-    except (json.JSONDecodeError, TypeError):
-        return None
-    detail = body.get("detail")
-    if isinstance(detail, dict):
-        code = detail.get("error")
-        if isinstance(code, str):
-            return code
-    code = body.get("error")
-    if isinstance(code, str):
-        return code
-    return None
-
-
-def _poll_verify(
-    client: APIClient,
-    conversation_id: str,
-    task_id: str,
-    site_name: str,
-    json_mode: bool,
-    timeout: float = 300.0,
-    poll_interval: float = 2.0,
-) -> dict[str, Any] | None:
-    """Poll verify-status until done, timeout, or failure.
-
-    Returns the final verify status dict, or None on graceful degradation (404).
-    """
-    import time
-
-    _status_messages = {
-        "restarting": "Restarting site...",
-        "checking": "Checking health...",
-        "fixing": "Fixing issues...",
-    }
-
-    deadline = time.monotonic() + timeout
-    consecutive_errors = 0
-    last_status = None
-
-    try:
-        while time.monotonic() < deadline:
-            try:
-                result = operations.deploy_verify_status(
-                    client, conversation_id, task_id, site_name
-                )
-                consecutive_errors = 0
-            except APIError as e:
-                if e.status_code == 404:
-                    return None
-                consecutive_errors += 1
-                if consecutive_errors >= 3:
-                    if not json_mode:
-                        _status("Health check unavailable — skipping.")
-                    return {"status": "error", "healthy": None}
-                time.sleep(poll_interval)
-                continue
-
-            status = result.get("status", "")
-
-            if status != last_status and not json_mode:
-                msg = _status_messages.get(status)
-                if msg:
-                    _status(msg)
-                last_status = status
-
-            if status == "done":
-                return result
-
-            interval = 5.0 if status == "fixing" else poll_interval
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        if not json_mode:
-            _status("Health check cancelled.")
-        return {"status": "cancelled", "healthy": None}
-
-    if not json_mode:
-        _status("Health check timed out — site may still be verifying.")
-    return {"status": "timeout", "healthy": None}
-
-
-# ---------------------------------------------------------------------------
 # Upgrade
 # ---------------------------------------------------------------------------
 
@@ -2020,563 +1645,6 @@ def cmd_version(args: argparse.Namespace) -> None:
         print(f"popcorn {__version__} (up to date)")
 
 
-def cmd_pop(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    dirname = Path.cwd().name
-    site_name = args.name or (dirname if dirname.startswith("pop-") else f"pop-{dirname}")
-    json_mode = getattr(args, "json", False)
-    force = getattr(args, "force", False)
-    verbose = getattr(args, "verbose", False)
-    skip_check = getattr(args, "skip_check", False)
-
-    def _progress(msg: str) -> None:
-        if verbose and not json_mode:
-            print(msg, file=sys.stderr)
-
-    # Resolve existing deploy target from .popcorn.local.json
-    #
-    # Priority:
-    #   1. --target <name>   → explicit key lookup in targets dict
-    #   2. positional name   → match against targets by site_name
-    #   3. (neither)         → auto-resolve via workspace, default, single-target
-    local_state = load_local_state()
-    target_name = getattr(args, "target", None) or ""
-    auto_mode = target_name == "auto"
-    if auto_mode:
-        target_name = ""  # Let resolve_target auto-select
-
-    existing: Target | None = None
-
-    # Explicit positional name (no --target): match by site_name, skip auto-resolve
-    if args.name and not target_name and not auto_mode:
-        # Match with or without pop- prefix (user may type either form)
-        match_name = args.name if args.name.startswith("pop-") else f"pop-{args.name}"
-        for t in local_state.targets.values():
-            if t.site_name in (args.name, match_name):
-                existing = t
-                break
-        # No match → existing stays None, skip auto-resolve → creates new channel
-    elif not existing:
-        try:
-            existing = resolve_target(
-                local_state,
-                workspace_id=client.profile.workspace_id,
-                target_name=target_name,
-            )
-        except AmbiguousTargetError as e:
-            raise PopcornError(
-                f"Multiple deploy targets found, none matching current workspace.\n"
-                f"  Available targets: {', '.join(e.available)}\n"
-                f"  Use --target <name> to specify.",
-                error_code="validation",
-            ) from e
-        if not existing and target_name:
-            available = ", ".join(local_state.targets.keys()) if local_state.targets else "(none)"
-            raise PopcornError(
-                f"Target '{target_name}' not found in .popcorn.local.json.\n"
-                f"  Available targets: {available}\n"
-                f"  Run 'popcorn site deploy' without --target to create new.",
-                error_code="not_found",
-            )
-        if auto_mode and not existing:
-            raise PopcornError(
-                "No deploy target found to auto-select.\n"
-                "  Run 'popcorn site deploy' without --target to create a new channel.",
-                error_code="not_found",
-            )
-
-    selected_target = None
-    if existing:
-        for key, t in local_state.targets.items():
-            if t is existing:
-                selected_target = key
-                break
-    conversation_id = existing.conversation_id if existing else None
-
-    # Workspace mismatch check
-    if (
-        existing
-        and existing.workspace_id
-        and client.profile.workspace_id
-        and existing.workspace_id != client.profile.workspace_id
-    ):
-        ws_label = existing.workspace_name or existing.workspace_id
-        raise PopcornError(
-            f"Target '{existing.site_name}' belongs to workspace '{ws_label}'.\n"
-            f"  You are currently in workspace '{client.profile.workspace_name}'.\n"
-            f"  Switch workspace, use --name to create a new deploy target,\n"
-            f"  or pass --workspace {existing.workspace_id} to deploy there without switching."
-        )
-
-    # Validate existing channel — detect stale target
-    if conversation_id and not _validate_channel(client, conversation_id):
-        if force:
-            conversation_id = None
-        elif json_mode:
-            print(
-                _json_err(
-                    {
-                        "error": "Stale channel configuration",
-                        "code": "PopcornError",
-                        "retryable": False,
-                        "stale_config": True,
-                        "conversation_id": conversation_id,
-                    }
-                ),
-                file=sys.stderr,
-            )
-            sys.exit(EXIT_VALIDATION)
-        elif sys.stdin.isatty():
-            answer = input("Channel no longer exists. Create new? [Y/n] ")
-            if answer.strip().lower() in ("n", "no"):
-                return
-            conversation_id = None
-        else:
-            # Non-interactive: auto-recreate like --force so agents don't hang
-            _status("Stale channel configuration — auto-recreating.")
-            conversation_id = None
-
-    # Resolve deploy context (--context and --context-from-git are mutually exclusive via argparse)
-    if getattr(args, "context_from_git", False):
-        args.context = _build_git_context(client, conversation_id, _progress)
-
-    # Create tarball
-    _progress("Packaging files...")
-    tarball = create_tarball()
-    suggested_name = None
-
-    try:
-        # Create channel with site (first deploy)
-        if not conversation_id:
-            _progress(f"Creating channel #{site_name}...")
-            create_result, site_name = _create_with_collision_retry(client, site_name, json_mode)
-            conversation_id = str(
-                extract(create_result, "conversation", "id", label="deploy_create")
-            )
-            if site_name != (
-                args.name or (dirname if dirname.startswith("pop-") else f"pop-{dirname}")
-            ):
-                suggested_name = site_name
-
-            # Persist target immediately so retries don't hit 409
-            _save_deploy_target(
-                conversation_id,
-                site_name,
-                workspace_id=client.profile.workspace_id,
-                workspace_name=client.profile.workspace_name,
-                profile=cfg.default_profile if (cfg := load_config()) else "",
-            )
-
-        if not conversation_id:
-            raise PopcornError("No conversation_id available for deploy")
-
-        # Presign
-        _progress("Requesting upload URL...")
-        try:
-            presign = operations.deploy_presign(client, conversation_id)
-        except APIError as e:
-            if e.status_code == 400 and _extract_error_code(e) == "no_site":
-                _progress("Provisioning site on existing channel...")
-                operations.update_conversation(
-                    client,
-                    conversation_id,
-                    conv_type="workspace_channel",
-                    site_name=site_name,
-                )
-                presign = operations.deploy_presign(client, conversation_id)
-            else:
-                raise
-        upload_url = extract(presign, "upload_url", label="deploy_presign")
-        upload_fields = extract(presign, "upload_fields", label="deploy_presign")
-        s3_key = extract(presign, "s3_key", label="deploy_presign")
-
-        # Upload to S3
-        _progress("Uploading...")
-        operations.deploy_upload(upload_url, upload_fields, tarball)
-
-        # Publish with retry on 502 (items 1, 2)
-        _progress("Publishing...")
-        try:
-            result = _publish_with_retry(
-                client,
-                conversation_id,
-                s3_key,
-                args.context,
-                force,
-                json_mode,
-                verify=not skip_check,
-            )
-        except APIError as e:
-            vm_error = _parse_vm_error(e)
-            if vm_error:
-                if json_mode:
-                    err_data: dict[str, Any] = {
-                        "error": str(e),
-                        "code": "APIError",
-                        "retryable": e.retryable,
-                        "vm_error": vm_error,
-                    }
-                    if e.status_code:
-                        err_data["status"] = e.status_code
-                    if e.body:
-                        with contextlib.suppress(json.JSONDecodeError, TypeError):
-                            err_data["body"] = json.loads(e.body)
-                    print(_json_err(err_data), file=sys.stderr)
-                    sys.exit(e.exit_code)
-                raise PopcornError(f"Publish failed: {vm_error}") from e
-            raise
-    finally:
-        # Cleanup tarball
-        os.unlink(tarball)
-
-    # Update .popcorn.local.json with server-confirmed values
-
-    result_conv_id = str(extract(result, "conversation_id", label="deploy_publish"))
-    result_site_name = extract(result, "site_name", label="deploy_publish")
-    _save_deploy_target(
-        result_conv_id,
-        result_site_name,
-        workspace_id=client.profile.workspace_id,
-        workspace_name=client.profile.workspace_name,
-        profile=cfg.default_profile if (cfg := load_config()) else "",
-    )
-
-    # Add to .gitignore
-    gitignore = Path(".gitignore")
-    if gitignore.exists():
-        content = gitignore.read_text()
-        if ".popcorn.local.json" not in content:
-            gitignore.write_text(content.rstrip() + "\n.popcorn.local.json\n")
-
-    # --- Verify health (if backend returned verify_task_id) ---
-    verify_data = None
-    verify_task_id = result.get("verify_task_id")
-    original_version = result.get("version")
-
-    if verify_task_id:
-        verify_data = _poll_verify(
-            client, result_conv_id, verify_task_id, result_site_name, json_mode
-        )
-
-    # If publish returned a static skip, capture that
-    if not verify_data and "verify" in result:
-        verify_data = result["verify"]
-
-    # Use final version from verify if available
-    display_version = result.get("version")
-    if verify_data and verify_data.get("version") is not None:
-        display_version = verify_data["version"]
-
-    # Build site URL from subdomain in publish response (no extra API call)
-    subdomain = result.get("subdomain")
-    site_url = (
-        operations.site_url_from_subdomain(subdomain, client.profile.api_url) if subdomain else None
-    )
-
-    # Build output
-    output_data: dict[str, Any] = {**result}
-    if selected_target:
-        output_data["selected_target"] = selected_target
-    if site_url:
-        output_data["site_url"] = site_url
-    if suggested_name:
-        output_data["suggested_name"] = suggested_name
-    if verify_data:
-        output_data["verify"] = verify_data
-        if verify_data.get("version") is not None:
-            output_data["version"] = verify_data["version"]
-        if verify_data.get("commit_hash") is not None:
-            output_data["commit_hash"] = verify_data["commit_hash"]
-
-    # Format human output
-    human_line = f"Published to #{result_site_name} (v{display_version})"
-    if site_url:
-        human_line += f"\n{site_url}"
-
-    # Append verify results to human output
-    if verify_data and verify_data.get("status") == "done":
-        fixes = verify_data.get("fixes", [])
-        errors = verify_data.get("errors", [])
-        healthy = verify_data.get("healthy")
-
-        if fixes and healthy:
-            n = len(fixes)
-            human_line += f"\n⚠ Fixed {n} issue{'s' if n != 1 else ''} (v{original_version} → v{display_version}):"
-            for fix in fixes:
-                human_line += f"\n  • {fix.get('file', 'unknown')}: {fix.get('description', '')}"
-        elif errors:
-            n = len(errors)
-            if fixes:
-                human_line += f"\n⚠ {n} issue{'s' if n != 1 else ''} remain{'s' if n == 1 else ''} after auto-fix (v{original_version} → v{display_version}):"
-            else:
-                human_line += f"\n⚠ {n} issue{'s' if n != 1 else ''}:"
-            for error in errors:
-                human_line += f"\n  • {error}"
-
-    _output(args, output_data, human_line)
-
-    # Exit code based on health
-    if verify_data and verify_data.get("status") == "done" and verify_data.get("healthy") is False:
-        sys.exit(EXIT_UNHEALTHY)
-
-
-def cmd_export(args: argparse.Namespace) -> None:
-    """Export site code from the VM back to local filesystem."""
-    import shutil
-    import tarfile
-    import tempfile
-
-    import httpx as _httpx
-
-    # Handle --revert
-    if getattr(args, "revert", False):
-        backup_dir = Path(".popcorn-backup")
-        if not backup_dir.exists():
-            raise PopcornError("No backup found. Nothing to revert.")
-        for item in backup_dir.iterdir():
-            dest = Path.cwd() / item.name
-            if dest.exists():
-                if dest.is_dir():
-                    shutil.rmtree(dest)
-                else:
-                    dest.unlink()
-            shutil.move(str(item), str(dest))
-        backup_dir.rmdir()
-        print("Reverted to pre-export backup.")
-        return
-
-    client = _get_client(args)
-    conversation_id = _resolve_conversation_id_from_local(args, client)
-
-    # Call the export endpoint (VM packages + uploads + returns presigned URL)
-    version = getattr(args, "version", None)
-    resp = operations.export_site(client, conversation_id, version=version)
-
-    download_url = resp.get("download_url")
-    if not download_url:
-        raise PopcornError("No site version available for export.")
-
-    export_version = resp.get("version", "?")
-    commit_hash = resp.get("commit_hash", "")[:8]
-
-    # Download tarball from S3
-    dl = _httpx.get(download_url, follow_redirects=True, timeout=120.0)
-    dl.raise_for_status()
-
-    output = getattr(args, "output", None)
-
-    # If output ends with .tar.gz, just save the tarball
-    if output and output.endswith(".tar.gz"):
-        Path(output).write_bytes(dl.content)
-        result = {"version": export_version, "commit_hash": commit_hash, "output": output}
-        _output(args, result, f"Saved v{export_version} ({commit_hash}) to {output}")
-        return
-
-    # Extract mode — extract into output dir or cwd
-    target_dir = Path(output) if output else Path.cwd()
-
-    # Check for uncommitted git changes
-    if not getattr(args, "force", False):
-        try:
-            import subprocess
-
-            status = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=target_dir,
-                capture_output=True,
-                text=True,
-            )
-            if status.returncode == 0 and status.stdout.strip():
-                proceed = _confirm(
-                    args,
-                    f"Warning: {target_dir} has uncommitted changes that will be overwritten.\n"
-                    "Continue?",
-                    default=False,
-                )
-                if not proceed:
-                    print("Export cancelled.")
-                    return
-        except FileNotFoundError:
-            pass  # git not available or not a repo — proceed
-
-    # Backup current files
-    backup_dir = target_dir / ".popcorn-backup"
-    if backup_dir.exists():
-        shutil.rmtree(backup_dir)
-    backup_dir.mkdir()
-
-    for item in target_dir.iterdir():
-        if item.name in (".git", ".popcorn-backup", "node_modules", ".venv", "__pycache__"):
-            continue
-        dest = backup_dir / item.name
-        if item.is_dir():
-            shutil.copytree(item, dest)
-        else:
-            shutil.copy2(item, dest)
-
-    # Extract tarball into a temp dir, then move to target
-    tmp_dir = Path(tempfile.mkdtemp())
-    try:
-        tarball_path = tmp_dir / "export.tar.gz"
-        tarball_path.write_bytes(dl.content)
-
-        with tarfile.open(tarball_path, "r:gz") as tar:
-            tar.extractall(path=tmp_dir / "staging", filter="data")
-
-        staging = tmp_dir / "staging"
-
-        # Clear target (except protected dirs)
-        protected = {
-            ".git",
-            ".popcorn-backup",
-            "node_modules",
-            ".venv",
-            "__pycache__",
-            ".popcorn.local.json",
-        }
-        for item in target_dir.iterdir():
-            if item.name in protected:
-                continue
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-
-        # Move staged files into target
-        for item in staging.iterdir():
-            dest = target_dir / item.name
-            shutil.move(str(item), str(dest))
-    finally:
-        shutil.rmtree(tmp_dir, ignore_errors=True)
-
-    # Add .popcorn-backup to .gitignore if needed
-    gitignore = target_dir / ".gitignore"
-    if gitignore.exists():
-        content = gitignore.read_text()
-        if ".popcorn-backup" not in content:
-            with open(gitignore, "a") as f:
-                f.write("\n.popcorn-backup/\n")
-    else:
-        gitignore.write_text(".popcorn-backup/\n")
-
-    result = {"version": export_version, "commit_hash": commit_hash, "backup": str(backup_dir)}
-    human = (
-        f"Exported v{export_version} ({commit_hash}). "
-        f"Backup saved to .popcorn-backup/\n"
-        f"To revert: popcorn site export --revert"
-    )
-    _output(args, result, human)
-
-
-def cmd_status(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    conversation_id = _resolve_conversation_id_from_local(args, client)
-    resp = operations.get_site_status(client, conversation_id)
-
-    # Derive site URL: reuse fallback conversation data to avoid an extra API call.
-    if resp.get("fallback"):
-        metadata = resp.get("conversation", {}).get("metadata", {})
-        site_url = operations.site_url_from_metadata(metadata, client.profile.api_url)
-    else:
-        site_url = operations.get_site_url(client, conversation_id)
-
-    if getattr(args, "json", False):
-        if site_url:
-            resp["site_url"] = site_url
-        print(_json_ok(resp))
-        return
-
-    if resp.get("fallback"):
-        conv = resp.get("conversation", {})
-        name = conv.get("name", "—")
-        lines = [
-            f"Site:      {name}",
-            f"URL:       {site_url or '—'}",
-            "Version:   —",
-            "Commit:    —",
-            "Deployed:  —",
-            "(Detailed status not available)",
-        ]
-    else:
-        lines = [
-            f"Site:      {resp.get('site_name', '—')}",
-            f"URL:       {site_url or resp.get('url', '—')}",
-            f"Version:   {resp.get('version', '—')}",
-            f"Commit:    {resp.get('commit_hash', '—')}",
-            f"Deployed:  {resp.get('deployed_at', '—')} by {resp.get('deployed_by', '—')}",
-        ]
-    print("\n".join(lines))
-
-
-def cmd_targets(args: argparse.Namespace) -> None:
-    """List deploy targets from .popcorn.local.json."""
-    state = load_local_state()
-
-    targets_list = []
-    for name, t in state.targets.items():
-        entry: dict[str, Any] = {
-            "name": name,
-            "site_name": t.site_name,
-            "workspace_id": t.workspace_id,
-            "workspace_name": t.workspace_name,
-            "conversation_id": t.conversation_id,
-        }
-        if t.deployed_at:
-            entry["deployed_at"] = t.deployed_at
-        if t.profile:
-            entry["profile"] = t.profile
-        targets_list.append(entry)
-
-    data: dict[str, Any] = {
-        "targets": targets_list,
-        "default": state.default_target or None,
-    }
-
-    if getattr(args, "json", False):
-        print(_json_ok(data))
-        return
-
-    if not targets_list:
-        print("No deploy targets found in .popcorn.local.json")
-        print("  Run 'popcorn site deploy' to create one.")
-        return
-
-    for entry in targets_list:
-        marker = " (default)" if entry["name"] == state.default_target else ""
-        print(f"{entry['name']}{marker}")
-        print(f"  site:      {entry['site_name']}")
-        print(f"  workspace: {entry.get('workspace_name') or entry['workspace_id']}")
-        if entry.get("deployed_at"):
-            print(f"  deployed:  {entry['deployed_at']}")
-
-
-def cmd_log(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    conversation_id = _resolve_conversation_id_from_local(args, client)
-    resp = operations.get_site_log(client, conversation_id, limit=args.limit)
-
-    if getattr(args, "json", False):
-        print(_json_ok(resp))
-        return
-
-    if resp.get("fallback"):
-        print("Version history not available yet")
-        return
-
-    versions = resp.get("versions") or resp.get("entries") or []
-    if not versions:
-        print("No versions found")
-        return
-
-    for v in versions:
-        ver = v.get("version", "?")
-        commit = v.get("commit_hash", "?")[:7]
-        msg = v.get("message", "")
-        author = v.get("author", "")
-        ts = v.get("created_at", "")
-        print(f"v{ver}  {commit}  {msg:<30s}  {author}  {ts}")
-
-
 # ---------------------------------------------------------------------------
 # Integrations
 # ---------------------------------------------------------------------------
@@ -2711,9 +1779,6 @@ _popcorn_completions() {
         popcorn)
             COMPREPLY=($(compgen -W "{top_level} --json --workspace -e --env --no-color --quiet --timeout --debug" -- "$cur"))
             ;;
-        site)
-            COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
-            ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
@@ -2734,7 +1799,6 @@ _popcorn() {
         'check-access:Check repo access'
         'completion:Generate shell completions'
         'env:Show or switch environment'
-        'site:Site commands (cancel, deploy, log, rollback, status, trace)'
         'whoami:Show current user and workspace'
 {registry_commands}    )
 
@@ -2750,7 +1814,6 @@ _popcorn() {
         cmds) _describe 'command' commands ;;
         args)
             case "${words[1]}" in
-                site) _values 'subcommand' cancel deploy log rollback status trace ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
             ;;
@@ -2769,7 +1832,6 @@ _STATIC_TOP_LEVEL = [
     "completion",
     "env",
     "help",
-    "site",
     "upgrade",
     "version",
     "whoami",
@@ -2889,7 +1951,6 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
 
 
 _COMMAND_CATEGORIES: dict[str, str] = {
-    "site": "sites",
     "env": "auth",
     "whoami": "auth",
     "api": "other",
@@ -2899,7 +1960,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 }
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
-    "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -2911,15 +1971,6 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-# `site` is the one family still declared by hand in this module rather than
-# through the registry, so its deprecation is declared here too.
-# The note is addressed to a caller deciding what to do, so it says where to go
-# instead — or, as now, that nothing replaces these yet and they keep working.
-_COMMAND_DEPRECATIONS: dict[str, str] = {
-    "site": "Deprecated. Still supported; no replacement yet.",
-}
-
-
 def _command_categories() -> dict[str, str]:
     """Hand-declared categories, plus every registry family's."""
     return {**_COMMAND_CATEGORIES, **registry.categories()}
@@ -2928,11 +1979,6 @@ def _command_categories() -> dict[str, str]:
 def _command_descriptions() -> dict[str, str]:
     """Hand-declared descriptions, plus every registry family's."""
     return {**_COMMAND_DESCRIPTIONS, **registry.descriptions()}
-
-
-def _command_deprecations() -> dict[str, str]:
-    """Hand-declared deprecations, plus every registry family's."""
-    return {**_COMMAND_DEPRECATIONS, **registry.deprecations()}
 
 
 def cmd_commands(args: argparse.Namespace) -> None:
@@ -2956,7 +2002,7 @@ def cmd_commands(args: argparse.Namespace) -> None:
 
     categories = _command_categories()
     descriptions = _command_descriptions()
-    deprecations = _command_deprecations()
+    deprecations = registry.deprecations()
 
     commands: list[dict[str, Any]] = []
     if sub_action:
@@ -3060,158 +2106,6 @@ def cmd_commands(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _strip_hash(channel: str) -> str:
-    """Strip leading # from channel name."""
-    return channel.lstrip("#")
-
-
-def cmd_vm_trace(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    channel = _strip_hash(args.channel)
-    queue_id = f"project-{channel}"
-    raw = getattr(args, "raw", False)
-
-    if getattr(args, "list", False):
-        resp = operations.vm_trace_list(client, queue_id, limit=args.limit)
-        if raw:
-            print(_json_ok(resp))
-        else:
-            items = resp.get("recent_items", [])
-            print(fmt_vm_trace_list(channel, items))
-        return
-
-    if getattr(args, "watch", False):
-        _vm_trace_watch(client, queue_id, args)
-        return
-
-    if args.item_id:
-        resp = operations.vm_trace(client, queue_id, args.item_id)
-    else:
-        status_filter = getattr(args, "status", None)
-        latest = operations.vm_trace_latest(client, queue_id, status=status_filter)
-        if latest is None:
-            msg = f"No items found for {channel}"
-            if status_filter:
-                msg += f" with status={status_filter}"
-            print(msg, file=sys.stderr)
-            sys.exit(1)
-        resp = latest
-
-    if raw:
-        print(_json_ok(resp))
-    else:
-        print(fmt_vm_trace(resp))
-
-
-def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -> None:
-    """Tail a live trace, printing new events as they arrive."""
-    # Try the /current endpoint first (shows processing items immediately)
-    resp = operations.vm_trace_current(client, channel)
-    if resp is None:
-        status_filter = getattr(args, "status", None) or "processing"
-        resp = operations.vm_trace_latest(client, channel, status=status_filter)
-    if resp is None:
-        resp = operations.vm_trace_latest(client, channel)
-    if resp is None:
-        print(f"No items found for {channel}", file=sys.stderr)
-        sys.exit(1)
-
-    try:
-        # If the initial item is already done, wait for a new one
-        if resp.get("status") in ("complete", "failed", "cancelled"):
-            known_id = resp.get("item_id")
-            name = resp.get("name") or known_id or "?"
-            _status(f"Latest: {name}  ({resp.get('status', '?')})")
-            _status("Waiting for new activity...\n")
-            while True:
-                time.sleep(3)
-                # Try /current first, fall back to checking for new items in usage
-                new_resp = operations.vm_trace_current(client, channel)
-                if new_resp is not None and new_resp.get("item_id") == known_id:
-                    new_resp = None
-                if new_resp is None:
-                    new_resp = operations.vm_trace_latest(client, channel)
-                    if new_resp is not None and new_resp.get("item_id") == known_id:
-                        continue
-                if new_resp is not None:
-                    resp = new_resp
-                    break
-
-        item_id = resp["item_id"]
-        seen_events = len(resp.get("events", []))
-
-        name = resp.get("name") or item_id
-        _status(f"Watching: {name}  ({resp.get('status', '?')})")
-        _status("")
-
-        events = resp.get("events", [])
-        prev_ts = None
-        for event in events:
-            line = fmt_vm_trace_event(event, prev_ts)
-            if line:
-                print(line, flush=True)
-            if event.get("timestamp"):
-                prev_ts = event["timestamp"]
-
-        while True:
-            time.sleep(3)
-            resp = operations.vm_trace(client, channel, item_id)
-            events = resp.get("events", [])
-            new_events = events[seen_events:]
-            seen_events = len(events)
-
-            for event in new_events:
-                line = fmt_vm_trace_event(event, prev_ts)
-                if line:
-                    print(line, flush=True)
-                if event.get("timestamp"):
-                    prev_ts = event["timestamp"]
-
-            status = resp.get("status", "")
-            if status in ("complete", "failed", "cancelled"):
-                _status(f"\nFinished: {status}")
-                if status == "failed" and resp.get("error"):
-                    print(f"Error: {resp['error']}", file=sys.stderr)
-                usage = resp.get("usage")
-                if usage:
-                    cost = fmt_vm_cost(usage.get("total_cost_usd", 0))
-                    dur = resp.get("duration_seconds", 0)
-                    _status(f"Duration: {fmt_vm_duration(dur)}  |  Cost: {cost}")
-                break
-    except KeyboardInterrupt:
-        _status("\nStopped watching.")
-
-
-def cmd_vm_cancel(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    channel = _strip_hash(args.channel)
-    queue_id = f"project-{channel}"
-    item_id = getattr(args, "item", None)
-
-    if item_id:
-        operations.vm_cancel(client, queue_id, item_id)
-        print(f"Cancelled: {item_id} in {channel}")
-    else:
-        resp = operations.vm_cancel_current(client, queue_id)
-        if resp is None:
-            print(f"No active task in {channel}", file=sys.stderr)
-            sys.exit(1)
-        print(f"Cancelled active task in {channel}")
-
-
-def cmd_vm_rollback(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    channel = _strip_hash(args.channel)
-    version = getattr(args, "version", None)
-
-    resp = operations.vm_rollback(client, channel, version=version)
-    if getattr(args, "raw", False):
-        print(_json_ok(resp))
-    else:
-        new_ver = resp.get("version", "?")
-        print(f"Rolled back {channel} to v{new_ver}")
-
-
 # ---------------------------------------------------------------------------
 # Argparse
 # ---------------------------------------------------------------------------
@@ -3255,7 +2149,7 @@ class PopcornParser(argparse.ArgumentParser):
 # --- Arguments with two spellings -------------------------------------------
 #
 # Every command that acts on a channel accepts `--channel`. The families that
-# grew up taking it positionally (site, message, channel, webhook) keep that
+# grew up taking it positionally (message, channel, webhook) keep that
 # spelling — the plugin skills, the eval harness and people's scripts are all
 # written that way — so the flag is an additional spelling, never a
 # replacement. The families declared in the registry (app, channel-config,
@@ -3288,8 +2182,8 @@ def _shift_trailing_positionals(
 
     argparse fills positionals left to right, so when `--channel` is given and
     every positional after the channel is optional too, the first value lands
-    in the channel's slot: `site trace --channel '#a' ITEM` parses ITEM as the
-    channel. Shifting restores the grammar the caller meant. Where the last
+    in the channel's slot: `message send --channel '#a' TEXT` parses TEXT as
+    the channel. Shifting restores the grammar the caller meant. Where the last
     trailing slot is already occupied there is nowhere to shift to, and the
     channel really was given twice.
     """
@@ -3327,10 +2221,6 @@ def _fold_dual_spelled_arguments(args: argparse.Namespace) -> None:
 
 def build_parser() -> PopcornParser:
     epilog = """\
-Sites:
-  site            [DEPRECATED] Site commands (cancel, deploy, export, log,
-                  rollback, status, targets, trace)
-
 Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
 
@@ -3413,97 +2303,6 @@ Other:
     env_p.add_argument("target_env", nargs="?", default=None, help="Profile name to switch to")
 
     sub.add_parser("whoami", help=_h)
-
-    # --- Site group ---
-
-    site_parser = sub.add_parser("site", help=_h)
-    site_sub = site_parser.add_subparsers(dest="site_command")
-
-    site_cancel_p = site_sub.add_parser("cancel", help="Cancel active agent task")
-    _add_channel_argument(site_cancel_p, "channel", "Channel/site name")
-    site_cancel_p.add_argument(
-        "--item",
-        type=str,
-        help="Specific item ID (default: current processing)",
-    )
-
-    site_deploy_p = site_sub.add_parser("deploy", help="Deploy site to a channel")
-    site_deploy_p.add_argument(
-        "name", nargs="?", default=None, help="Site name (default: pop-<dirname>)"
-    )
-    _ctx_group = site_deploy_p.add_mutually_exclusive_group()
-    _ctx_group.add_argument("--context", type=str, default="", help="Deploy context message")
-    _ctx_group.add_argument(
-        "--context-from-git",
-        action="store_true",
-        help="Auto-generate context from git commits since last deploy",
-    )
-    site_deploy_p.add_argument("--force", "-f", action="store_true", help="Skip checks and prompts")
-    site_deploy_p.add_argument("--verbose", "-v", action="store_true", help="Print progress steps")
-    site_deploy_p.add_argument("--skip-check", action="store_true", help="Skip health verification")
-    site_deploy_p.add_argument(
-        "--target",
-        type=str,
-        help="Named deploy target from .popcorn.local.json, or 'auto' to auto-select (never creates new)",
-    )
-
-    site_export_p = site_sub.add_parser("export", help="Export site code from VM")
-    _add_channel_argument(site_export_p, "channel", "Channel name or UUID", required=False)
-    site_export_p.add_argument(
-        "--version", type=str, default=None, help="Version number or commit hash"
-    )
-    site_export_p.add_argument(
-        "--force", "-f", action="store_true", help="Overwrite without prompting"
-    )
-    site_export_p.add_argument(
-        "-o",
-        "--output",
-        type=str,
-        default=None,
-        help="Output path (directory to extract into, or .tar.gz to save tarball)",
-    )
-    site_export_p.add_argument(
-        "--target", type=str, help="Named deploy target from .popcorn.local.json"
-    )
-    site_export_p.add_argument("--revert", action="store_true", help="Revert to pre-export backup")
-
-    site_log_p = site_sub.add_parser("log", help="Show site version history")
-    _add_channel_argument(site_log_p, "channel", "Channel name or UUID", required=False)
-    site_log_p.add_argument("--limit", type=int, default=10, help="Max versions (default 10)")
-    site_log_p.add_argument(
-        "--target", type=str, help="Named deploy target from .popcorn.local.json"
-    )
-
-    site_rollback_p = site_sub.add_parser("rollback", help="Roll back site to previous version")
-    _add_channel_argument(site_rollback_p, "channel", "Channel/site name")
-    site_rollback_p.add_argument("--version", type=int, help="Target version (default: previous)")
-    site_rollback_p.add_argument("--raw", action="store_true", help="Output raw JSON")
-
-    site_status_p = site_sub.add_parser("status", help="Show site deployment status")
-    _add_channel_argument(site_status_p, "channel", "Channel name or UUID", required=False)
-    site_status_p.add_argument(
-        "--target", type=str, help="Named deploy target from .popcorn.local.json"
-    )
-
-    site_sub.add_parser("targets", help="List deploy targets from .popcorn.local.json")
-
-    site_trace_p = site_sub.add_parser("trace", help="Show agent execution trace")
-    _add_channel_argument(site_trace_p, "channel", "Channel/site name", trailing=("item_id",))
-    site_trace_p.add_argument("item_id", nargs="?", default=None, help="Specific item ID")
-    site_trace_p.add_argument("--list", action="store_true", help="List recent items")
-    site_trace_p.add_argument("--watch", action="store_true", help="Tail live trace")
-    site_trace_p.add_argument(
-        "--status",
-        type=str,
-        help="Filter by status (complete, failed, processing)",
-    )
-    site_trace_p.add_argument("--raw", action="store_true", help="Output raw JSON")
-    site_trace_p.add_argument(
-        "--limit",
-        type=int,
-        default=10,
-        help="Max items for --list (default 10)",
-    )
 
     # --- Message group ---
 
@@ -3591,7 +2390,6 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend(
     [
         *_COMMANDS.keys(),
-        "site",
         *registry.descriptions(),
     ]
 )
@@ -3690,25 +2488,7 @@ def main() -> None:
         if registry.dispatch(args):
             return
 
-        if args.command == "site":
-            site_sub = {
-                "cancel": cmd_vm_cancel,
-                "deploy": cmd_pop,
-                "export": cmd_export,
-                "log": cmd_log,
-                "rollback": cmd_vm_rollback,
-                "status": cmd_status,
-                "targets": cmd_targets,
-                "trace": cmd_vm_trace,
-            }
-            handler = site_sub.get(getattr(args, "site_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError(
-                    "Usage: popcorn site [cancel|deploy|export|log|rollback|status|targets|trace]"
-                )
-        elif args.command in _COMMANDS:
+        if args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:
             parser.print_help()
