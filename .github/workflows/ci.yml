@@ -29,6 +29,27 @@ jobs:
       - name: Check for internal-only references
         run: scripts/check-public-repo.sh
 
+  # PR-only: on `main` an already-tagged version is the normal state for a
+  # merge that ships nothing, so a check that fired there would be red for a
+  # correct tree — which is how a check gets ignored.
+  version:
+    name: Version is releasable
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # The PR ref alone carries neither the base branch nor the tag list, and
+      # the check needs both: the base to see whether the version moved, the
+      # tags to see whether the number is already spent.
+      - name: Fetch base and tags
+        run: git fetch --tags --force origin main
+
+      - name: Check the version
+        run: scripts/check_version.py origin/main
+
   test:
     runs-on: ubuntu-latest
     strategy:

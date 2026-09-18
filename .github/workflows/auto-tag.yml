@@ -1,0 +1,40 @@
+name: Auto-tag on merge
+
+# Runs after CI succeeds on `main`, not directly on the push: tagging a red
+# `main` would publish a release users self-upgrade into. `workflow_run` is the
+# only way to depend on another workflow's result, which is why the checkout
+# below has to name the commit explicitly — this event's default ref is the
+# branch tip, not the run that just passed.
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+# Never cancel a run mid-tag, and never let two merges race to tag.
+concurrency:
+  group: auto-tag
+  cancel-in-progress: false
+
+jobs:
+  tag:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0  # release notes walk back to the previous tag
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      # No-ops when the version on main is already tagged, which is the normal
+      # outcome for a merge that ships nothing to users.
+      - name: Tag and release
+        run: scripts/auto_tag.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

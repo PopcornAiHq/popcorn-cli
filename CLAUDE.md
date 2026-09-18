@@ -45,9 +45,10 @@ popcorn-cli/
 ├── src/
 │   ├── popcorn_core/          ← Shared lib (auth, client, config, resolve, operations)
 │   └── popcorn_cli/           ← CLI (argparse, handlers, formatting)
-├── tests/                     ← pytest (~590 tests)
+├── tests/                     ← pytest
 ├── scripts/                   ← test-install.sh (Docker install tests), sync_flow_rules.py,
-│                                 check-public-repo.sh (public-repo guard)
+│                                 check-public-repo.sh (public-repo guard),
+│                                 check_version.py + auto_tag.sh (release gates)
 ├── pyproject.toml             ← Single package config
 ├── Makefile                   ← fmt, lint, typecheck, test, check, dev, sync-rules
 └── .pre-commit-config.yaml
@@ -263,20 +264,25 @@ Builds the wheel and verifies it installs correctly with each package manager in
 
 ## Versioning
 
-**Bump the version after every meaningful commit to main** (direct or PR merge).
+**Bump the version in the PR that changes `src/`.** You choose the number;
+nothing infers it. CI only refuses one that cannot be right.
 
 - **Patch** (0.5.5 → 0.5.6): default for most changes — bug fixes, small features, refactors
-- **Minor** (0.5.x → 0.6.0): larger features, new commands, breaking-ish changes
-- **Major**: never bump unless explicitly told
+- **Minor** (0.5.x → 0.6.0): larger features, new commands, breaking-ish changes.
+  Pre-1.0, a breaking change rides here — removing a whole command family did
+- **Major**: never, unless explicitly told. `scripts/auto_tag.sh` refuses to tag
+  one, so a major that merges is a major that never releases
 
-```bash
-make bump             # Auto-patch bump (0.7.4 → 0.7.5)
-make bump v=X.Y.Z    # Explicit version
-```
+`scripts/check_version.py` fails a PR that changes `src/` without bumping, that
+picks a number already released, or that goes backwards. It runs in CI and in
+`make ci`. The existing pre-commit hook still *warns* about a missing bump; the
+CI check is what holds for someone who never ran `pre-commit install`.
+
+Edit `pyproject.toml` by hand in the PR and run `uv lock`; commit both.
+`make bump` also *tags*, so it cannot be used on a feature branch — the tag
+would point at a commit the squash-merge discards.
 
 Version lives only in `pyproject.toml` — runtime reads it via `importlib.metadata`.
-
-A pre-commit hook (`scripts/check-version-bump.sh`) warns if `src/` files are staged without a `pyproject.toml` change, as a reminder to bump.
 
 ## Publishing
 
@@ -286,22 +292,25 @@ itself — users install and upgrade from
 CLI's own self-upgrade hardcodes that URL (`cli.py — _GITHUB_URL`). So there is
 no artifact to push anywhere; a release is just a tag.
 
-```bash
-make bump             # or: make bump v=X.Y.Z — bumps, commits, AND tags
-git push && git push --tags
-```
+**Merging releases.** Once CI passes on `main`, `.github/workflows/auto-tag.yml`
+runs `scripts/auto_tag.sh`, which reads the version from `pyproject.toml` and —
+if no tag exists for it — tags the merge commit, pushes, and creates the GitHub
+release. A merge whose version is already tagged is a no-op, which is the right
+answer for a docs or CI change.
 
-Pushing a `v*` tag fires `.github/workflows/release.yml`, which builds notes
-from the commits since the previous tag (dropping `chore:` lines) and creates
-the GitHub release on its own. `make release` does the same thing by hand and
-is only for when the workflow did not run — running both against one tag makes
-the second fail, since the release already exists.
+It waits on CI rather than triggering on the push, because tagging a red `main`
+publishes a release users self-upgrade into. And it creates the release itself
+instead of letting the tag push fire `release.yml`: a tag pushed with the
+default `GITHUB_TOKEN` does **not** trigger another workflow, so relying on that
+would leave a reachable version with no release and no error.
 
-Because `make bump` tags as well as commits, run it on `main` after a merge,
-never on a feature branch: a tag on a branch points at a commit that is about
-to be squashed away. If a PR already carried the version bump, tag the merge
-commit directly (`git tag vX.Y.Z && git push --tags`) rather than bumping
-again.
+`release.yml` still handles a tag pushed by hand, which is the path for a major
+bump. `scripts/auto_tag.sh --dry-run` says what would happen without touching
+anything.
+
+`make release` builds a release from the latest tag by hand, and is only for
+when the workflow did not run — running both against one tag makes the second
+fail, since the release already exists.
 
 ## API Alignment
 
