@@ -74,13 +74,20 @@ def test_a_shipped_template_checks_clean(bundle: Path) -> None:
 def test_a_shipped_template_has_no_warnings_either(bundle: Path) -> None:
     """Separate from errors because the verdict differs.
 
-    They are warning-clean today, so any new warning is news: either a real
-    defect in a template somebody shipped, or another gap in the checker's model
-    of the DSL. Both want looking at; neither should be discovered by an author
-    wading through noise.
+    Any new warning is news: a real defect in a template somebody shipped, or
+    another gap in the checker's model of the DSL. Both want looking at;
+    neither should be discovered by an author wading through noise.
+
+    `path-not-published` is the exception, and it turned out to be a third case
+    the original wording did not anticipate: authoring material living inside a
+    bundle directory. One shipped template keeps an `evals/` tree of Python
+    case files next to its bundle source. Publish leaves it behind, which is
+    correct — the warning is accurate rather than a defect or a checker gap.
+    Every other warning code still fails here.
     """
     report = check_bundle(bundle)
-    assert report.warnings == [], [str(f) for f in report.warnings]
+    unexpected = [f for f in report.warnings if f.code != "path-not-published"]
+    assert unexpected == [], [str(f) for f in unexpected]
 
 
 @pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)

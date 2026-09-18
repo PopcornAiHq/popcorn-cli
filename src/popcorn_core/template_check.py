@@ -56,6 +56,7 @@ from typing import Any
 
 from popcorn_core import flow_rules
 from popcorn_core.app_checkout import changelog_of, read_baseline, semver_key
+from popcorn_core.app_publish import ignored_paths
 
 ERROR = "error"
 WARNING = "warning"
@@ -271,6 +272,7 @@ class _Checker:
         for flow in self.report.flows:
             self._check_flow(flow)
         self._check_scalar_collisions()
+        self._check_unpublished_paths()
         return self.report
 
     # ── file layout ───────────────────────────────────────────────────
@@ -687,6 +689,38 @@ class _Checker:
                         f"as its `name:`.",
                     )
 
+    def _check_unpublished_paths(self) -> None:
+        """Name every path `app publish` would leave behind.
+
+        The checker used to be silent here while `app status` and `app publish`
+        both reported it, so the one command an author points at "is this
+        bundle right?" was the one that did not say. A `fixtures/` directory
+        or a stray `notes.txt` was reported as content, or not at all, and then
+        quietly dropped at publish.
+
+        The classification comes from `app_publish.ignored_paths` rather than
+        being derived from `flow_rules` again here: the publisher already
+        answers this question, and a second implementation of the rules is how
+        the two come to disagree about what a bundle contains.
+
+        Runs last so it can skip a path another finding already covers —
+        reporting `code/loose.py` twice, once precisely and once as "not
+        published", reads as two problems.
+        """
+        already = {f.where for f in self.report.findings}
+        for entry in ignored_paths(self.dir):
+            if entry in already or any(w.startswith(entry) for w in already):
+                continue
+            self.warn(
+                "path-not-published",
+                entry,
+                f"'{entry}' is not part of the bundle format, so 'popcorn app publish' "
+                "leaves it behind — it stays in your working copy and never reaches the "
+                "channel. Flows are root-level <name>.yaml; prompts and templates go "
+                "exactly one level under prompts/ or templates/; block source goes under "
+                "code/<block>/. Anything else belongs outside the bundle directory.",
+            )
+
     def _check_scalar_collisions(self) -> None:
         """A scalar a flow writes must not also be declared in the manifest.
 
@@ -753,7 +787,9 @@ class _Checker:
                     "Every .yaml/.yml in the bundle that is not manifest/config/strings is "
                     "installed as a flow, and this file has no `name:`/`steps:`. "
                     + (
-                        "Rename it to .json — fixtures are data, not flows."
+                        "Move it outside the bundle directory — a fixtures/ "
+                        "directory is not part of the bundle format, so renaming "
+                        "it to .json only silences this check."
                         if in_fixtures
                         else "Give it a `name:` and `steps:`, or change its extension."
                     ),

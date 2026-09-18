@@ -694,7 +694,15 @@ def test_a_real_bundle_round_trips_and_still_passes_template_check(tmp_path, nam
 
     report = check_bundle(str(out))
     assert not report.errors, [f.code for f in report.errors]
-    assert not report.warnings, [f.code for f in report.warnings]
+    # `examples/<name>/` holds only what is NOT bundle source — sample payloads
+    # under `fixtures/`, and alerttracker's GOTCHAS.md. Serving it as a bundle
+    # is a convenient way to get real bytes through checkout, but every path in
+    # it is one publish would leave behind, so `path-not-published` is the
+    # correct verdict rather than noise. It asserted no warnings at all until
+    # the checker learned to report unpublishable paths.
+    assert {f.code for f in report.warnings} <= {"path-not-published"}, [
+        f.code for f in report.warnings
+    ]
 
     # The baseline must not look like bundle content to the checker or to a
     # future publish diff.

@@ -215,11 +215,62 @@ def test_yaml_fixture_would_be_installed_as_a_flow(tmp_path):
     assert "fixture-installed-as-flow" in codes(root)
 
 
-def test_json_fixture_is_fine(tmp_path):
+def test_a_json_fixture_is_reported_as_unpublished(tmp_path):
+    """This asserted `findings == []`, and that was the bug.
+
+    A `fixtures/` directory is not part of the bundle format, so publish
+    leaves it behind. The checker called the tree clean and listed the file
+    under `fixtures` as though it were content, which is how an author ends up
+    believing a payload ships when it never left their machine.
+    """
     root = write_bundle(tmp_path / "b", fixtures={"sample.json": {"AlarmName": "x"}})
     report = check_bundle(root)
-    assert report.findings == []
+    assert [(f.level, f.code, f.where) for f in report.findings] == [
+        ("warning", "path-not-published", "fixtures/")
+    ]
+    # The `fixtures` key still reports it. That key means "any .json anywhere",
+    # not "under fixtures/", and it is part of the JSON envelope agents read —
+    # changing it is a separate decision from stopping the false-clean.
     assert report.fixtures == ["fixtures/sample.json"]
+
+
+def test_a_clean_bundle_stays_clean(tmp_path):
+    """The guard against the new check crying wolf on a correct tree."""
+    assert check_bundle(write_bundle(tmp_path / "b")).findings == []
+
+
+def test_an_unrecognised_root_file_is_reported(tmp_path):
+    root = write_bundle(tmp_path / "b")
+    (root / "notes.txt").write_text("scratch\n")
+    report = check_bundle(root)
+    assert [(f.code, f.where) for f in report.findings] == [("path-not-published", "notes.txt")]
+
+
+def test_an_unrecognised_directory_is_reported_once(tmp_path):
+    """One finding per directory, not one per file inside it.
+
+    `app publish` reports the directory, and saying it four times for four
+    payloads would bury the rest of the report.
+    """
+    root = write_bundle(tmp_path / "b")
+    (root / "scratch").mkdir()
+    for n in ("a.json", "b.json", "c.txt"):
+        (root / "scratch" / n).write_text("{}")
+    report = check_bundle(root)
+    assert [(f.code, f.where) for f in report.findings] == [("path-not-published", "scratch/")]
+
+
+def test_a_path_another_finding_already_covers_is_not_repeated(tmp_path):
+    """A precise finding wins; the generic one stays quiet.
+
+    `code/loose.py` gets `code-file-outside-block`, which says what to do about
+    it. Adding "and also it is not published" would read as two problems.
+    """
+    root = write_bundle(tmp_path / "b")
+    write_code(root, {"code/loose.py": "x = 1\n"})
+    found = codes(root)
+    assert "code-file-outside-block" in found
+    assert "path-not-published" not in found
 
 
 def test_basename_collision_is_an_error(tmp_path):
