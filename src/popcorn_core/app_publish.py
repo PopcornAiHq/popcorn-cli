@@ -188,7 +188,34 @@ def collect_tree(directory: Path) -> LocalTree:
     is walked in FULL, misplacements included, because the server's collector
     does the same and for the same reason — see `_walk_code_dir`.
     """
-    tree = LocalTree()
+    published, ignored = classify_tree(directory)
+    tree = LocalTree(ignored=ignored)
+    for rel, path in published:
+        tree.files[rel] = _read_text(path)
+    return tree
+
+
+def ignored_paths(directory: Path) -> list[str]:
+    """Just the paths the installer would not read, without reading any file.
+
+    `template check` reports these, and it must not fail where `collect_tree`
+    would: that reads every published file, so a non-UTF-8 entry at a
+    recognised path raises. A checker that aborts instead of reporting is
+    worse than one that misses, hence the split.
+    """
+    return classify_tree(directory)[1]
+
+
+def classify_tree(directory: Path) -> tuple[list[tuple[str, Path]], list[str]]:
+    """Split a working copy into (published as (relpath, path), ignored relpaths).
+
+    The classification, with no file contents read — `collect_tree` adds the
+    reading. Kept as one function because two callers now ask the same
+    question, and a second implementation of these rules is how the checker
+    and the publisher come to disagree about what a bundle contains.
+    """
+    published: list[tuple[str, Path]] = []
+    ignored: list[str] = []
     if not directory.is_dir():
         raise PopcornError(f"{directory} is not a directory", error_code="not_found")
 
@@ -200,10 +227,10 @@ def collect_tree(directory: Path) -> LocalTree:
         if entry.is_dir():
             if entry.name == flow_rules.CODE_SUBDIR:
                 for child in _walk_code_dir(entry):
-                    tree.files[child.relative_to(directory).as_posix()] = _read_text(child)
+                    published.append((child.relative_to(directory).as_posix(), child))
                 continue
             if entry.name not in FILES_SUBDIRS:
-                tree.ignored.append(f"{entry.name}/")
+                ignored.append(f"{entry.name}/")
                 continue
             for child in sorted(entry.iterdir(), key=lambda p: p.name):
                 if child.name.startswith(".") or child.name in _SILENT_SKIPS:
@@ -212,17 +239,17 @@ def collect_tree(directory: Path) -> LocalTree:
                 if not child.is_file():
                     # Nested a level too deep — read_template ignores it, so
                     # publishing it would change nothing.
-                    tree.ignored.append(f"{rel}/")
+                    ignored.append(f"{rel}/")
                     continue
-                tree.files[rel] = _read_text(child)
+                published.append((rel, child))
             continue
         if not entry.is_file():
             continue
         if not _is_bundle_file(entry.name):
-            tree.ignored.append(entry.name)
+            ignored.append(entry.name)
             continue
-        tree.files[entry.name] = _read_text(entry)
-    return tree
+        published.append((entry.name, entry))
+    return published, ignored
 
 
 def _walk_code_dir(root: Path) -> list[Path]:
