@@ -90,7 +90,7 @@ what `commands --json` reports, rather than argparse's answer.
 
 Two arguments use it:
 
-- **The channel.** The hand-written families in `cli.py` (`site`, `message`,
+- **The channel.** The hand-written families in `cli.py` (`message`,
   `channel`, `webhook`) take it positionally and go through `cli.py —
   _add_channel_argument`. The registry families declare it as
   `Argument("channel", …)` — a flag, never a positional: they put their own
@@ -144,8 +144,7 @@ declared but never reached the parser.
 
 ## Migration status
 
-Every family with subcommands is registry-declared except the one deprecated
-family, which is staying where it is.
+Every family with subcommands is now registry-declared.
 
 | Family | Declared in | Handlers |
 |---|---|---|
@@ -160,35 +159,32 @@ family, which is staying where it is.
 | `webhook` | `commands/webhook.py` | alongside |
 | `auth` | `commands/auth.py` | `cli.py`, late-bound |
 | `workspace` | `commands/workspace.py` | `cli.py`, late-bound |
-| `site` | `cli.py` | deprecated — not a migration candidate |
 | flat commands (`api`, `commands`, `completion`, `doctor`, `env`, `upgrade`, `version`, `whoami`) | `cli.py` `_COMMANDS` | no subcommands; the registry has nothing to collapse |
 
-`dispatch()` returning `False` is still the seam, and still needed: the
-deprecated families and the flat commands go through the hand-written chain.
+`dispatch()` returning `False` is still the seam, and still needed: the flat
+commands go through the hand-written chain.
 
-Its deprecation is no longer only recorded here. It is marked
-`[DEPRECATED]` in `--help` and carries a `deprecated` key in
-`popcorn commands --json`, declared in `cli.py — _COMMAND_DEPRECATIONS`
-because the family is not registry-declared. A registry family sets
-`Command.deprecated` instead, and `cli.py — _command_deprecations` merges the
-two the same way categories and descriptions are merged.
+### Deprecating a family
 
-Marking a family takes two edits either way. The declaration drives the schema;
-the `--help` listing is a hand-written epilog string in
-`cli.py — build_parser` that nothing generates, so it has to be marked by hand
-in the same commit. `tests/test_registry.py — TestDeprecatedFamilies` asserts
-both surfaces, which is what stops the pair drifting apart.
+Nothing is deprecated right now — `site` and `vm` were, and both were removed
+outright rather than left marked. The mechanism stays because the reason for it
+holds regardless: `CLAUDE.md` names `commands --json` as the supported way for
+an agent to learn what this CLI can do, so a deprecation that lives only in a
+design document is a deprecation its main audience cannot see.
 
-The distinction matters when a deprecated family is eventually deleted rather
-than marked. `vm` was: it had no caller anywhere, so it went in one commit.
-`popcorn site` is the opposite case — it is the deploy path the Claude Code
-plugin's skills call (`site targets`, `site deploy`, `site export`,
-`site trace`), and its local-filesystem work has no server-side equivalent, so
-removing it is a change to that repo before it is a change to this one.
+Set `Command.deprecated` to one line saying where to go instead. It reaches the
+`deprecated` key in the schema via `registry.deprecations()`. It does **not**
+reach `--help`: that listing is a hand-written epilog string in
+`cli.py — build_parser` that nothing generates, so mark the family there in the
+same commit. `tests/test_registry.py — TestDeprecatedFamilies` exercises the
+schema path end to end by registering a throwaway family, since there is no
+real one left to assert against.
 
-Note that `cmd_vm_trace`, `cmd_vm_cancel` and `cmd_vm_rollback` back **`site`**
-subcommands, as do the `fmt_vm_*` helpers. The `vm_` prefix outlived the `vm`
-family; deleting by that prefix would take out live `site` code.
+The lesson from removing both: a marker is worth setting when a family has
+callers who need a signal, and worth skipping when it has none. `vm` had no
+caller anywhere and could have gone straight out; `site` had four plugin skills
+and a local-filesystem role nothing else filled, so it was marked first and
+removed only once those callers were retired.
 
 ### Surface-only migrations
 

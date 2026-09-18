@@ -118,7 +118,7 @@ Stable enum. All values are lowercase `snake_case`. The set is frozen at 1.0.0; 
 | `client_error` | Other 4xx | |
 | `server_error` | 5xx — retryable with backoff | |
 | `network_error` | Transport failure (no HTTP response) | DNS, TLS, connection refused |
-| `unhealthy` | Deploy succeeded but site is unhealthy | Post-deploy health check failed |
+| `unhealthy` | The command succeeded but the thing it checked is unhealthy | `channel-config show --strict` with fatal findings |
 | `timeout` | Client-side wait elapsed before the operation finished | `flow run --wait` hit `--timeout-run` |
 | `internal` | Unexpected internal CLI error | Bug; please report |
 
@@ -137,7 +137,7 @@ Semantic — agents can branch on these to decide retry vs bail without parsing 
 | `2` | Auth — re-login required | run `popcorn auth login` |
 | `3` | 4xx API error | request is wrong; do not retry |
 | `4` | 5xx API error | retryable with backoff |
-| `5` | Deploy succeeded but site is unhealthy | inspect; may self-heal |
+| `5` | Ran fine, but what it checked is unhealthy | inspect the findings |
 | `130` | Interrupted (SIGINT / Ctrl+C) | stop |
 
 Exit codes are also in `popcorn commands --json` under `exit_codes`.
@@ -237,7 +237,7 @@ The format ID is `ndjson`, surfaced in `popcorn commands --json` under `envelope
 
 **`--channel <name-or-uuid>` is accepted by every command that acts on a channel** — prefer it, and an agent never has to remember which family spells the argument which way.
 
-Some families (`site`, `message`, `channel`, `webhook`) also take the channel as their first positional, and always will: scripts and skills are written that way. Those commands report both spellings in the schema — a positional (`conversation`, or `channel` under `site`) whose `required` says whether the command can run without a channel at all, plus a `--channel` flag that is never marked required because it is the same argument under another name. Passing both is a usage error.
+Some families (`message`, `channel`, `webhook`) also take the channel as their first positional, and always will: scripts and skills are written that way. Those commands report both spellings in the schema — a `conversation` positional whose `required` says whether the command can run without a channel at all, plus a `--channel` flag that is never marked required because it is the same argument under another name. Passing both is a usage error.
 
 The registry families (`app`, `channel-config`, `flow`, `schedule`, `table`) take `--channel` only. They put other positionals ahead of the channel — `table rows <table>` — where a second optional positional could not be told apart from the ones after it.
 
