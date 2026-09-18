@@ -262,6 +262,37 @@ Multiple profiles are stored in the config file. Switch with `popcorn env <name>
 
 Builds the wheel and verifies it installs correctly with each package manager in isolated containers.
 
+## `main` is protected
+
+Branch protection is on, so the conventions below are enforced rather than
+agreed:
+
+| Setting | Effect |
+|---|---|
+| Require a pull request (0 approvals) | No direct push to `main`, without needing someone to approve your own work |
+| Require status checks | `No internal-only references`, `Version is releasable`, and `test` on each supported Python |
+| Require branches up to date | A branch whose base moved must update before merging |
+| Force push / branch deletion | Both refused |
+| Admin enforcement | **Off** — an admin can still force a fix through when `main` is broken |
+
+"Require branches up to date" is what makes the version-collision check work.
+Two branches cut from the same `main` can both bump to the same number, and git
+merges that without a conflict because each side sets the same line to the same
+value — so the second PR only sees the clash once its base includes the first
+merge. The check cannot force that on its own.
+
+⚠️ **The required-check list is a set of job names, and it rots silently.**
+Renaming a job in `ci.yml` means the old context never reports again, and every
+PR blocks on a check that can no longer run — with no hint as to why. Rename a
+job and update the protection in the same change:
+
+```bash
+gh api repos/PopcornAiHq/popcorn-cli/branches/main/protection --jq '.required_status_checks.contexts'
+```
+
+Tags are not covered by branch protection, which is why the auto-tag workflow
+below can push one.
+
 ## Versioning
 
 **Bump the version in the PR that changes `src/`.** You choose the number;
