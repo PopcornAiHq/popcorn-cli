@@ -7,38 +7,6 @@ import pytest
 from popcorn_core import operations
 
 
-class TestVmMonitor:
-    def test_vm_monitor(self, mock_client):
-        mock_client.get.return_value = {
-            "workers": [{"id": "my-channel", "state": "idle"}],
-            "items": [],
-            "total_cost": 0.0,
-        }
-        result = operations.vm_monitor(mock_client)
-        mock_client.get.assert_called_once_with("/api/appchannels/monitor", {})
-        assert result["workers"][0]["id"] == "my-channel"
-
-
-class TestVmUsage:
-    def test_vm_usage_defaults(self, mock_client):
-        mock_client.get.return_value = {
-            "total": {"count": 5, "total_cost_usd": 1.23},
-            "by_queue": {},
-            "by_model": {},
-        }
-        result = operations.vm_usage(mock_client)
-        mock_client.get.assert_called_once_with("/api/appchannels/usage", {})
-        assert result["total"]["count"] == 5
-
-    def test_vm_usage_with_filters(self, mock_client):
-        mock_client.get.return_value = {"total": {"count": 2}}
-        operations.vm_usage(mock_client, hours=6, queue="my-channel", limit=5)
-        mock_client.get.assert_called_once_with(
-            "/api/appchannels/usage",
-            {"hours": 6, "queue": "my-channel", "limit": 5},
-        )
-
-
 class TestVmTraceList:
     def test_vm_trace_list(self, mock_client):
         mock_client.get.return_value = {

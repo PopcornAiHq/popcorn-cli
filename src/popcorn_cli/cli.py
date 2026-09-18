@@ -50,8 +50,6 @@ Usage:
     popcorn table row get|patch|delete <name> <record_id> --channel <conv>
     popcorn table scalar list|get|set --channel <conv>
     popcorn table audit --channel <conv>
-    popcorn vm monitor [--watch] [-n INTERVAL] [--raw]
-    popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]
     popcorn commands --json
     popcorn completion bash|zsh
     popcorn upgrade
@@ -165,11 +163,9 @@ from .formatting import (
     fmt_user,
     fmt_vm_cost,
     fmt_vm_duration,
-    fmt_vm_monitor,
     fmt_vm_trace,
     fmt_vm_trace_event,
     fmt_vm_trace_list,
-    fmt_vm_usage,
     format_timestamp,
     set_color,
 )
@@ -2718,9 +2714,6 @@ _popcorn_completions() {
         site)
             COMPREPLY=($(compgen -W "cancel deploy log rollback status trace" -- "$cur"))
             ;;
-        vm)
-            COMPREPLY=($(compgen -W "monitor usage" -- "$cur"))
-            ;;
         completion)
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
@@ -2742,7 +2735,6 @@ _popcorn() {
         'completion:Generate shell completions'
         'env:Show or switch environment'
         'site:Site commands (cancel, deploy, log, rollback, status, trace)'
-        'vm:Workspace VM commands (monitor, usage)'
         'whoami:Show current user and workspace'
 {registry_commands}    )
 
@@ -2759,7 +2751,6 @@ _popcorn() {
         args)
             case "${words[1]}" in
                 site) _values 'subcommand' cancel deploy log rollback status trace ;;
-                vm) _values 'subcommand' monitor usage ;;
                 completion) _values 'shell' bash zsh ;;
 {registry_args}            esac
             ;;
@@ -2781,7 +2772,6 @@ _STATIC_TOP_LEVEL = [
     "site",
     "upgrade",
     "version",
-    "vm",
     "whoami",
 ]
 
@@ -2900,7 +2890,6 @@ def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
 
 _COMMAND_CATEGORIES: dict[str, str] = {
     "site": "sites",
-    "vm": "vm",
     "env": "auth",
     "whoami": "auth",
     "api": "other",
@@ -2911,7 +2900,6 @@ _COMMAND_CATEGORIES: dict[str, str] = {
 
 _COMMAND_DESCRIPTIONS: dict[str, str] = {
     "site": "Site commands (cancel, deploy, log, rollback, status, targets, trace)",
-    "vm": "VM commands (monitor, usage)",
     "env": "Show or switch environment/profile",
     "whoami": "Show current user and workspace",
     "api": "Raw API call (escape hatch, like gh api)",
@@ -2923,13 +2911,12 @@ _COMMAND_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-# `site` and `vm` are the two families still declared by hand in this module
-# rather than through the registry, so their deprecation is declared here too.
+# `site` is the one family still declared by hand in this module rather than
+# through the registry, so its deprecation is declared here too.
 # The note is addressed to a caller deciding what to do, so it says where to go
 # instead — or, as now, that nothing replaces these yet and they keep working.
 _COMMAND_DEPRECATIONS: dict[str, str] = {
     "site": "Deprecated. Still supported; no replacement yet.",
-    "vm": "Deprecated. Still supported; no replacement yet.",
 }
 
 
@@ -3195,50 +3182,6 @@ def _vm_trace_watch(client: APIClient, channel: str, args: argparse.Namespace) -
         _status("\nStopped watching.")
 
 
-def cmd_vm_monitor(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    raw = getattr(args, "raw", False)
-
-    if not getattr(args, "watch", False):
-        resp = operations.vm_monitor(client)
-        if raw:
-            print(_json_ok(resp))
-        else:
-            print(fmt_vm_monitor(resp))
-        return
-
-    interval = getattr(args, "interval", 5)
-    _status(f"Monitoring... (Ctrl+C to stop, polling every {interval}s)")
-    try:
-        while True:
-            resp = operations.vm_monitor(client)
-            if raw:
-                print(_json_ok(resp), flush=True)
-            else:
-                print("\033[2J\033[H", end="", flush=True)
-                print(fmt_vm_monitor(resp), flush=True)
-            time.sleep(interval)
-    except KeyboardInterrupt:
-        _status("\nStopped monitoring.")
-
-
-def cmd_vm_usage(args: argparse.Namespace) -> None:
-    client = _get_client(args)
-    raw = getattr(args, "raw", False)
-
-    resp = operations.vm_usage(
-        client,
-        hours=getattr(args, "hours", None),
-        days=getattr(args, "days", None),
-        queue=getattr(args, "queue", None),
-        limit=getattr(args, "limit", None),
-    )
-    if raw:
-        print(_json_ok(resp))
-    else:
-        print(fmt_vm_usage(resp))
-
-
 def cmd_vm_cancel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     channel = _strip_hash(args.channel)
@@ -3411,9 +3354,6 @@ Tables:
 Webhooks:
   webhook         Webhook commands (create, list, get, update, delete,
                   override-rules, deliveries, event-types, send)
-
-VM:
-  vm              [DEPRECATED] VM commands (monitor, usage)
 
 Auth & identity:
   auth            Auth commands (login, logout, status, token)
@@ -3597,34 +3537,6 @@ Other:
         help="Output raw JSON without envelope (even with --json)",
     )
 
-    # --- VM (workspace VM introspection) ---
-
-    vm_parser = sub.add_parser("vm", help=_h)
-    vm_sub = vm_parser.add_subparsers(dest="vm_command")
-
-    vm_monitor_p = vm_sub.add_parser("monitor", help="Show active workers and queue items")
-    vm_monitor_p.add_argument("--watch", action="store_true", help="Poll and refresh")
-    vm_monitor_p.add_argument(
-        "-n",
-        "--interval",
-        type=int,
-        default=5,
-        help="Poll interval in seconds (default 5)",
-    )
-    vm_monitor_p.add_argument("--raw", action="store_true", help="Output raw JSON")
-
-    vm_usage_p = vm_sub.add_parser("usage", help="Show token and cost analytics")
-    vm_usage_p.add_argument("--hours", type=float, help="Filter to last N hours")
-    vm_usage_p.add_argument("--days", type=int, help="Filter to last N days")
-    vm_usage_p.add_argument("--queue", type=str, help="Filter by channel name")
-    vm_usage_p.add_argument(
-        "--limit",
-        type=int,
-        default=20,
-        help="Recent items limit (default 20)",
-    )
-    vm_usage_p.add_argument("--raw", action="store_true", help="Output raw JSON")
-
     # --- Shell & discovery ---
 
     comp_p = sub.add_parser("completion", help=_h)
@@ -3679,7 +3591,6 @@ _COMMANDS = {
 _ALL_COMMAND_NAMES.extend(
     [
         *_COMMANDS.keys(),
-        "vm",
         "site",
         *registry.descriptions(),
     ]
@@ -3797,16 +3708,6 @@ def main() -> None:
                 raise PopcornError(
                     "Usage: popcorn site [cancel|deploy|export|log|rollback|status|targets|trace]"
                 )
-        elif args.command == "vm":
-            vm_sub = {
-                "monitor": cmd_vm_monitor,
-                "usage": cmd_vm_usage,
-            }
-            handler = vm_sub.get(getattr(args, "vm_command", None) or "")
-            if handler:
-                handler(args)
-            else:
-                raise PopcornError("Usage: popcorn vm [monitor|usage]")
         elif args.command in _COMMANDS:
             _COMMANDS[args.command](args)
         else:

@@ -13,10 +13,12 @@ declared in `cli.py` is recorded twice — once invoked minimally, once naming
 every optional argument — as the exact `Namespace` the pre-migration parser
 produced. Re-declaring a family has to reproduce it byte for byte.
 
-`vm` and `site` are deprecated and are not migration candidates. They are
-recorded anyway: both lean on the dual-spelled `--channel` mechanism that the
-remaining migrations have to touch, so their rows are what would catch a change
-to that mechanism breaking a family nobody was looking at.
+`site` is deprecated and is not a migration candidate. It is recorded anyway:
+it leans on the dual-spelled `--channel` mechanism that the remaining
+migrations have to touch, so its rows are what would catch a change to that
+mechanism breaking a family nobody was looking at. (`vm` was recorded for the
+same reason until it was removed outright; it never used `--channel`, so its
+four rows added no coverage of it.)
 
 Regenerate the fixture ONLY to add newly-declared arguments, never to make a
 failure go away: a diff here is the alarm working. A genuinely intended change
@@ -73,7 +75,6 @@ _MINIMUM_ROWS = {
     "site": 22,
     "table": 10,
     "template": 3,
-    "vm": 4,
     "webhook": 22,
     "workspace": 10,
 }

@@ -268,31 +268,6 @@ def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def vm_monitor(client: APIClient) -> dict[str, Any]:
-    """Fetch active workers and queue items from workspace VM."""
-    return client.get("/api/appchannels/monitor", {})
-
-
-def vm_usage(
-    client: APIClient,
-    hours: float | None = None,
-    days: int | None = None,
-    queue: str | None = None,
-    limit: int | None = None,
-) -> dict[str, Any]:
-    """Fetch token/cost usage analytics from workspace VM."""
-    params: dict[str, Any] = {}
-    if hours is not None:
-        params["hours"] = hours
-    if days is not None:
-        params["days"] = days
-    if queue:
-        params["queue"] = queue
-    if limit is not None:
-        params["limit"] = limit
-    return client.get("/api/appchannels/usage", params)
-
-
 def vm_trace_list(client: APIClient, queue_id: str, limit: int = 10) -> dict[str, Any]:
     """List recent work items for a queue (from usage endpoint)."""
     return client.get(

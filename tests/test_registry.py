@@ -1065,10 +1065,9 @@ class TestHoistedGlobalFlags:
 class TestDeprecatedFamilies:
     """A deprecation nobody can see is a decision, not a deprecation.
 
-    `site` and `vm` were deprecated in `docs/architecture-commands.md` — an
-    internal doc explaining why they were not migrated to the registry — while
-    `--help`, the README and `commands --json` all presented them as ordinary
-    commands. An agent doing schema discovery, which `CLAUDE.md` names as the
+    `site` was deprecated in `docs/architecture-commands.md` — an internal doc
+    explaining why it was not migrated to the registry — while `--help`, the
+    README and `commands --json` all presented it as an ordinary command. An agent doing schema discovery, which `CLAUDE.md` names as the
     supported way to find out what this CLI can do, had no way to learn it.
 
     Both surfaces are covered here because they have independent sources: the
@@ -1084,27 +1083,25 @@ class TestDeprecatedFamilies:
 
     def test_deprecated_families_are_marked_in_the_schema(self, capsys):
         by_name = {c["name"]: c for c in self._schema(capsys)["commands"]}
-        for name in ("site", "vm"):
-            assert by_name[name].get("deprecated"), f"{name} is not marked deprecated"
+        assert by_name["site"].get("deprecated"), "site is not marked deprecated"
 
     def test_nothing_else_is_marked(self, capsys):
         """The mark means something only while it is not on everything."""
         marked = {c["name"] for c in self._schema(capsys)["commands"] if c.get("deprecated")}
-        assert marked == {"site", "vm"}
+        assert marked == {"site"}
 
     def test_deprecated_families_are_marked_in_help(self, parser):
         epilog = parser.epilog or ""
         for line in epilog.splitlines():
             stripped = line.strip()
-            for name in ("site", "vm"):
-                if stripped.startswith(f"{name} ") and "commands (" in stripped:
-                    assert "[DEPRECATED]" in stripped, f"{name}'s help line is not marked"
+            if stripped.startswith("site ") and "commands (" in stripped:
+                assert "[DEPRECATED]" in stripped, "site's help line is not marked"
 
     def test_registry_families_can_carry_a_deprecation(self):
         """The field exists on `Command`, not only in the hand-declared map.
 
-        `site` and `vm` are the two families still declared by hand, so today
-        the map is the only live source. When either moves or a registry family
+        `site` is the one family still declared by hand, so today the map is
+        the only live source. When either moves or a registry family
         is retired, the declaration should travel with the command rather than
         being remembered separately — this pins that path open.
         """

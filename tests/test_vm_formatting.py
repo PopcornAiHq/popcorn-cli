@@ -5,12 +5,10 @@ from __future__ import annotations
 from popcorn_cli.formatting import (
     fmt_vm_cost,
     fmt_vm_duration,
-    fmt_vm_monitor,
     fmt_vm_tokens,
     fmt_vm_trace,
     fmt_vm_trace_event,
     fmt_vm_trace_list,
-    fmt_vm_usage,
 )
 
 
@@ -125,64 +123,3 @@ class TestFmtVmTraceList:
         output = fmt_vm_trace_list("my-channel", items)
         assert "build hero" in output
         assert "abc123" in output
-
-
-class TestFmtVmMonitor:
-    def test_monitor_with_workers(self):
-        data = {
-            "workers": [
-                {
-                    "id": "my-channel",
-                    "pid": 1234,
-                    "uptime_seconds": 720,
-                    "state": "build hero [Edit]",
-                },
-            ],
-            "items": [
-                {
-                    "queue_id": "my-channel",
-                    "item_id": "abc",
-                    "name": "build hero",
-                    "turn": 8,
-                    "cost": 0.06,
-                    "elapsed_seconds": 132,
-                    "status": "processing",
-                },
-            ],
-            "total_cost": 0.06,
-        }
-        output = fmt_vm_monitor(data)
-        assert "my-channel" in output
-        assert "build hero" in output
-
-    def test_monitor_empty(self):
-        data = {"workers": [], "items": [], "total_cost": 0}
-        output = fmt_vm_monitor(data)
-        assert output  # Should return something (not empty)
-
-
-class TestFmtVmUsage:
-    def test_usage(self):
-        data = {
-            "total": {
-                "count": 47,
-                "input_tokens": 1200000,
-                "output_tokens": 89000,
-                "cache_read_tokens": 4100000,
-                "cache_write_tokens": 50000,
-                "total_cost_usd": 3.82,
-                "cache_hit_rate": 72.3,
-                "cache_savings_usd": 1.24,
-            },
-            "by_queue": {
-                "my-channel": {"count": 23, "cost": 2.14},
-                "other": {"count": 18, "cost": 1.42},
-            },
-            "by_model": {
-                "claude-sonnet": {"count": 41, "cost": 2.90},
-            },
-        }
-        output = fmt_vm_usage(data)
-        assert "47" in output
-        assert "$3.82" in output
-        assert "my-channel" in output
