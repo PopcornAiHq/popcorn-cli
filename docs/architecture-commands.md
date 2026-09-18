@@ -144,8 +144,8 @@ declared but never reached the parser.
 
 ## Migration status
 
-Every family with subcommands is registry-declared except the two deprecated
-ones, which are staying where they are.
+Every family with subcommands is registry-declared except the one deprecated
+family, which is staying where it is.
 
 | Family | Declared in | Handlers |
 |---|---|---|
@@ -160,16 +160,16 @@ ones, which are staying where they are.
 | `webhook` | `commands/webhook.py` | alongside |
 | `auth` | `commands/auth.py` | `cli.py`, late-bound |
 | `workspace` | `commands/workspace.py` | `cli.py`, late-bound |
-| `site`, `vm` | `cli.py` | deprecated — not migration candidates |
+| `site` | `cli.py` | deprecated — not a migration candidate |
 | flat commands (`api`, `commands`, `completion`, `doctor`, `env`, `upgrade`, `version`, `whoami`) | `cli.py` `_COMMANDS` | no subcommands; the registry has nothing to collapse |
 
 `dispatch()` returning `False` is still the seam, and still needed: the
 deprecated families and the flat commands go through the hand-written chain.
 
-Their deprecation is no longer only recorded here. Both are marked
-`[DEPRECATED]` in `--help` and carry a `deprecated` key in
+Its deprecation is no longer only recorded here. It is marked
+`[DEPRECATED]` in `--help` and carries a `deprecated` key in
 `popcorn commands --json`, declared in `cli.py — _COMMAND_DEPRECATIONS`
-because neither family is registry-declared. A registry family sets
+because the family is not registry-declared. A registry family sets
 `Command.deprecated` instead, and `cli.py — _command_deprecations` merges the
 two the same way categories and descriptions are merged.
 
@@ -179,10 +179,16 @@ the `--help` listing is a hand-written epilog string in
 in the same commit. `tests/test_registry.py — TestDeprecatedFamilies` asserts
 both surfaces, which is what stops the pair drifting apart.
 
-The distinction matters when one of them is eventually deleted rather than
-deprecated: `popcorn site` is the deploy path the Claude Code plugin's skills
-call (`site targets`, `site deploy`, `site export`, `site trace`), so removing
-it is a change to that repo before it is a change to this one.
+The distinction matters when a deprecated family is eventually deleted rather
+than marked. `vm` was: it had no caller anywhere, so it went in one commit.
+`popcorn site` is the opposite case — it is the deploy path the Claude Code
+plugin's skills call (`site targets`, `site deploy`, `site export`,
+`site trace`), and its local-filesystem work has no server-side equivalent, so
+removing it is a change to that repo before it is a change to this one.
+
+Note that `cmd_vm_trace`, `cmd_vm_cancel` and `cmd_vm_rollback` back **`site`**
+subcommands, as do the `fmt_vm_*` helpers. The `vm_` prefix outlived the `vm`
+family; deleting by that prefix would take out live `site` code.
 
 ### Surface-only migrations
 

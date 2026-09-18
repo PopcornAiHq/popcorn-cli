@@ -1,4 +1,4 @@
-"""Tests for VM and site subcommand parsing."""
+"""Tests for `site` subcommand parsing."""
 
 from __future__ import annotations
 
@@ -44,48 +44,6 @@ class TestSiteTrace:
     def test_trace_limit(self, parser):
         args = parser.parse_args(["site", "trace", "my-channel", "--list", "--limit", "5"])
         assert args.limit == 5
-
-
-class TestVmMonitor:
-    def test_monitor_default(self, parser):
-        args = parser.parse_args(["vm", "monitor"])
-        assert args.command == "vm"
-        assert args.vm_command == "monitor"
-
-    def test_monitor_watch(self, parser):
-        args = parser.parse_args(["vm", "monitor", "--watch"])
-        assert args.watch is True
-
-    def test_monitor_interval(self, parser):
-        args = parser.parse_args(["vm", "monitor", "--watch", "-n", "10"])
-        assert args.interval == 10
-
-    def test_monitor_raw(self, parser):
-        args = parser.parse_args(["vm", "monitor", "--raw"])
-        assert args.raw is True
-
-
-class TestVmUsage:
-    def test_usage_default(self, parser):
-        args = parser.parse_args(["vm", "usage"])
-        assert args.command == "vm"
-        assert args.vm_command == "usage"
-
-    def test_usage_hours(self, parser):
-        args = parser.parse_args(["vm", "usage", "--hours", "6"])
-        assert args.hours == 6.0
-
-    def test_usage_days(self, parser):
-        args = parser.parse_args(["vm", "usage", "--days", "7"])
-        assert args.days == 7
-
-    def test_usage_queue(self, parser):
-        args = parser.parse_args(["vm", "usage", "--queue", "my-channel"])
-        assert args.queue == "my-channel"
-
-    def test_usage_raw(self, parser):
-        args = parser.parse_args(["vm", "usage", "--raw"])
-        assert args.raw is True
 
 
 class TestSiteCancel:

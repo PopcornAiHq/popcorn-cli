@@ -139,9 +139,6 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
 | `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |
-| **VM** — *deprecated; still supported* | |
-| `popcorn vm monitor [--watch] [-n INTERVAL] [--raw]` | Show active workers and queue |
-| `popcorn vm usage [--hours N] [--days N] [--queue NAME] [--raw]` | Token and cost analytics |
 | **Auth & identity** | |
 | `popcorn auth login [--with-token] [--force] [--workspace NAME]` | Log in |
 | `popcorn auth status` | Show auth state |
