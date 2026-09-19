@@ -120,7 +120,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn table scalar list --channel <conv> [--limit N]` | List channel scalars |
 | `popcorn table scalar get <key> --channel <conv>` | Read one scalar |
 | `popcorn table scalar set <key> <value> --channel <conv>` | Write one scalar |
-| `popcorn table audit --channel <conv> [--limit N] [--cursor C]` | Recent data-store audit entries |
+| `popcorn table audit --channel <conv> [--entity-type T] [--entity-id ID] [--since ISO8601] [--limit N] [--cursor C]` | Recent data-store audit entries. The filters are server-side, so `--entity-id` reads one row's whole history rather than the current page's |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-name F]` | Create a webhook. The flow binding is fixed here — `update` cannot re-point it |
 | `popcorn webhook list <conv>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
