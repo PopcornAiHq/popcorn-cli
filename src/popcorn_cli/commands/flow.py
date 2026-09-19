@@ -11,7 +11,7 @@ import argparse
 import time
 from typing import TYPE_CHECKING, Any
 
-from popcorn_core import operations
+from popcorn_core import flow_triggers, operations
 
 from ..registry import Argument, Command, Subcommand, register
 
@@ -262,6 +262,88 @@ def _flow_list(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+def _collect_triggers(
+    client: APIClient, channel: str, flow_name: str
+) -> tuple[flow_triggers.TriggerReport | None, str | None]:
+    """The bundle and the live schedules, or why they could not be read.
+
+    Two extra requests on top of the flow itself — the channel's BOUND bundle
+    tree (one round trip for every file) and its scheduled-flow list. The
+    bound version, not the head: the triggers being explained are the ones
+    armed on this channel right now, and a published head that has not
+    installed yet describes a channel that does not exist.
+
+    Returns `(None, reason)` rather than raising. A channel running no app, or
+    a Temporal outage behind the schedule list, must not take down the flow
+    definition that is this command's original job.
+    """
+    from popcorn_core.errors import PopcornError
+
+    try:
+        bundle = operations.get_channel_app_files(client, channel, ref="bound")
+    except PopcornError as exc:
+        return None, f"the channel's app bundle could not be read ({exc})"
+
+    files = {
+        str(entry.get("path")): str(entry.get("content") or "")
+        for entry in (bundle.get("files") or [])
+        if isinstance(entry, dict) and entry.get("path")
+    }
+
+    # Declared cadences are deliberately not a fallback here. The platform
+    # rewrites installed schedules in place (an app-mode retune, the de-peak
+    # offset), so a manifest's number is routinely 5x out from what is armed —
+    # and a wrong cadence stated confidently is worse than no cadence at all.
+    try:
+        live = operations.list_scheduled_flows(client, channel)
+        schedules = live.get("scheduled_flows") or []
+    except PopcornError as exc:
+        return None, f"the channel's live schedules could not be read ({exc})"
+
+    return (
+        flow_triggers.analyze(
+            flow_name,
+            files,
+            schedules,
+            app=bundle.get("app"),
+            semver=bundle.get("bound_semver") or bundle.get("semver"),
+        ),
+        None,
+    )
+
+
+def _render_triggers(report: flow_triggers.TriggerReport | None, error: str | None) -> list[str]:
+    """The `Triggers:` block — including the case where there are none.
+
+    "Nothing runs this flow" is a real and wanted answer, not an empty list to
+    render as blank: it is how a dead bundle flow gets found. The dynamic
+    launchers print after the verdict rather than as part of it, because a
+    bundle's CTA engine can reach any flow and folding it in would make every
+    flow look triggered.
+    """
+    if error is not None:
+        return ["", f"  Triggers: not checked — {error}"]
+    assert report is not None
+
+    lines = ["", "  Triggers:"]
+    if not report.has_trigger:
+        lines[-1] = "  Triggers: nothing in this channel's bundle starts this flow"
+    elif not report.of_kind("schedule"):
+        # Stated rather than left to inference. "Does this run on a timer?" is
+        # the first question asked of a flow, and an absent line answers it
+        # only for a reader who knows the section would have carried one.
+        lines.append("    no schedule of its own")
+    for trigger in report.triggers:
+        lines.append(f"    {trigger.summary}")
+    if report.agent_runnable:
+        lines.append("    the channel agent may run it ('flow run', agent_runnable_flows)")
+    else:
+        lines.append("    not agent-runnable — 'flow run' is operator-only")
+    for trigger in report.dynamic_callers:
+        lines.append(f"  Unresolved: {trigger.summary}")
+    return lines
+
+
 def _flow_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -274,6 +356,15 @@ def _flow_get(args: argparse.Namespace) -> None:
     ]
     if flow.get("description"):
         lines.append(f"  {flow['description']}")
+
+    if not getattr(args, "no_triggers", False):
+        report, error = _collect_triggers(
+            client, args.channel, str(flow.get("name") or args.flow_id)
+        )
+        resp["triggers"] = report.to_dict() if report is not None else None
+        resp["triggers_error"] = error
+        lines += _render_triggers(report, error)
+
     _output(args, resp, "\n".join(lines))
 
 
@@ -502,11 +593,21 @@ register(
             ),
             Subcommand(
                 "get",
-                "Get a flow definition",
+                "Get a flow definition and what triggers it",
                 _flow_get,
                 [
                     Argument("flow_id", "Flow UUID", positional=True),
                     _CHANNEL,
+                    # On by default: "what makes this run" is the question the
+                    # command exists to answer, and a trigger section nobody
+                    # asks for is a trigger section nobody reads. The opt-out
+                    # is for the caller looping over every flow in a channel,
+                    # where the bundle tree is re-fetched per flow.
+                    Argument(
+                        "no-triggers",
+                        "Skip the trigger lookup (two fewer requests)",
+                        action="store_true",
+                    ),
                 ],
             ),
             Subcommand(
