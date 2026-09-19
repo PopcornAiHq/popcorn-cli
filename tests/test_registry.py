@@ -116,11 +116,13 @@ class TestDerivedSurfaces:
         for cmd in registry.COMMANDS:
             assert f"\n  {cmd.name}" in epilog, f"{cmd.name} missing from the --help epilog"
 
-    def test_registry_families_are_fuzzy_match_candidates(self):
-        from popcorn_cli.cli import _ALL_COMMAND_NAMES
-
+    def test_registry_families_are_fuzzy_match_candidates(self, parser):
+        # A typo is matched against the commands valid at the point it was
+        # typed, which the parser reads off its own subcommand positional —
+        # so a family missing from there gets no "Did you mean".
+        slot = parser._command_slot()
         for cmd in registry.COMMANDS:
-            assert cmd.name in _ALL_COMMAND_NAMES
+            assert cmd.name in slot.choices
 
 
 class TestDispatchIsWired:
@@ -472,6 +474,43 @@ class TestTableHandlersRenderTheRealShapes:
         out = capsys.readouterr().out
         assert "Audit (1)" in out
         assert "update" in out and "record" in out
+
+    def test_audit_filters_reach_the_operation(self, monkeypatch, capsys):
+        """The filters are the command's whole point during an incident — if a
+        flag parses but never reaches the wire the output still looks right."""
+        from popcorn_core import operations
+
+        seen = {}
+
+        def _capture(*a, **kw):
+            seen.update(kw)
+            return {"events": [], "has_more": False}
+
+        monkeypatch.setattr(operations, "list_store_audit", _capture)
+        TestDispatchIsWired()._run(
+            monkeypatch,
+            [
+                "table",
+                "audit",
+                "--channel",
+                "#ops",
+                "--entity-type",
+                "record",
+                "--entity-id",
+                "42",
+                "--since",
+                "2026-09-01T00:00:00Z",
+            ],
+        )
+        assert seen["entity_type"] == "record"
+        assert seen["entity_id"] == "42"
+        assert seen["since"] == "2026-09-01T00:00:00Z"
+
+        seen.clear()
+        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--channel", "#ops"])
+        assert seen["entity_type"] is None
+        assert seen["entity_id"] is None
+        assert seen["since"] is None
 
     def test_row_delete_confirms_before_deleting(self, monkeypatch, capsys):
         """Destructive, so it must go through _confirm — which fails loudly

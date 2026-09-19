@@ -154,11 +154,17 @@ def _scalar_set(args: argparse.Namespace) -> None:
 def _table_audit(args: argparse.Namespace) -> None:
     from ..cli import _attach_pagination, _get_client, _output
 
+    # Filters go to the server, which holds the whole log; narrowing here would
+    # only ever search the page `limit` already cut, so a row that changed
+    # further back would read as "never touched".
     resp = operations.list_store_audit(
         _get_client(args),
         args.channel,
         limit=getattr(args, "limit", None) or 50,
         cursor=getattr(args, "cursor", None),
+        entity_type=getattr(args, "entity_type", None),
+        entity_id=getattr(args, "entity_id", None),
+        since=getattr(args, "since", None),
     )
     events = resp.get("events", [])
     cursor = resp.get("cursor")
@@ -283,6 +289,25 @@ register(
                 _table_audit,
                 [
                     _CHANNEL,
+                    # No `choices` on entity-type: the entity taxonomy is the
+                    # server's, and a copy here would be a second place to keep
+                    # current. An unknown value matches nothing, which reads the
+                    # same as an entity nothing ever touched.
+                    Argument(
+                        "entity-type",
+                        "Filter by entity type (record, scalar, table, …)",
+                        type=str,
+                    ),
+                    Argument(
+                        "entity-id",
+                        "Filter by entity id — one row's or scalar's history",
+                        type=str,
+                    ),
+                    Argument(
+                        "since",
+                        "ISO 8601 datetime; entries at or after it (2026-09-01T00:00:00Z)",
+                        type=str,
+                    ),
                     Argument("limit", "Max entries (default 50)", type=int),
                     Argument(
                         "cursor",

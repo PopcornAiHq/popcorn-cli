@@ -2137,24 +2137,45 @@ def cmd_commands(args: argparse.Namespace) -> None:
 # Argparse
 # ---------------------------------------------------------------------------
 
-# All known command names for fuzzy matching (includes subcommand parents)
-_ALL_COMMAND_NAMES: list[str] = []  # populated after _COMMANDS is defined
-
 
 class PopcornParser(argparse.ArgumentParser):
     """ArgumentParser that suggests close matches for invalid commands."""
 
+    def _command_slot(self) -> argparse.Action | None:
+        """The positional this parser's subcommands are chosen from, if any."""
+        for action in self._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                return action
+        return None
+
     def error(self, message: str) -> None:  # type: ignore[override]
-        # Intercept "argument <command>: invalid choice: 'xyz'"
-        m = re.search(r"invalid choice: '([^']+)'", message)
-        if m and _ALL_COMMAND_NAMES:
-            bad = m.group(1)
-            close = difflib.get_close_matches(bad, _ALL_COMMAND_NAMES, n=2, cutoff=0.6)
+        # argparse names the offending argument — "argument <command>: invalid
+        # choice: 'xyz'" — and a flag declared with `choices=` (`--type`,
+        # `--part`, …) reports the same "invalid choice". So match on the
+        # argument name, not on the phrase: only the subcommand positional
+        # means a mistyped command. For a flag, argparse's own message is the
+        # better one, because it lists the valid values — which the rewrite
+        # would throw away while pointing at a help screen that documents
+        # commands, not flag values.
+        #
+        # `_get_action_name`, which builds that prefix, prefers an action's
+        # metavar over its dest: the root parser's slot is named `<command>`
+        # and a family's `flow_command`.
+        slot = self._command_slot()
+        m = re.match(r"argument (.+?): invalid choice: '([^']+)'", message)
+        if slot is not None and m and m.group(1) == (slot.metavar or slot.dest):
+            bad = m.group(2)
+            # The candidates are the commands valid at this point, so a
+            # mistyped subcommand is matched against its siblings, and the
+            # help pointer is this parser's own (`popcorn message --help`).
+            close = difflib.get_close_matches(bad, list(slot.choices or ()), n=2, cutoff=0.6)
             if close:
                 hint = " or ".join(f'"{c}"' for c in close)
                 message = f'unknown command "{bad}". Did you mean {hint}?'
             else:
-                message = f'unknown command "{bad}". Run "popcorn --help" for available commands.'
+                message = (
+                    f'unknown command "{bad}". Run "{self.prog} --help" for available commands.'
+                )
         super().error(message)
 
     def parse_args(  # type: ignore[override]
@@ -2412,14 +2433,6 @@ _COMMANDS = {
     "version": cmd_version,
     "doctor": cmd_doctor,
 }
-
-# Populate fuzzy-match candidates: _COMMANDS keys + subcommand parents
-_ALL_COMMAND_NAMES.extend(
-    [
-        *_COMMANDS.keys(),
-        *registry.descriptions(),
-    ]
-)
 
 
 def _agent_mode_enabled() -> bool:
