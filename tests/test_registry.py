@@ -116,11 +116,13 @@ class TestDerivedSurfaces:
         for cmd in registry.COMMANDS:
             assert f"\n  {cmd.name}" in epilog, f"{cmd.name} missing from the --help epilog"
 
-    def test_registry_families_are_fuzzy_match_candidates(self):
-        from popcorn_cli.cli import _ALL_COMMAND_NAMES
-
+    def test_registry_families_are_fuzzy_match_candidates(self, parser):
+        # A typo is matched against the commands valid at the point it was
+        # typed, which the parser reads off its own subcommand positional —
+        # so a family missing from there gets no "Did you mean".
+        slot = parser._command_slot()
         for cmd in registry.COMMANDS:
-            assert cmd.name in _ALL_COMMAND_NAMES
+            assert cmd.name in slot.choices
 
 
 class TestDispatchIsWired:
