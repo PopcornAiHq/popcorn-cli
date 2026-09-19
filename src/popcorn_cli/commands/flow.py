@@ -27,10 +27,36 @@ _CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
 # they already checked out from is friction with nothing behind it.
 _CHANNEL_OPT = Argument("channel", "Channel name or UUID (default: the checkout's)")
 
-# Temporal execution statuses that mean the run is over. Anything else is
-# still in flight.
-_TERMINAL_OK = {"COMPLETED"}
-_TERMINAL_BAD = {"FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"}
+# Temporal execution statuses, spelled the way the server emits them: the flow
+# run API hands back Temporal's canonical CamelCase names verbatim. Keeping the
+# server's spelling here is what makes the sets checkable against it; the match
+# itself goes through `_normalise_status` below.
+_TERMINAL_OK = frozenset({"Completed"})
+_TERMINAL_BAD = frozenset({"Failed", "TimedOut", "Canceled", "Terminated"})
+# Still going, so `--wait` keeps polling. ContinuedAsNew is a deliberate member
+# rather than something left unmatched by accident: such a run closed only to
+# hand its remaining work to a fresh run under a new run id, and the caller
+# asked to wait for the flow, not for one run id of it. The successor reaches a
+# real terminal status, and the poll reports that one.
+_IN_FLIGHT = frozenset({"Running", "ContinuedAsNew"})
+
+
+def _normalise_status(status: str) -> str:
+    """Fold a status to letters-only upper case for comparison.
+
+    The server's spelling is the contract, but a multi-word status is exactly
+    where a caller-side guess goes wrong: this CLI matched a hand-written
+    `TIMED_OUT` against the server's `TimedOut`, so a timed-out run was never
+    recognised as finished — it polled to the full `--wait` deadline and then
+    reported a retryable timeout, telling the caller to keep waiting for a run
+    that was already dead. Folding away case and word separators means no
+    spelling of a name the server sends can miss.
+    """
+    return "".join(ch for ch in status if ch.isalnum()).upper()
+
+
+_TERMINAL_OK_KEYS = frozenset(_normalise_status(s) for s in _TERMINAL_OK)
+_TERMINAL_BAD_KEYS = frozenset(_normalise_status(s) for s in _TERMINAL_BAD)
 _POLL_SECONDS = 3
 _DEFAULT_WAIT_SECONDS = 300
 
@@ -49,10 +75,13 @@ def _poll_until_closed(
     while True:
         resp = operations.get_flow_run(client, channel, workflow_id, include_errors=True)
         run = resp.get("run") or resp
-        status = (run.get("status") or "").upper()
-        if status in _TERMINAL_OK:
+        # Report the server's own spelling back to the caller; match on the
+        # folded form.
+        status = (run.get("status") or "").strip()
+        key = _normalise_status(status)
+        if key in _TERMINAL_OK_KEYS:
             return dict(run)
-        if status in _TERMINAL_BAD:
+        if key in _TERMINAL_BAD_KEYS:
             raise PopcornError(
                 f"Flow run {workflow_id} ended {status}",
                 error_code="validation",
