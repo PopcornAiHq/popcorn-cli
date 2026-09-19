@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import mimetypes
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
@@ -15,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from .errors import APIError, PopcornError
-from .resolve import resolve_conversation
+from .resolve import resolve_conversation, resolve_user
 
 if TYPE_CHECKING:
     from .client import APIClient
@@ -90,15 +91,87 @@ def search_users(client: APIClient, query: str = "") -> dict[str, Any]:
     return {"users": users}
 
 
+# `/api/search/` is a UNIFIED index — messages, files, conversations and link
+# content — and it searches files by default. Left at its defaults, a command
+# called `message search` reports a `total` and an `index_counts` that describe
+# results it never renders, so an agent deciding whether to page reads a number
+# that does not describe what it is iterating. Pinning every index off but
+# messages makes both describe the messages actually returned. Rendering the
+# other buckets is a different command, not a wider default here.
+#
+# This does NOT make a page exactly `limit` long. The server asks the index for
+# `limit` hits and then drops any it cannot hydrate — a message deleted since it
+# was indexed, or one in a conversation the caller cannot read — so a short page
+# is normal and carries no information about whether more results exist. Page
+# until `has_more` is false; never until a page comes back short.
+_MESSAGE_ONLY_INDEXES = {
+    "search_messages": "true",
+    "search_files": "false",
+    "search_conversations": "false",
+    "search_links": "false",
+}
+
+SORT_OPTIONS = ("relevance", "date_asc", "date_desc")
+
+# The filters the server accepts in place of a query. Naming them here keeps
+# the CLI's own "what may I omit a query for" answer identical to the
+# server's, instead of a guess that drifts from it.
+_QUERY_SUBSTITUTE_FILTERS = (
+    "conversations",
+    "from_users",
+    "created_after",
+    "created_before",
+    "has",
+)
+
+
+def _resolve_refs(client: APIClient, refs: str, resolver: Callable[[APIClient, str], str]) -> str:
+    """Resolve a comma-separated list of names to a comma-separated id list."""
+    resolved = [resolver(client, ref.strip()) for ref in refs.split(",") if ref.strip()]
+    return ",".join(resolved)
+
+
 def search_messages(
-    client: APIClient, query: str, limit: int = 50, offset: int = 0
+    client: APIClient,
+    query: str,
+    limit: int = 50,
+    offset: int = 0,
+    *,
+    conversations: str = "",
+    from_users: str = "",
+    created_after: str = "",
+    created_before: str = "",
+    sort_by: str = "",
+    has: str = "",
 ) -> dict[str, Any]:
-    """Full-text search across messages."""
-    if not query:
+    """Full-text search across messages.
+
+    `conversations` and `from_users` take channel names and usernames as well
+    as ids, comma-separated; both are resolved here so a caller never has to
+    look an id up to filter by a name it already knows.
+    """
+    params: dict[str, Any] = {"query": query, "limit": limit, **_MESSAGE_ONLY_INDEXES}
+
+    if conversations:
+        params["conversations"] = _resolve_refs(client, conversations, resolve_conversation)
+    if from_users:
+        params["from_users"] = _resolve_refs(client, from_users, resolve_user)
+    if created_after:
+        params["created_after"] = created_after
+    if created_before:
+        params["created_before"] = created_before
+    if has:
+        params["has"] = has
+    if sort_by:
+        params["sort_by"] = sort_by
+
+    if not query and not any(params.get(f) for f in _QUERY_SUBSTITUTE_FILTERS):
         raise PopcornError(
-            "Query required for message search. Usage: popcorn search messages <query>"
+            "Query required for message search, unless you filter instead "
+            "(--in, --from, --since, --until, --has).\n"
+            '   Usage: popcorn message search "<query>"'
         )
-    params: dict[str, Any] = {"query": query, "limit": limit}
+
     if offset:
         params["offset"] = offset
     return client.get("/api/search/", params)

@@ -43,6 +43,89 @@ class TestSearch:
         with pytest.raises(PopcornError, match="Query required"):
             operations.search_messages(mock_client, "")
 
+    def test_search_messages_searches_only_messages(self, mock_client):
+        """Otherwise `total` and `index_counts` count file hits the command never renders."""
+        mock_client.get.return_value = {"messages": []}
+        operations.search_messages(mock_client, "deploy")
+        _, params = mock_client.get.call_args[0]
+        assert params["search_messages"] == "true"
+        assert params["search_files"] == "false"
+        assert params["search_conversations"] == "false"
+        assert params["search_links"] == "false"
+
+    def test_search_messages_omits_unset_filters(self, mock_client):
+        mock_client.get.return_value = {"messages": []}
+        operations.search_messages(mock_client, "deploy")
+        _, params = mock_client.get.call_args[0]
+        for absent in (
+            "conversations",
+            "from_users",
+            "created_after",
+            "created_before",
+            "has",
+            "sort_by",
+            "offset",
+        ):
+            assert absent not in params
+
+    def test_search_messages_resolves_channel_names(self, mock_client):
+        mock_client.get.return_value = {"messages": []}
+        with patch(
+            "popcorn_core.operations.resolve_conversation",
+            side_effect=lambda _c, ref: f"id-of-{ref.lstrip('#')}",
+        ):
+            operations.search_messages(mock_client, "deploy", conversations="#ops, #general")
+        _, params = mock_client.get.call_args[0]
+        assert params["conversations"] == "id-of-ops,id-of-general"
+
+    def test_search_messages_resolves_usernames(self, mock_client):
+        mock_client.get.return_value = {"messages": []}
+        with patch(
+            "popcorn_core.operations.resolve_user",
+            side_effect=lambda _c, ref: f"id-of-{ref}",
+        ):
+            operations.search_messages(mock_client, "deploy", from_users="ana,bo")
+        _, params = mock_client.get.call_args[0]
+        assert params["from_users"] == "id-of-ana,id-of-bo"
+
+    def test_search_messages_passes_time_and_sort_filters(self, mock_client):
+        mock_client.get.return_value = {"messages": []}
+        operations.search_messages(
+            mock_client,
+            "deploy",
+            created_after="2026-01-01",
+            created_before="2026-02-01",
+            sort_by="date_desc",
+            has="link",
+        )
+        _, params = mock_client.get.call_args[0]
+        assert params["created_after"] == "2026-01-01"
+        assert params["created_before"] == "2026-02-01"
+        assert params["sort_by"] == "date_desc"
+        assert params["has"] == "link"
+
+    @pytest.mark.parametrize(
+        "filter_kwargs",
+        [
+            {"conversations": "#ops"},
+            {"from_users": "ana"},
+            {"created_after": "2026-01-01"},
+            {"created_before": "2026-02-01"},
+            {"has": "file"},
+        ],
+    )
+    def test_search_messages_allows_empty_query_with_a_filter(self, mock_client, filter_kwargs):
+        """Mirrors what the server itself accepts in place of a query."""
+        mock_client.get.return_value = {"messages": []}
+        with patch("popcorn_core.operations.resolve_user", side_effect=lambda _c, ref: ref):
+            operations.search_messages(mock_client, "", **filter_kwargs)
+        mock_client.get.assert_called_once()
+
+    def test_search_messages_sort_alone_does_not_substitute_for_a_query(self, mock_client):
+        """Sorting narrows nothing, so it cannot stand in for a query."""
+        with pytest.raises(PopcornError, match="Query required"):
+            operations.search_messages(mock_client, "", sort_by="date_desc")
+
 
 class TestMessages:
     def test_read_messages(self, mock_client):

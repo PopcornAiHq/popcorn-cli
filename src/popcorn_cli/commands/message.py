@@ -16,6 +16,8 @@ arguments that declared what follows them.
 
 from __future__ import annotations
 
+from popcorn_core import operations
+
 from ..registry import Argument, Command, Subcommand, register
 from ._late import late_handler
 
@@ -123,6 +125,33 @@ register(
                     Argument("query", "Search query", positional=True, nargs="?", default=""),
                     Argument("limit", "Max results (default 50)", type=int),
                     Argument("offset", "Pagination offset", type=int),
+                    # The query is optional when one of these narrows the
+                    # search instead, which is what makes "everything I posted
+                    # in #ops last week" expressible at all.
+                    Argument(
+                        "in",
+                        "Only search these channels (#general or UUID, comma-separated)",
+                        type=str,
+                    ),
+                    Argument(
+                        "from",
+                        "Only messages from these users (username, email or UUID, comma-separated)",
+                        type=str,
+                    ),
+                    Argument("since", "Only messages after this time (ISO 8601)", type=str),
+                    Argument("until", "Only messages before this time (ISO 8601)", type=str),
+                    Argument(
+                        "has",
+                        "Only messages containing these "
+                        "(file, images, link, mention, video — comma-separated)",
+                        type=str,
+                    ),
+                    Argument(
+                        "sort",
+                        "Result order (default relevance)",
+                        type=str,
+                        choices=list(operations.SORT_OPTIONS),
+                    ),
                 ],
             ),
             Subcommand(
