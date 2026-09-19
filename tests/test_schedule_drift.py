@@ -306,6 +306,137 @@ class TestClassify:
         assert json.loads(json.dumps(report.to_dict()))["alarming"] == 1
 
 
+# The platform's auto-pause notes, paired with the app mode each is written
+# under. Mode-independent notes (an archive, a delete, an update lock, the
+# agent switch) are legitimate on a prod channel; mode-dependent ones say
+# "not prod" in so many words, so prod contradicts them.
+_MODE_INDEPENDENT = [
+    ("auto-paused: channel archived", "prod"),
+    ("auto-paused: channel deleted", "prod"),
+    ("auto-paused: app updates locked", "prod"),
+    ("auto-paused: app_agent off", "prod"),
+]
+_MODE_DEPENDENT = [
+    ("auto-paused: app_mode off", "off"),
+    ("auto-paused: app_mode not prod", "test"),
+    ("auto-paused: investigator is prod-only", "test"),
+]
+
+
+class TestPauseNotes:
+    """Every auto-pause note the platform writes, and the fallback.
+
+    The bug these pin: the recogniser knew two of the notes, so a schedule
+    paused by any of the others was reported as "paused, and nothing says
+    why" — an alarm whose remediation (go un-pause it by hand) is wrong for
+    a lock, which releases itself, and for a delete, which must never be
+    resumed. The notes below are the literals the platform writes; they are
+    prose it owns, so this suite is also the tripwire for a reword.
+    """
+
+    @pytest.mark.parametrize("note,app_mode", _MODE_INDEPENDENT + _MODE_DEPENDENT)
+    def test_every_platform_pause_is_explained(self, note: str, app_mode: str) -> None:
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note=note)],
+            app_mode=app_mode,
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_APP_MODE
+        assert not finding.alarming
+
+    @pytest.mark.parametrize("note,_mode", _MODE_INDEPENDENT)
+    def test_mode_independent_pauses_survive_prod(self, note: str, _mode: str) -> None:
+        """A lock, a delete, an archive and the agent switch are not modes.
+
+        Escalating these on a prod channel would be the same false alarm in
+        a new costume: prod contradicts none of them.
+        """
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note=note)],
+            app_mode="prod",
+        )
+        assert report.findings[0].drift_class == CLASS_APP_MODE
+
+    @pytest.mark.parametrize("note,_mode", _MODE_DEPENDENT)
+    def test_mode_dependent_pauses_are_escalated_on_prod(self, note: str, _mode: str) -> None:
+        """These say "not prod" in so many words, so prod contradicts them."""
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note=note)],
+            app_mode="prod",
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_DRIFT
+        assert finding.alarming
+
+    def test_lock_does_not_advise_a_manual_unpause(self) -> None:
+        """The wording is the fix, not just the class.
+
+        A locked channel's schedules resume when the lock comes off, so any
+        advice to go un-pause one by hand sends an operator to do work that
+        undoes itself.
+        """
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note="auto-paused: app updates locked")],
+            app_mode="prod",
+        )
+        summary = report.findings[0].summary
+        assert "lock" in summary
+        assert "no manual un-pause" in summary
+
+    def test_delete_says_it_is_never_resumed(self) -> None:
+        """The opposite advice to the lock's, so it must not share its bucket."""
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note="auto-paused: channel deleted")],
+            app_mode="prod",
+        )
+        summary = report.findings[0].summary
+        assert "deleted" in summary
+        assert "never" in summary
+
+    def test_each_note_reads_differently(self) -> None:
+        """Recognising a note is only half of it — it has to say which one."""
+        summaries = set()
+        for note, app_mode in _MODE_INDEPENDENT + _MODE_DEPENDENT:
+            report = classify(
+                [{"slug": "tick", "interval": 900}],
+                [_live("tick", paused=True, note=note)],
+                app_mode=app_mode,
+            )
+            summaries.add(report.findings[0].summary)
+        # `app_mode off` and the generic `set_app_mode` marker deliberately
+        # read alike, so only the distinct causes are counted.
+        assert len(summaries) == len(_MODE_INDEPENDENT) + len(_MODE_DEPENDENT)
+
+    def test_an_unknown_note_still_falls_through_to_unexplained(self) -> None:
+        """The fifth note someone adds tomorrow must degrade, not mis-bucket.
+
+        Free-text matching cannot be exhaustive, so the fallback is the part
+        that has to hold: an unrecognised reason is reported as unexplained
+        rather than quietly excused by the nearest marker.
+        """
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note="auto-paused: quota exhausted")],
+            app_mode="prod",
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_PAUSED
+        assert finding.alarming
+
+    def test_note_matching_ignores_case(self) -> None:
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note="Auto-Paused: App Updates Locked")],
+            app_mode="prod",
+        )
+        assert report.findings[0].drift_class == CLASS_APP_MODE
+
+
 class TestAlarmingClasses:
     def test_only_three_and_four_alarm(self) -> None:
         """The agreed acceptance: exit non-zero only on class 3 and 4."""
