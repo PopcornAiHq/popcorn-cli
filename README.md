@@ -89,7 +89,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn message search [query] [--in CHANNELS] [--from USERS] [--since T] [--until T] [--has WHAT] [--sort ORDER]` | Full-text message search. `--in` and `--from` accept comma-separated names or UUIDs; `--since`/`--until` take ISO 8601 times and `--has` takes `file,images,link,mention,video`. The query may be omitted when at least one filter other than `--sort` is given |
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
-| `popcorn channel list [query] [--dms]` | List channels or DMs |
+| `popcorn channel list [query] [--dms] [--include-archived] [--include-hidden]` | List channels or DMs, following the server's cursor to the last page. Archived and hidden conversations are excluded unless asked for |
 | `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel; `--template` installs a registry template into it (the only way to install one) |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |

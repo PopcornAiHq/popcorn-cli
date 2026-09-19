@@ -104,6 +104,16 @@ register(
                 [
                     Argument("query", "Filter query", positional=True, nargs="?", default=""),
                     Argument("dms", "List DMs instead of channels", action="store_true"),
+                    Argument(
+                        "include-archived",
+                        "Include archived channels (excluded by default)",
+                        action="store_true",
+                    ),
+                    Argument(
+                        "include-hidden",
+                        "Include hidden channels (excluded by default)",
+                        action="store_true",
+                    ),
                 ],
             ),
             Subcommand(
