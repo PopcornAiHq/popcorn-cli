@@ -34,7 +34,9 @@ import os
 from pathlib import Path
 
 import pytest
+import yaml
 
+from popcorn_core import flow_triggers
 from popcorn_core.app_publish import collect_tree, unrecognized_code_paths
 from popcorn_core.flow_rules import CODE_SUBDIR
 from popcorn_core.template_check import check_bundle
@@ -110,3 +112,80 @@ def test_a_shipped_templates_code_blocks_are_publishable(bundle: Path) -> None:
     on_disk = (bundle / CODE_SUBDIR).is_dir()
     collected = any(p.startswith(f"{CODE_SUBDIR}/") for p in tree.files)
     assert collected == on_disk
+
+
+def _bundle_files(bundle: Path) -> dict[str, str]:
+    return collect_tree(bundle).files
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)
+def test_every_flow_a_shipped_manifest_names_is_reported_as_triggered(bundle: Path) -> None:
+    """A `flow:` in the manifest is a trigger the CLI must find.
+
+    Webhooks, document uploads and state-graph edges all reach a flow by name
+    from the manifest, and `flow get` now prints "nothing in this channel's
+    bundle starts this flow" when it finds none — a verdict that is only safe
+    if every manifest shape in use is actually read. The synthetic fixtures in
+    `test_flow_triggers.py` are written from these; this is the check that
+    they still describe them.
+    """
+    files = _bundle_files(bundle)
+    manifest = yaml.safe_load(files.get("manifest.yaml") or "") or {}
+    states = manifest.get("states") if isinstance(manifest, dict) else None
+
+    named: set[str] = set()
+    for section in ("webhooks", "documents"):
+        for entry in manifest.get(section) or []:
+            if isinstance(entry, dict) and entry.get("flow"):
+                named.add(str(entry["flow"]))
+    for edge in flow_triggers._state_edges(states):
+        if edge.get("flow"):
+            named.add(str(edge["flow"]))
+        for consequence in edge.get("then") or []:
+            if isinstance(consequence, dict) and consequence.get("flow"):
+                named.add(str(consequence["flow"]))
+
+    untriggered = [n for n in sorted(named) if not flow_triggers.analyze(n, files).has_trigger]
+    assert untriggered == []
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)
+def test_a_shipped_state_edge_reports_its_event_name(bundle: Path) -> None:
+    """`on:` is a YAML 1.1 boolean and parses to the key `True`.
+
+    The failure mode is silent — every edge still resolves to the right flow,
+    and only the event name degrades to "?" — so nothing but an assertion on a
+    real graph catches it coming back.
+    """
+    files = _bundle_files(bundle)
+    manifest = yaml.safe_load(files.get("manifest.yaml") or "") or {}
+    states = manifest.get("states") if isinstance(manifest, dict) else None
+    events = [flow_triggers._edge_event(e) for e in flow_triggers._state_edges(states)]
+    assert all(events), "a shipped state edge parsed with no readable event name"
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)
+def test_a_shipped_bundles_literal_launches_are_all_attributed(bundle: Path) -> None:
+    """Every `start_flow` step naming a flow outright becomes a caller edge.
+
+    Counted from the bundle's own flow documents rather than from the
+    analyzer, so a walk that stopped at the top level — blocks are where most
+    of these live — fails here instead of quietly reporting fewer callers.
+    """
+    files = _bundle_files(bundle)
+    docs = flow_triggers._flow_documents(files)
+    expected: set[tuple[str, str]] = set()
+    for caller, doc in docs.items():
+        for step in flow_triggers._walk_steps(doc.get("steps")):
+            if step.get("activity") != flow_triggers.START_FLOW_ACTIVITY:
+                continue
+            args = step.get("args")
+            target = args.get("flow_name") if isinstance(args, dict) else None
+            if isinstance(target, str) and not target.startswith("$"):
+                expected.add((caller, target))
+
+    found: set[tuple[str, str]] = set()
+    for target in {t for _, t in expected}:
+        for trigger in flow_triggers.analyze(target, files).of_kind("flow"):
+            found.add((trigger.detail["flow"], target))
+    assert found == expected
