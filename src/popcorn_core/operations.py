@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from .errors import APIError, PopcornError
+from .paging import fetch_all
 from .resolve import resolve_conversation, resolve_user
 
 if TYPE_CHECKING:
@@ -48,20 +49,57 @@ _CHANNEL_TYPES = (
 )
 
 
-def search_channels(client: APIClient, query: str = "") -> dict[str, Any]:
-    """Search channels, optionally filtering by name."""
-    resp = client.get("/api/conversations/list", {"types": _CHANNEL_TYPES, "limit": 1000})
-    convs = resp.get("conversations", [])
+def _listing_params(*, include_archived: bool, include_hidden: bool) -> dict[str, Any]:
+    """The archived/hidden switches a conversation listing sends.
+
+    Both are spelled out because the server's two defaults pull in opposite
+    directions. Archived conversations are INCLUDED unless excluded, so they
+    pad every listing and consume the same page budget as live ones — the CLI
+    asks for them out. Hidden conversations are EXCLUDED unless asked for, so
+    the gap there is the other one: without a switch they are unreachable.
+    """
+    return {
+        "exclude_archived": "false" if include_archived else "true",
+        "exclude_hidden": "false" if include_hidden else "true",
+    }
+
+
+def search_channels(
+    client: APIClient,
+    query: str = "",
+    *,
+    include_archived: bool = False,
+    include_hidden: bool = False,
+) -> dict[str, Any]:
+    """Search channels, optionally filtering by name.
+
+    The name filter is applied here because neither listing endpoint takes a
+    query — the server can only be asked for the whole list.
+    """
+    params = {
+        "types": _CHANNEL_TYPES,
+        **_listing_params(include_archived=include_archived, include_hidden=include_hidden),
+    }
+    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
         q = query.lower()
         convs = [c for c in convs if q in (c.get("name") or "").lower()]
     return {"conversations": convs}
 
 
-def search_dms(client: APIClient, query: str = "") -> dict[str, Any]:
+def search_dms(
+    client: APIClient,
+    query: str = "",
+    *,
+    include_archived: bool = False,
+    include_hidden: bool = False,
+) -> dict[str, Any]:
     """Search DMs, optionally filtering by participant name."""
-    resp = client.get("/api/conversations/list", {"types": "dm,group_dm", "limit": 1000})
-    convs = resp.get("conversations", [])
+    params = {
+        "types": "dm,group_dm",
+        **_listing_params(include_archived=include_archived, include_hidden=include_hidden),
+    }
+    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
         q = query.lower()
         convs = [
@@ -77,8 +115,7 @@ def search_dms(client: APIClient, query: str = "") -> dict[str, Any]:
 
 def search_users(client: APIClient, query: str = "") -> dict[str, Any]:
     """Search users, optionally filtering by name/email."""
-    resp = client.get("/api/users/list", {"limit": 1000})
-    users = resp.get("users", [])
+    users = fetch_all(client, "/api/users/list", {}, "users")
     if query:
         q = query.lower()
         users = [

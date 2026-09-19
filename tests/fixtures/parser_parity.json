@@ -1234,6 +1234,8 @@
       "debug": false,
       "dms": false,
       "env": null,
+      "include_archived": false,
+      "include_hidden": false,
       "json": false,
       "no_color": false,
       "query": "x",
@@ -1248,7 +1250,9 @@
       "channel",
       "list",
       "x",
-      "--dms"
+      "--dms",
+      "--include-archived",
+      "--include-hidden"
     ],
     "namespace": {
       "channel_command": "list",
@@ -1256,6 +1260,8 @@
       "debug": false,
       "dms": true,
       "env": null,
+      "include_archived": true,
+      "include_hidden": true,
       "json": false,
       "no_color": false,
       "query": "x",
