@@ -63,7 +63,7 @@ Three dataclasses, one entry point:
 | `schema()` | `cmd_commands` via `_command_categories` / `_command_descriptions` (`cli.py`) | see [Where the schema really comes from](#where-the-schema-really-comes-from) |
 | `completion_groups()` | `_render_bash_completion` (`cli.py`) | families **and** nested groups, flat — bash keys on the previous word alone |
 | `completion_words(name)` | `_render_zsh_completion` (`cli.py`) | family level only, matching the template's hand-written families |
-| `descriptions()` | zsh command list, bash top-level words, `_ALL_COMMAND_NAMES` (`cli.py`) | |
+| `descriptions()` | zsh command list, bash top-level words (`cli.py`) | |
 
 ### Argument naming
 
@@ -223,7 +223,7 @@ diff against, and two behaviour losses had already gone through that gap.
 5. Add one line to `build_parser`'s epilog (see below).
 
 Do **not** touch the completion generators, the schema builder,
-`_COMMAND_CATEGORIES`, `_COMMAND_DESCRIPTIONS`, or `_ALL_COMMAND_NAMES`.
+`_COMMAND_CATEGORIES`, or `_COMMAND_DESCRIPTIONS`.
 
 ### The one surface still hand-maintained
 

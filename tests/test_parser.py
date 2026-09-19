@@ -941,6 +941,53 @@ class TestDidYouMean:
         assert "unknown command" in err
         assert "Did you mean" not in err
 
+    def test_mistyped_subcommand_suggests_a_sibling(self, capsys):
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["message", "serch"])
+        err = capsys.readouterr().err
+        assert 'unknown command "serch"' in err
+        assert "Did you mean" in err
+        assert "search" in err
+
+    def test_unmatched_subcommand_points_at_its_own_help(self, capsys):
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["message", "xyzqwfoo"])
+        err = capsys.readouterr().err
+        assert "Did you mean" not in err
+        assert '"popcorn message --help"' in err
+
+
+class TestInvalidChoiceOnAFlag:
+    """A bad value for a `choices=` flag is not a mistyped command.
+
+    The did-you-mean rewrite used to swallow every "invalid choice", so a bad
+    `--type` was reported as an unknown command and argparse's list of the
+    valid values — the one useful part — was dropped.
+    """
+
+    def test_flag_value_keeps_argparses_message(self, capsys):
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["channel", "create", "example-channel", "--type", "publik"])
+        err = capsys.readouterr().err
+        assert "unknown command" not in err
+        assert "--type" in err
+        assert "invalid choice: 'publik'" in err
+        assert "public_channel" in err
+
+    def test_positional_value_keeps_argparses_message(self, capsys):
+        # `completion`'s shell is a positional with `choices=`, but it is not
+        # the subcommand positional, so it gets argparse's message too.
+        parser = build_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["completion", "fish"])
+        err = capsys.readouterr().err
+        assert "unknown command" not in err
+        assert "invalid choice: 'fish'" in err
+        assert "zsh" in err
+
 
 class TestCheckAccess:
     def test_check_access(self, parser):
