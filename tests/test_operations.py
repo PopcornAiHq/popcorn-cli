@@ -730,6 +730,38 @@ class TestDataStoreOperations:
             "/api/v1/conversations/conv-uuid/data-store/audit", {"limit": 10}
         )
 
+    def test_list_store_audit_omits_unset_filters(self, mock_client):
+        """An unset filter is absent, never an empty string: the server reads
+        `entity_type=` as a value to match and answers with nothing."""
+        mock_client.get.return_value = {"ok": True, "events": []}
+        operations.list_store_audit(mock_client, "conv-uuid", entity_type="record")
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/audit",
+            {"limit": 50, "entity_type": "record"},
+        )
+
+    def test_list_store_audit_sends_every_filter(self, mock_client):
+        mock_client.get.return_value = {"ok": True, "events": []}
+        operations.list_store_audit(
+            mock_client,
+            "conv-uuid",
+            limit=10,
+            cursor="cur-9",
+            entity_type="record",
+            entity_id="42",
+            since="2026-09-01T00:00:00Z",
+        )
+        mock_client.get.assert_called_once_with(
+            "/api/v1/conversations/conv-uuid/data-store/audit",
+            {
+                "limit": 10,
+                "entity_type": "record",
+                "entity_id": "42",
+                "since": "2026-09-01T00:00:00Z",
+                "cursor": "cur-9",
+            },
+        )
+
 
 class TestActivityCatalog:
     def test_list_activity_catalog_hits_the_human_surface(self, mock_client):

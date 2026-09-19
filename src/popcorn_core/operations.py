@@ -1282,10 +1282,41 @@ def set_scalar(client: APIClient, conversation: str, key: str, value: str) -> di
 
 
 def list_store_audit(
-    client: APIClient, conversation: str, limit: int = 50, cursor: str | None = None
+    client: APIClient,
+    conversation: str,
+    limit: int = 50,
+    cursor: str | None = None,
+    *,
+    entity_type: str | None = None,
+    entity_id: str | None = None,
+    since: str | None = None,
 ) -> dict[str, Any]:
-    """Recent data-store audit entries (`events`: operation, entity, changed_at)."""
+    """Recent data-store audit entries (`events`: operation, entity, changed_at).
+
+    The two questions an audit trail is opened for — what happened to this row,
+    and what changed since some moment — are both server-side filters, so they
+    go on the wire rather than narrowing the page here: filtering a page that
+    was already truncated by `limit` would answer from whatever happened to be
+    in it and silently miss older matches.
+
+    `entity_type` and `entity_id` are exact matches (the pair together is one
+    entity's history; `entity_type` alone is one class of them). `since` is an
+    ISO 8601 datetime and is inclusive — events at or after it, still ordered
+    newest-first. The server owns both taxonomies, so an unknown entity_type
+    matches nothing there rather than failing offline here, and a malformed
+    `since` comes back as a 400 naming the parse error.
+
+    Omitted filters are not sent, so a call that passes none is byte-identical
+    to what it was before they existed.
+    """
     params: dict[str, Any] = {"limit": limit}
+    for key, value in (
+        ("entity_type", entity_type),
+        ("entity_id", entity_id),
+        ("since", since),
+    ):
+        if value is not None:
+            params[key] = value
     if cursor:
         params["cursor"] = cursor
     return client.get(f"{_store_base(client, conversation)}/audit", params)
