@@ -46,8 +46,10 @@ popcorn message send '#general' "Hello from the CLI!"
 echo "piped message" | popcorn message send '#general'
 popcorn message send '#general' "see attached" --file ./screenshot.png
 
-# Search messages
+# Search messages — optionally scoped by channel, author or time
 popcorn message search "deployment"
+popcorn message search "deployment" --in '#general' --since 2026-01-01
+popcorn message search --from ana@example.com --in '#general'   # filters, no query
 
 # List channels
 popcorn channel list
@@ -84,7 +86,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn message edit <conv> <msg_id> "content"` | Edit a message |
 | `popcorn message delete <conv> <msg_id>` | Delete a message |
 | `popcorn message react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
-| `popcorn message search <query>` | Full-text message search |
+| `popcorn message search [query] [--in CHANNELS] [--from USERS] [--since T] [--until T] [--has WHAT] [--sort ORDER]` | Full-text message search. `--in` and `--from` accept comma-separated names or UUIDs; `--since`/`--until` take ISO 8601 times and `--has` takes `file,images,link,mention,video`. The query may be omitted when at least one filter other than `--sort` is given |
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms]` | List channels or DMs |

@@ -954,7 +954,21 @@ def cmd_search_messages(args: argparse.Namespace) -> None:
     query = args.query or ""
     limit = getattr(args, "limit", None) or 50
     offset = getattr(args, "offset", None) or 0
-    resp = operations.search_messages(client, query, limit=limit, offset=offset)
+    # `in` and `from` are Python keywords, so these dests are only reachable
+    # through getattr — the flags are named for how they read on the command
+    # line, which is what a caller and an agent see.
+    resp = operations.search_messages(
+        client,
+        query,
+        limit=limit,
+        offset=offset,
+        conversations=getattr(args, "in", "") or "",
+        from_users=getattr(args, "from", "") or "",
+        created_after=getattr(args, "since", "") or "",
+        created_before=getattr(args, "until", "") or "",
+        sort_by=getattr(args, "sort", "") or "",
+        has=getattr(args, "has", "") or "",
+    )
     messages = resp.get("messages", [])
 
     # Backend sets has_more when there are more results at the next offset.
