@@ -933,13 +933,19 @@ def cmd_whoami(args: argparse.Namespace) -> None:
 def cmd_channel_list(args: argparse.Namespace) -> None:
     client = _get_client(args)
     query = getattr(args, "query", "") or ""
+    include_archived = getattr(args, "include_archived", False)
+    include_hidden = getattr(args, "include_hidden", False)
 
     if getattr(args, "dms", False):
-        resp = operations.search_dms(client, query)
+        resp = operations.search_dms(
+            client, query, include_archived=include_archived, include_hidden=include_hidden
+        )
         convs = resp.get("conversations", [])
         fmt = "DMs:\n" + "\n".join(fmt_conversation(c) for c in convs) if convs else "No DMs found."
     else:
-        resp = operations.search_channels(client, query)
+        resp = operations.search_channels(
+            client, query, include_archived=include_archived, include_hidden=include_hidden
+        )
         convs = resp.get("conversations", [])
         fmt = (
             "Channels:\n" + "\n".join(fmt_conversation(c) for c in convs)
@@ -1239,9 +1245,14 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if_not_exists = getattr(args, "if_not_exists", False)
 
-    # --if-not-exists: search for existing channel first
+    # --if-not-exists: search for existing channel first. Archived and hidden
+    # channels still own their name server-side, so a lookup that skipped them
+    # would report "not found", attempt the create, and fail on the duplicate
+    # it was meant to return.
     if if_not_exists:
-        existing = operations.search_channels(client, args.name)
+        existing = operations.search_channels(
+            client, args.name, include_archived=True, include_hidden=True
+        )
         for conv in existing.get("conversations", []):
             if (conv.get("name") or "").lower() == args.name.lower():
                 resp = {"conversation": conv, "already_existed": True}
@@ -1264,7 +1275,9 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
     except APIError as e:
         # Handle race: channel created between our search and create (--if-not-exists)
         if if_not_exists and e.status_code == 409:
-            existing = operations.search_channels(client, args.name)
+            existing = operations.search_channels(
+                client, args.name, include_archived=True, include_hidden=True
+            )
             for conv in existing.get("conversations", []):
                 if (conv.get("name") or "").lower() == args.name.lower():
                     resp = {"conversation": conv, "already_existed": True}

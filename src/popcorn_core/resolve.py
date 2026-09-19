@@ -6,6 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .errors import ERROR_CODE_NOT_FOUND, ERROR_CODE_VALIDATION, PopcornError
+from .paging import fetch_all, iter_pages
 
 if TYPE_CHECKING:
     from .client import APIClient
@@ -46,16 +47,17 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
     if cached is not None:
         return cached
 
-    # Fetch conversation list and match by name
-    resp = client.get("/api/conversations/list", {"limit": 1000})
-    conversations = resp.get("conversations", [])
-
-    for conv in conversations:
-        conv_name = (conv.get("name") or "").lower()
-        if conv_name == name:
-            conv_id: str = conv["id"]
-            _channel_cache[name] = (conv_id, time.time())
-            return conv_id
+    # Page through the listing rather than taking one maximal page: past that
+    # page the server reports a cursor, and ignoring it turned "your workspace
+    # is large" into "Channel not found". Stop at the first exact match, so a
+    # name near the front still costs one request.
+    for page in iter_pages(client, "/api/conversations/list", {}, "conversations"):
+        for conv in page:
+            conv_name = (conv.get("name") or "").lower()
+            if conv_name == name:
+                conv_id: str = conv["id"]
+                _channel_cache[name] = (conv_id, time.time())
+                return conv_id
 
     raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
 
@@ -85,8 +87,9 @@ def resolve_user(client: APIClient, ref: str) -> str:
     if cached is not None:
         return cached
 
-    resp = client.get("/api/users/list", {"limit": 1000})
-    users = resp.get("users", [])
+    # Every page, not the first: the ambiguity check below is only meaningful
+    # over the whole workspace, so there is no early exit here.
+    users = fetch_all(client, "/api/users/list", {}, "users")
 
     matched = [u for u in users if name in _user_handles(u) and u.get("id")]
     ids = {str(u["id"]) for u in matched}
