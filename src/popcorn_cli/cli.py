@@ -1786,6 +1786,64 @@ def cmd_inbox(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+WATCH_PAGE_LIMIT = 50
+
+
+def _watch_anchor(page: list[dict[str, Any]]) -> tuple[str | None, str | None]:
+    """The ``(id, created_at)`` of the newest message in a history page.
+
+    History comes back oldest-first, so the newest message is the last
+    element — of the newest ``limit`` when no cursor is given, and of the
+    first ``limit`` after the cursor when one is.
+    """
+    if not page:
+        return None, None
+    newest = page[-1]
+    return newest.get("id"), newest.get("created_at")
+
+
+def _parse_ts(value: Any) -> datetime | None:
+    """An API timestamp as an aware datetime, or None if it is unusable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _watch_stale_anchor(err: APIError) -> bool:
+    """Whether the server refused the watch cursor rather than the request.
+
+    A watched message can be deleted while the watcher is holding its id as
+    the cursor; the server answers 400 because it can no longer resolve that
+    id to a timestamp. Every other 400 is a real problem and keeps rising.
+    """
+    return err.status_code == 400 and "oldest" in str(err).lower()
+
+
+def _watch_newer_than(page: list[dict[str, Any]], cutoff: str | None) -> list[dict[str, Any]]:
+    """The messages in a page that postdate the last one already printed.
+
+    Only used to recover from a deleted cursor, where the server can no
+    longer answer "what followed this" and the watcher has to decide for
+    itself. An unusable cutoff yields nothing rather than everything: a
+    silent gap costs the reader one message, whereas guessing the other way
+    reprints the whole page, which is the failure this cursor exists to
+    avoid.
+    """
+    after = _parse_ts(cutoff)
+    if after is None:
+        return []
+    fresh = []
+    for msg in page:
+        created = _parse_ts(msg.get("created_at"))
+        if created is not None and created > after:
+            fresh.append(msg)
+    return fresh
+
+
 def cmd_watch(args: argparse.Namespace) -> None:
     client = _get_client(args)
     interval = args.interval or 3
@@ -1796,8 +1854,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
     start = time.monotonic()
 
     resp = operations.read_messages(client, args.conversation, limit=1)
-    messages = resp.get("messages", [])
-    last_seen_id = messages[0]["id"] if messages else None
+    last_seen_id, last_seen_at = _watch_anchor(resp.get("messages", []))
 
     _status(f"Watching... (Ctrl+C to stop, polling every {interval}s)")
 
@@ -1807,29 +1864,52 @@ def cmd_watch(args: argparse.Namespace) -> None:
                 _status(f"Max wait ({max_wait}s) reached.")
                 return
             time.sleep(interval)
-            resp = operations.read_messages(client, args.conversation, limit=50)
-            messages = resp.get("messages", [])
 
-            # Messages come newest-first from API. Find where last_seen_id
-            # sits and collect everything newer (before it in the list).
-            new_msgs = []
-            for msg in messages:
-                if msg.get("id") == last_seen_id:
-                    break
-                new_msgs.append(msg)
+            # Re-reading on a timer is the closest this CLI gets to a
+            # subscription; there is no stream to attach to. What keeps that
+            # honest is asking the server for what followed `last_seen_id`
+            # instead of scanning a page of recent history for it. A scan
+            # cannot tell "nothing arrived" from "so much arrived that the
+            # cursor fell off the page", and reads the second as a page full
+            # of new messages.
+            if last_seen_id is None:
+                # The channel was empty when the watch started, so anything
+                # it holds now arrived since.
+                page = operations.read_messages(
+                    client, args.conversation, limit=WATCH_PAGE_LIMIT
+                ).get("messages", [])
+                new_msgs = page
+            else:
+                try:
+                    page = operations.read_messages(
+                        client,
+                        args.conversation,
+                        limit=WATCH_PAGE_LIMIT,
+                        oldest=last_seen_id,
+                    ).get("messages", [])
+                    new_msgs = page
+                except APIError as err:
+                    if not _watch_stale_anchor(err):
+                        raise
+                    # The message the cursor pointed at was deleted. Re-anchor
+                    # on current history so the watch keeps running instead of
+                    # failing this poll and every one after it.
+                    page = operations.read_messages(
+                        client, args.conversation, limit=WATCH_PAGE_LIMIT
+                    ).get("messages", [])
+                    new_msgs = _watch_newer_than(page, last_seen_at)
 
-            if new_msgs:
-                # Print oldest-first
-                for msg in reversed(new_msgs):
-                    if json_mode:
-                        print(_json_line(msg), flush=True)
-                    else:
-                        print(fmt_message(msg), flush=True)
-                    seen += 1
-                    if max_count and seen >= max_count:
-                        return
-                # new_msgs[0] is the newest message (first in API response)
-                last_seen_id = new_msgs[0]["id"]
+            for msg in new_msgs:
+                if json_mode:
+                    print(_json_line(msg), flush=True)
+                else:
+                    print(fmt_message(msg), flush=True)
+                seen += 1
+                if max_count and seen >= max_count:
+                    return
+
+            if page:
+                last_seen_id, last_seen_at = _watch_anchor(page)
     except KeyboardInterrupt:
         _status("\nStopped watching.")
 

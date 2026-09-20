@@ -6,7 +6,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from .errors import ERROR_CODE_NOT_FOUND, ERROR_CODE_VALIDATION, PopcornError
-from .paging import fetch_all, iter_pages
+from .paging import fetch_all, iter_pages, listing_params
 
 if TYPE_CHECKING:
     from .client import APIClient
@@ -36,30 +36,72 @@ def _cached(cache: dict[str, tuple[str, float]], key: str, ttl: float) -> str | 
 
 
 def resolve_conversation(client: APIClient, ref: str) -> str:
-    """Resolve #channel-name to UUID, or pass through UUIDs."""
+    """Resolve #channel-name to UUID, or pass through UUIDs.
+
+    Matches the name exactly first, and only falls back to a case-insensitive
+    match when exactly one channel answers to it. Server-side name uniqueness
+    is a case-SENSITIVE equality, so "#Ops" and "#ops" can both exist as
+    different channels; picking whichever the listing happened to yield first
+    was a silent wrong answer, and a write command aimed at the wrong channel
+    is worse than an error.
+
+    The durable fix is a server-side lookup by name. No such endpoint exists,
+    which is why this function walks the listing at all.
+    """
     if _is_uuid(ref):
         return ref
 
-    # Strip leading # if present
-    name = ref.lstrip("#").lower()
+    # Case-preserved, so the cache cannot answer "#Ops" with a cached "#ops".
+    name = ref.lstrip("#")
 
     cached = _cached(_channel_cache, name, CHANNEL_CACHE_TTL)
     if cached is not None:
         return cached
 
+    # Archived AND hidden are asked for: a caller naming a channel explicitly
+    # means that channel whatever its visibility, and hidden ones are excluded
+    # by default — which left `channel list --include-hidden` displaying names
+    # every other command then rejected as "Channel not found".
+    params = listing_params(include_archived=True, include_hidden=True)
+
+    folded = name.lower()
+    # Keyed by id: the listing cursor is an offset into a list the server
+    # recomputes per page, so one channel can surface twice.
+    variants: dict[str, dict[str, Any]] = {}
+
     # Page through the listing rather than taking one maximal page: past that
     # page the server reports a cursor, and ignoring it turned "your workspace
     # is large" into "Channel not found". Stop at the first exact match, so a
-    # name near the front still costs one request.
-    for page in iter_pages(client, "/api/conversations/list", {}, "conversations"):
+    # name near the front still costs one request; only a case variant pays
+    # for the whole workspace, because ambiguity is not decidable until then.
+    for page in iter_pages(client, "/api/conversations/list", params, "conversations"):
         for conv in page:
-            conv_name = (conv.get("name") or "").lower()
+            conv_name = conv.get("name") or ""
+            conv_id = conv.get("id")
+            if not conv_id:
+                continue
             if conv_name == name:
-                conv_id: str = conv["id"]
-                _channel_cache[name] = (conv_id, time.time())
-                return conv_id
+                _channel_cache[name] = (str(conv_id), time.time())
+                return str(conv_id)
+            if conv_name.lower() == folded:
+                variants.setdefault(str(conv_id), conv)
 
-    raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
+    if not variants:
+        raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
+
+    if len(variants) > 1:
+        spellings = sorted(
+            f"#{conv.get('name') or '?'} ({conv_id})" for conv_id, conv in variants.items()
+        )
+        raise PopcornError(
+            f"'{ref}' matches more than one channel: {', '.join(spellings)}.\n"
+            "   Channel names are case-sensitive — pass the exact name or the id instead.",
+            error_code=ERROR_CODE_VALIDATION,
+        )
+
+    matched_id = next(iter(variants))
+    _channel_cache[name] = (matched_id, time.time())
+    return matched_id
 
 
 def _user_handles(user: dict[str, Any]) -> set[str]:

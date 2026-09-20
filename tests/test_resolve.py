@@ -56,6 +56,74 @@ class TestResolveConversation:
         # Only one API call — second hit cache
         assert mock_client.get.call_count == 1
 
+    def test_asks_for_archived_and_hidden(self, mock_client):
+        """Naming a channel means that channel, whatever its visibility."""
+        mock_client.get.return_value = {"conversations": [{"id": "conv-001", "name": "general"}]}
+        resolve_conversation(mock_client, "#general")
+        _, params = mock_client.get.call_args[0]
+        assert params["exclude_hidden"] == "false"
+        assert params["exclude_archived"] == "false"
+
+    def test_hidden_channel_resolves(self, mock_client):
+        """A hidden channel is only in the response when the switch is sent."""
+
+        def _list(_path, params):
+            # The server excludes hidden conversations when the switch is
+            # absent, so the default here is "true", not None.
+            convs = [{"id": "conv-002", "name": "example-hidden", "is_hidden": True}]
+            visible = [] if params.get("exclude_hidden", "true") == "true" else convs
+            return {"conversations": visible}
+
+        mock_client.get.side_effect = _list
+        assert resolve_conversation(mock_client, "#example-hidden") == "conv-002"
+
+    def test_archived_channel_resolves(self, mock_client):
+        """Archived is the server's default, so this guards against the CLI
+        excluding it — the switch is sent explicitly rather than left to a
+        default that points the other way from the hidden one."""
+
+        def _list(_path, params):
+            convs = [{"id": "conv-003", "name": "example-archived", "is_archived": True}]
+            visible = [] if params.get("exclude_archived") == "true" else convs
+            return {"conversations": visible}
+
+        mock_client.get.side_effect = _list
+        assert resolve_conversation(mock_client, "#example-archived") == "conv-003"
+
+    def test_exact_match_preferred_over_case_variant(self, mock_client):
+        """The variant comes first in the listing and must not win."""
+        mock_client.get.return_value = {
+            "conversations": [
+                {"id": "conv-lower", "name": "ops"},
+                {"id": "conv-upper", "name": "Ops"},
+            ]
+        }
+        assert resolve_conversation(mock_client, "#Ops") == "conv-upper"
+
+    def test_ambiguous_case_names_both_candidates(self, mock_client):
+        """Neither spelling is exact, and picking one would be a silent guess."""
+        mock_client.get.return_value = {
+            "conversations": [
+                {"id": "conv-lower", "name": "ops"},
+                {"id": "conv-upper", "name": "Ops"},
+            ]
+        }
+        with pytest.raises(PopcornError, match="matches more than one channel") as excinfo:
+            resolve_conversation(mock_client, "#OPS")
+        assert "conv-lower" in str(excinfo.value)
+        assert "conv-upper" in str(excinfo.value)
+
+    def test_cache_does_not_collapse_case_variants(self, mock_client):
+        """A cache keyed on the folded name would answer #Ops with #ops."""
+        mock_client.get.return_value = {
+            "conversations": [
+                {"id": "conv-lower", "name": "ops"},
+                {"id": "conv-upper", "name": "Ops"},
+            ]
+        }
+        assert resolve_conversation(mock_client, "#ops") == "conv-lower"
+        assert resolve_conversation(mock_client, "#Ops") == "conv-upper"
+
 
 _USERS = {
     "users": [

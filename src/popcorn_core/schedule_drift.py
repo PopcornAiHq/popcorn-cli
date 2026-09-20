@@ -4,8 +4,9 @@ A channel's manifest declares `schedules:`, and the installer creates them —
 but it does not create them verbatim, and neither does it keep them that way.
 Two platform mechanisms rewrite an installed schedule in place:
 
-* the `set_app_mode` bundle flow retunes cadences and pauses schedules when a
-  channel leaves prod, recording what it did in the schedule's `note`;
+* the platform pauses and retunes schedules on its own — a mode change, an
+  archive, a delete, an app-update lock, the agent switch — recording what it
+  did, and why, in the schedule's `note`;
 * the deterministic de-peak offset moves a plain daily cron off the minute it
   declares, so a fleet of "daily at 08:00" declarations spreads across the
   hour instead of stacking on `:00`.
@@ -54,12 +55,110 @@ _DEFAULT_SCHEDULE_CLASS = "periodic"
 # Markers the platform writes into a schedule's `note` when it changes one
 # itself. Their presence is the platform stating that the difference is its
 # own doing, which is what separates class 1 from class 4.
-_APP_MODE_MARKERS = ("set_app_mode", "app_mode off")
-_ARCHIVE_MARKER = "channel archived"
+#
+# Matching free text another system writes is a stopgap and inherently
+# fragile: these notes are prose aimed at a human reading a schedule, so a
+# reword there silently demotes an explained pause to an unexplained one here
+# and this tool starts crying drift at a healthy channel. The durable fix is
+# a machine-readable `pause_reason` on the schedule itself, which this would
+# read instead of guessing; until that exists, the table below is matched
+# case-insensitively as a substring, and a note matching nothing deliberately
+# falls through to "unexplained" rather than to the nearest guess.
+#
+# One entry per note the platform writes, because they do not call for the
+# same response: an archive or a lock lifts on its own, a delete never does,
+# and the mode-dependent ones are contradicted by a channel reporting prod.
+# Folding them together would hand an operator confidently wrong advice —
+# telling someone to go un-pause by hand a schedule that resumes itself the
+# moment the lock comes off.
+
+
+@dataclass(frozen=True)
+class _PauseMarker:
+    """One recognised platform note and what it means for the reader.
+
+    `mode_dependent` is the escalation switch: True for a note that only
+    makes sense off prod, so a channel reporting prod contradicts it. False
+    for the lifecycle and switch notes, which are independent of app mode and
+    are therefore taken at face value whatever the mode says.
+    """
+
+    literal: str
+    mode_dependent: bool
+    pause_summary: str
+
+
+_PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
+    _PauseMarker(
+        literal="channel archived",
+        mode_dependent=False,
+        pause_summary=(
+            "paused because the channel is archived — unarchiving resumes "
+            "exactly the schedules carrying this marker"
+        ),
+    ),
+    _PauseMarker(
+        literal="channel deleted",
+        mode_dependent=False,
+        pause_summary=(
+            "paused because the channel is deleted — this one is never "
+            "auto-resumed, not even by unarchiving, and the schedule is torn "
+            "down with the channel. Nothing to do unless the channel is "
+            "meant to come back, which is a re-install rather than an "
+            "un-pause"
+        ),
+    ),
+    _PauseMarker(
+        literal="app updates locked",
+        mode_dependent=False,
+        pause_summary=(
+            "paused because app updates are locked on this channel — "
+            "releasing the lock resumes it, so this needs no manual un-pause"
+        ),
+    ),
+    _PauseMarker(
+        literal="app_agent off",
+        mode_dependent=False,
+        pause_summary=(
+            "paused because the channel's app agents are switched off — "
+            "switching them back on resumes it. Independent of app mode: a "
+            "prod channel with the agents off is a deliberate state"
+        ),
+    ),
+    _PauseMarker(
+        literal="app_mode not prod",
+        mode_dependent=True,
+        pause_summary="paused because the channel is not in prod",
+    ),
+    _PauseMarker(
+        literal="app_mode off",
+        mode_dependent=True,
+        pause_summary="paused by set_app_mode",
+    ),
+    _PauseMarker(
+        literal="prod-only",
+        mode_dependent=True,
+        pause_summary=("paused because this schedule only runs in prod, and the channel is not"),
+    ),
+    # Last: the generic marker every set_app_mode note carries, pause and
+    # resume alike, so a schedule retuned rather than paused is still
+    # accounted for. Anything more specific must match before it.
+    _PauseMarker(
+        literal="set_app_mode",
+        mode_dependent=True,
+        pause_summary="paused by set_app_mode",
+    ),
+)
 
 # The class numbers are part of this tool's interface rather than an internal
 # detail — `--json` consumers switch on `drift_class`, and the exit-code rule
 # below is stated in terms of them — so they must stay stable.
+#
+# Class 1 is "the platform says it did this", of which app mode is only the
+# most common case — an archive, a delete, an update lock and the agent
+# switch all land here too. The name is kept because consumers switch on the
+# number; the `summary` is what distinguishes one cause from another, and it
+# is written to say what the reader should do about each.
 CLASS_APP_MODE = 1
 CLASS_DEPEAK = 2
 CLASS_PAUSED = 3
@@ -179,34 +278,35 @@ def _cadence(interval: Any, cron: Any) -> str:
     return "(none)"
 
 
-def _platform_note(note: str | None) -> str | None:
+def _platform_note(note: str | None) -> _PauseMarker | None:
     """Which platform marker a note carries, if any."""
     text = (note or "").lower()
-    if _ARCHIVE_MARKER in text:
-        return _ARCHIVE_MARKER
-    for marker in _APP_MODE_MARKERS:
-        if marker in text:
+    for marker in _PAUSE_MARKERS:
+        if marker.literal in text:
             return marker
     return None
 
 
-def _app_mode_verdict(marker: str | None, app_mode: str | None) -> bool | None:
+def _app_mode_verdict(marker: _PauseMarker | None, app_mode: str | None) -> bool | None:
     """Does a platform marker actually explain a difference on this channel?
 
     None when no marker is present. True when the marker accounts for it.
-    False for the one case worth escalating rather than excusing: an
-    app-mode marker on a channel that reports `prod`. The marker says the
-    platform retuned this schedule for a non-prod mode and the channel is not
-    in one, so either the mode changed without the schedule being restored or
-    the note is stale — both are real findings, and treating the marker as a
-    blanket excuse would hide exactly the state that needs looking at.
+    False for the one case worth escalating rather than excusing: a
+    mode-dependent marker on a channel that reports `prod`. The marker says
+    the platform retuned this schedule for a non-prod mode and the channel is
+    not in one, so either the mode changed without the schedule being
+    restored or the note is stale — both are real findings, and treating the
+    marker as a blanket excuse would hide exactly the state that needs
+    looking at.
 
-    An archive marker is unconditional: archiving is independent of app mode,
-    and a paused schedule on an archived channel is the system working.
+    A marker that is not mode-dependent is unconditional: archiving, a
+    delete, an update lock and the agent switch are all independent of app
+    mode, so prod contradicts none of them and a schedule paused under one is
+    the system working.
     """
     if marker is None:
         return None
-    if marker == _ARCHIVE_MARKER:
+    if not marker.mode_dependent:
         return True
     if app_mode is None:
         # The scalar is unset or unreadable. The marker is still the
@@ -265,13 +365,13 @@ def classify(
         explained = _app_mode_verdict(marker, app_mode)
         # A marker the mode contradicts taints everything about this
         # schedule, pause and cadence alike, so it is said once up front.
-        if explained is False:
+        if marker is not None and explained is False:
             report.findings.append(
                 Finding(
                     slug=slug,
                     drift_class=CLASS_DRIFT,
                     summary=(
-                        f"note says {marker!r}, but this channel's "
+                        f"note says {marker.literal!r}, but this channel's "
                         f"popcorn.app_mode is {app_mode!r} — the schedule was "
                         "retuned for a mode the channel is no longer in, so "
                         "nothing has restored it"
@@ -324,18 +424,21 @@ def classify(
     return report
 
 
-def _explained_pause(marker: str, app_mode: str | None) -> str:
-    if marker == _ARCHIVE_MARKER:
-        return (
-            "paused because the channel is archived — unarchiving resumes "
-            "exactly the schedules carrying this marker"
-        )
+def _explained_pause(marker: _PauseMarker, app_mode: str | None) -> str:
+    """The pause's own account of itself, plus the mode that confirms it.
+
+    Only a mode-dependent marker gets the app_mode annotation: on the
+    others the mode neither confirms nor contradicts anything, so quoting it
+    would suggest a check that was not made.
+    """
+    if not marker.mode_dependent:
+        return marker.pause_summary
     if app_mode is None:
         return (
-            f"paused by the platform (note says {marker!r}); "
+            f"{marker.pause_summary} (note says {marker.literal!r}); "
             "popcorn.app_mode could not be read to confirm the mode"
         )
-    return f"paused by set_app_mode — this channel's app_mode is {app_mode!r}"
+    return f"{marker.pause_summary} — this channel's app_mode is {app_mode!r}"
 
 
 def _classify_cadence(
@@ -345,7 +448,7 @@ def _classify_cadence(
     item: dict[str, Any],
     declared_cadence: str,
     live_cadence: str,
-    marker: str | None,
+    marker: _PauseMarker | None,
     app_mode: str | None,
 ) -> Finding:
     """Compare the cadence of a live, unpaused schedule against its declaration."""
@@ -403,7 +506,7 @@ def _cadence_difference(
     slug: str,
     declared_cadence: str,
     live_cadence: str,
-    marker: str | None,
+    marker: _PauseMarker | None,
     app_mode: str | None,
 ) -> Finding:
     """A cadence that differs for a reason the de-peak offset does not explain."""
@@ -413,7 +516,7 @@ def _cadence_difference(
             slug=slug,
             drift_class=CLASS_APP_MODE,
             summary=(
-                f"retuned by the platform, note says {marker!r}{mode} — the "
+                f"retuned by the platform, note says {marker.literal!r}{mode} — the "
                 "next install restores the manifest's cadence"
             ),
             declared=declared_cadence,

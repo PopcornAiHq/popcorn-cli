@@ -16,7 +16,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from .errors import APIError, PopcornError
-from .paging import fetch_all
+from .paging import fetch_all, listing_params
 from .resolve import resolve_conversation, resolve_user
 
 if TYPE_CHECKING:
@@ -49,21 +49,6 @@ _CHANNEL_TYPES = (
 )
 
 
-def _listing_params(*, include_archived: bool, include_hidden: bool) -> dict[str, Any]:
-    """The archived/hidden switches a conversation listing sends.
-
-    Both are spelled out because the server's two defaults pull in opposite
-    directions. Archived conversations are INCLUDED unless excluded, so they
-    pad every listing and consume the same page budget as live ones — the CLI
-    asks for them out. Hidden conversations are EXCLUDED unless asked for, so
-    the gap there is the other one: without a switch they are unreachable.
-    """
-    return {
-        "exclude_archived": "false" if include_archived else "true",
-        "exclude_hidden": "false" if include_hidden else "true",
-    }
-
-
 def search_channels(
     client: APIClient,
     query: str = "",
@@ -78,7 +63,7 @@ def search_channels(
     """
     params = {
         "types": _CHANNEL_TYPES,
-        **_listing_params(include_archived=include_archived, include_hidden=include_hidden),
+        **listing_params(include_archived=include_archived, include_hidden=include_hidden),
     }
     convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
@@ -97,7 +82,7 @@ def search_dms(
     """Search DMs, optionally filtering by participant name."""
     params = {
         "types": "dm,group_dm",
-        **_listing_params(include_archived=include_archived, include_hidden=include_hidden),
+        **listing_params(include_archived=include_archived, include_hidden=include_hidden),
     }
     convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:

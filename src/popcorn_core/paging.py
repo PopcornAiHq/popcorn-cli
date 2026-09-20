@@ -32,6 +32,25 @@ PAGE_LIMIT = 1000
 MAX_PAGES = 100
 
 
+def listing_params(*, include_archived: bool, include_hidden: bool) -> dict[str, Any]:
+    """The archived/hidden switches a conversation listing sends.
+
+    Both are spelled out because the server's two defaults pull in opposite
+    directions. Archived conversations are INCLUDED unless excluded, so they
+    pad every listing and consume the same page budget as live ones — the CLI
+    asks for them out. Hidden conversations are EXCLUDED unless asked for, so
+    the gap there is the other one: without a switch they are unreachable.
+
+    It lives beside the paging helpers rather than with the listing commands
+    because name resolution needs the same switches: a second copy is how the
+    two drifted apart, leaving hidden channels listable but not addressable.
+    """
+    return {
+        "exclude_archived": "false" if include_archived else "true",
+        "exclude_hidden": "false" if include_hidden else "true",
+    }
+
+
 def fetch_all(
     client: APIClient,
     path: str,

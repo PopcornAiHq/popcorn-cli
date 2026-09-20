@@ -66,6 +66,81 @@ def test_raises_on_every_bad_terminal_status(monkeypatch, bad):
     assert exc.value.exit_code == EXIT_VALIDATION
 
 
+# Every execution status the flow run API can put in `run.status`, and how the
+# poll loop must treat it.
+#
+# TRANSCRIPTION. The server maps Temporal's execution-status enum to these
+# canonical strings and returns them verbatim; the mapping lives in a private
+# repo this CLI cannot import, so the vocabulary is copied here by hand and
+# this test is the only thing holding the two in step.
+#
+# When this fails, a status was added or respelled server-side. Do NOT delete
+# the offending entry or relax the assertion: decide what `--wait` should do
+# with the new status, put it in the matching set in
+# `popcorn_cli.commands.flow`, and add it here. Leaving it out of both is the
+# failure this pin exists to prevent — an unmatched status is not "unknown, be
+# careful", it is "poll until the deadline and then claim the run may still be
+# going".
+_SERVER_STATUSES = {
+    "Running": "in_flight",
+    "Completed": "ok",
+    "Failed": "bad",
+    "Canceled": "bad",
+    "Terminated": "bad",
+    "ContinuedAsNew": "in_flight",
+    "TimedOut": "bad",
+}
+
+
+def test_terminal_sets_classify_every_status_the_server_can_emit():
+    from popcorn_cli.commands import flow as mod
+
+    by_bucket = {
+        "ok": mod._TERMINAL_OK,
+        "bad": mod._TERMINAL_BAD,
+        "in_flight": mod._IN_FLIGHT,
+    }
+    for status, bucket in _SERVER_STATUSES.items():
+        assert status in by_bucket[bucket], f"{status} missing from {bucket}"
+
+    # And nothing else: a set carrying a status the server never sends is a
+    # spelling the CLI invented, which is how `TIMED_OUT` survived unnoticed.
+    classified = set().union(*by_bucket.values())
+    assert classified == set(_SERVER_STATUSES)
+
+
+@pytest.mark.parametrize("status", [s for s, b in _SERVER_STATUSES.items() if b == "bad"])
+def test_server_spelled_failure_ends_the_wait(monkeypatch, status):
+    """The spellings as the API actually sends them, not upper-cased guesses."""
+    runs = _script(monkeypatch, ["Running", status])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    # Stopped on the status, rather than polling out the deadline.
+    assert runs.calls == 2
+    assert status in str(exc.value)
+    assert exc.value.error_code == "validation"
+    assert exc.value.exit_code == EXIT_VALIDATION
+    # A dead run is not something to come back and wait for again.
+    assert exc.value.to_dict()["retryable"] is False
+
+
+def test_server_spelled_completion_ends_the_wait(monkeypatch):
+    runs = _script(monkeypatch, ["Running", "Completed"])
+
+    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "Completed"
+    assert runs.calls == 2
+
+
+def test_continued_as_new_keeps_polling(monkeypatch):
+    """A run that continued-as-new handed its work to a successor run — the
+    flow is still going, so waiting on it is the point, not a missed match."""
+    runs = _script(monkeypatch, ["ContinuedAsNew", "ContinuedAsNew", "Completed"])
+
+    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "Completed"
+    assert runs.calls == 3
+
+
 def test_raises_on_timeout(monkeypatch):
     from popcorn_cli.commands import flow as mod
 
