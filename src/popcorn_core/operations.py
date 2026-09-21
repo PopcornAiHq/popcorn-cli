@@ -935,6 +935,58 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+def cancel_flow_runs(
+    client: APIClient,
+    conversation: str,
+    workflow_id: str | None = None,
+    run_id: str | None = None,
+    flow_name: str | None = None,
+    force: bool = False,
+    reason: str | None = None,
+    page_token: str | None = None,
+) -> dict[str, Any]:
+    """Stop one flow run, or every Running run of one flow, on a channel.
+
+    Exactly one of ``workflow_id`` (one run; ``run_id`` pins a specific run,
+    else the latest) or ``flow_name`` (every Running run of that flow — the
+    brake for a driver that launched dozens of runs and is itself long
+    done). A cancel is cooperative and lands at the run's next activity
+    boundary; ``force`` terminates on the spot, for a run that will not
+    cancel. The bulk form is one page of 200: ``page_token`` is the
+    ``next_page_token`` of the previous response, and it has to be a token
+    rather than "ask again" — the runs a page touched are still Running
+    until they reach that boundary, so a fresh query would select the same
+    page every time.
+
+    The response's ``cancelled`` entries carry an ``action``:
+    ``cancel_requested``, ``terminated``, or ``already_closed`` (with the
+    status it closed as — not an error, a sweep racing a finishing run
+    must be told).
+    """
+    if bool(workflow_id) == bool(flow_name):
+        raise PopcornError(
+            "Pass exactly one of a workflow id or --flow",
+            error_code="validation",
+            hint="popcorn flow runs cancel <workflow_id> --channel <conv>, "
+            "or popcorn flow runs cancel --flow <name> --channel <conv>",
+        )
+    conv_id = resolve_conversation(client, conversation)
+    body: dict[str, Any] = {"force": force}
+    if workflow_id:
+        body["workflow_id"] = workflow_id
+        if run_id:
+            body["run_id"] = run_id
+    else:
+        body["flow_name"] = flow_name
+        if page_token:
+            body["page_token"] = page_token
+    if reason:
+        body["reason"] = reason
+    return client.post(
+        "/api/customer-flow-runs/cancel", data=body, params={"conversation_id": conv_id}
+    )
+
+
 # ---------------------------------------------------------------------------
 # Scheduled flows (read-only)
 # ---------------------------------------------------------------------------

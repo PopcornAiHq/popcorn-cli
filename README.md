@@ -107,7 +107,9 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |
 | `popcorn flow runs list --channel <conv> [--status S] [--limit N] [--page-token T]` | List flow runs |
-| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail |
+| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on) |
+| `popcorn flow runs cancel <workflow_id> --channel <conv> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |
+| `popcorn flow runs cancel --flow <name> --channel <conv> [--force] [--page-token T]` | Stop every running run of a flow — the brake on a driver like `run_eval` whose launched runs outlive it |
 | **Templates** | |
 | `popcorn template check <dir> [--strict]` | Check a template bundle's structure offline — no channel, no server (exit 1 on errors; `--strict` also on warnings) |
 | **Tables** (channel data-store) | |

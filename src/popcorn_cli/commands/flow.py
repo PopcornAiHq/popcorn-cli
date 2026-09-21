@@ -362,10 +362,47 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
     count = resp.get("count", len(execs))
     lines = [f"Flow runs in {args.channel} ({count}):"]
     for e in execs:
+        queue = f"  [{e['task_queue']}]" if e.get("task_queue") else ""
         lines.append(
             f"  {(e.get('status') or '?'):<10} {e.get('workflow_id', '?')}  "
-            f"{e.get('workflow_type', '')}  {e.get('start_time', '')}"
+            f"{e.get('workflow_type', '')}  {e.get('start_time', '')}{queue}"
         )
+    _output(args, resp, "\n".join(lines))
+
+
+def _flow_runs_cancel(args: argparse.Namespace) -> None:
+    """Stop one run, or every running run of a flow, on a channel.
+
+    The bulk form is what `run_eval` needs: the driver is done in seconds
+    and the runs it launched are what must stop. It pages on the same
+    cursor `runs list` does, so a sweep of more than 200 continues with
+    `--page-token` rather than re-selecting runs whose cancel is pending.
+    """
+    from ..cli import _attach_pagination, _get_client, _output
+
+    client = _get_client(args)
+    resp = operations.cancel_flow_runs(
+        client,
+        args.channel,
+        workflow_id=getattr(args, "workflow_id", None),
+        run_id=getattr(args, "run_id", None),
+        flow_name=getattr(args, "flow", None),
+        force=getattr(args, "force", False),
+        reason=getattr(args, "reason", None),
+        page_token=getattr(args, "page_token", None),
+    )
+    cancelled = resp.get("cancelled") or []
+    token = resp.get("next_page_token")
+    _attach_pagination(resp, {"page-token": token} if token else None)
+    verb = "Terminated" if getattr(args, "force", False) else "Cancel requested for"
+    target = f"'{args.flow}' runs" if getattr(args, "flow", None) else "run"
+    lines = [f"{verb} {target} in {args.channel} ({len(cancelled)}):"]
+    for c in cancelled:
+        lines.append(
+            f"  {(c.get('action') or '?'):<17} {c.get('workflow_id', '?')}  {c.get('status', '')}"
+        )
+    if token:
+        lines.append("  more remain — rerun with --page-token (see pagination.next)")
     _output(args, resp, "\n".join(lines))
 
 
@@ -403,6 +440,13 @@ def _run_detail_lines(run: dict[str, Any]) -> list[str]:
         f"  started: {run.get('start_time', '-')}",
         f"  closed:  {run.get('close_time', '-')}",
     ]
+    # The task queue the run actually landed on — its tier — and the origin
+    # it was stamped with. A `best_effort` flow's runs inherit the batch tier
+    # from whatever launched them, so this is the only place to check it.
+    # Absent from an api older than the fields.
+    if run.get("task_queue"):
+        origin = f" (started by {run['trigger_source']})" if run.get("trigger_source") else ""
+        lines.append(f"  queue:   {run['task_queue']}{origin}")
 
     pending = run.get("current_activities") or []
     if pending:
@@ -457,7 +501,10 @@ register(
     Command(
         name="flow",
         category="flows",
-        description="Flow commands (activities, validate, import, list, get, run, runs list, runs get)",
+        description=(
+            "Flow commands (activities, validate, import, list, get, run, "
+            "runs list, runs get, runs cancel)"
+        ),
         subcommands=[
             # First: the discovery entry point for a template author.
             Subcommand(
@@ -564,7 +611,7 @@ register(
             ),
             Subcommand(
                 "runs",
-                "Inspect flow runs (list, get)",
+                "Inspect and stop flow runs (list, get, cancel)",
                 None,
                 [],
                 [
@@ -600,6 +647,37 @@ register(
                                 "include-errors",
                                 "Include error details in the run",
                                 action="store_true",
+                            ),
+                        ],
+                    ),
+                    Subcommand(
+                        "cancel",
+                        "Stop a run, or every running run of a flow (--flow)",
+                        _flow_runs_cancel,
+                        [
+                            Argument(
+                                "workflow_id",
+                                "Temporal workflow ID of one run (omit with --flow)",
+                                positional=True,
+                                nargs="?",
+                            ),
+                            _CHANNEL,
+                            Argument(
+                                "flow",
+                                "Flow name: stop every running run of it on the channel",
+                                type=str,
+                            ),
+                            Argument("run-id", "Specific run ID (optional)", type=str),
+                            Argument(
+                                "force",
+                                "Terminate on the spot instead of a cooperative cancel",
+                                action="store_true",
+                            ),
+                            Argument("reason", "Recorded on the run (optional)", type=str),
+                            Argument(
+                                "page-token",
+                                "Cursor from a previous --flow response's pagination.next",
+                                type=str,
                             ),
                         ],
                     ),
