@@ -394,9 +394,17 @@ def _flow_runs_cancel(args: argparse.Namespace) -> None:
     cancelled = resp.get("cancelled") or []
     token = resp.get("next_page_token")
     _attach_pagination(resp, {"page-token": token} if token else None)
-    verb = "Terminated" if getattr(args, "force", False) else "Cancel requested for"
+    # The headline is what the server said happened, not what was asked
+    # for: a run that closed before the request reached it comes back
+    # `already_closed`, and calling that "Terminated" would tell an operator
+    # a run was killed when its own row says it finished on its own.
     target = f"'{args.flow}' runs" if getattr(args, "flow", None) else "run"
-    lines = [f"{verb} {target} in {args.channel} ({len(cancelled)}):"]
+    tally: dict[str, int] = {}
+    for c in cancelled:
+        action = str(c.get("action") or "?")
+        tally[action] = tally.get(action, 0) + 1
+    summary = ", ".join(f"{n} {action}" for action, n in tally.items()) or "nothing to stop"
+    lines = [f"{target} in {args.channel}: {summary}"]
     for c in cancelled:
         lines.append(
             f"  {(c.get('action') or '?'):<17} {c.get('workflow_id', '?')}  {c.get('status', '')}"

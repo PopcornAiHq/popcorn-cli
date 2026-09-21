@@ -109,8 +109,9 @@ class TestDispatch:
         assert seen["force"] is False
         assert seen["reason"] == "bad"
         out = capsys.readouterr().out
-        assert "wf-a" in out and "cancel_requested" in out
-        assert "wf-b" in out and "already_closed" in out
+        # The headline tallies what the server reported, per action.
+        assert "1 cancel_requested, 1 already_closed" in out
+        assert "wf-a" in out and "wf-b" in out
         assert "--page-token" in out
 
     def test_one_run_form_with_force(self, monkeypatch, capsys):
@@ -132,8 +133,29 @@ class TestDispatch:
         assert seen["flow_name"] is None
         assert seen["force"] is True
         out = capsys.readouterr().out
-        assert "Terminated" in out and "wf-9" in out
+        assert "1 terminated" in out and "wf-9" in out
         assert "--page-token" not in out
+
+    def test_force_on_a_run_that_had_already_closed_does_not_claim_a_kill(
+        self, monkeypatch, capsys
+    ):
+        """`--force` is what was asked; `already_closed` is what happened.
+        The headline must say the latter, or an operator reads a run that
+        finished on its own as one they killed."""
+        monkeypatch.setattr(
+            operations,
+            "cancel_flow_runs",
+            lambda client, conversation, **kw: {
+                "cancelled": [
+                    {"workflow_id": "wf-9", "status": "Completed", "action": "already_closed"}
+                ],
+                "count": 1,
+            },
+        )
+        self._run(monkeypatch, ["flow", "runs", "cancel", "wf-9", "--channel", "#ops", "--force"])
+        out = capsys.readouterr().out
+        assert "1 already_closed" in out
+        assert "terminated" not in out.lower()
 
     def test_json_carries_pagination_next(self, monkeypatch, capsys):
         import json
