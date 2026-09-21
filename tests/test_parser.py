@@ -1027,7 +1027,11 @@ class TestCommands:
 
         cmd_commands(argparse.Namespace(command="commands", groups=None))
         schema = json.loads(capsys.readouterr().out)
-        assert "flow runs list" in schema["envelope"]["pagination"]["commands"]
+        paginated = schema["envelope"]["pagination"]["commands"]
+        assert "flow runs list" in paginated
+        # The bulk cancel pages on the same cursor; an agent reading the
+        # schema has to learn that a sweep of >200 continues with --page-token.
+        assert "flow runs cancel --flow" in paginated
 
     def test_commands_json_output(self, capsys):
         import json
