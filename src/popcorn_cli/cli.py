@@ -995,29 +995,70 @@ def cmd_search_users(args: argparse.Namespace) -> None:
     _output(args, resp, fmt)
 
 
+def _messages_next_page(
+    messages: list[dict[str, Any]],
+    *,
+    has_more: bool,
+    thread: bool,
+    forward: bool,
+) -> dict[str, str] | None:
+    """The flags that fetch the page after this one, or None if there is none.
+
+    History comes back **oldest-first** on every path: the backward query
+    takes the newest `limit` rows and reverses them before answering. So the
+    message to page back from is the FIRST element of a page, not the last.
+    The opposite belief was load-bearing both here and in the watch anchor,
+    and in each place it produced plausible output over the wrong window —
+    here, a cursor pointing at the newest message just read, which asks for
+    very nearly the page the caller already has.
+
+    Direction follows the anchor the caller gave. `--after` walks forward, so
+    its next page resumes at the newest message read; everything else walks
+    back into history from the oldest. Either flag replaces its own value
+    when fed back, so a bounded `--before X --after Y` window keeps its far
+    edge while the near one advances.
+
+    Thread replies are the exception. That endpoint pages by an offset this
+    command does not expose, and ignores the message-id cursors, so a cursor
+    named here would re-fetch the same page for as long as a caller followed
+    it. A thread read reports no next page, and the printed hint points at
+    `--limit`.
+    """
+    if not has_more or not messages or thread:
+        return None
+    anchor_id = (messages[-1] if forward else messages[0]).get("id")
+    if not anchor_id:
+        return None
+    return {"after": anchor_id} if forward else {"before": anchor_id}
+
+
 def cmd_list_messages(args: argparse.Namespace) -> None:
     if getattr(args, "watch", False):
         cmd_watch(args)
         return
 
     client = _get_client(args)
+    thread = args.thread or ""
+    after = getattr(args, "after", "") or ""
     resp = operations.read_messages(
         client,
         args.conversation,
-        args.thread or "",
+        thread,
         args.limit or 25,
         latest=getattr(args, "before", "") or "",
-        oldest=getattr(args, "after", "") or "",
+        oldest=after,
     )
     messages = resp.get("messages", [])
 
-    # Messages come newest-first; "next page older" cursor is the oldest id.
-    next_flags: dict[str, str] | None = None
-    if resp.get("has_more") and messages:
-        oldest_id = messages[-1].get("id")
-        if oldest_id:
-            next_flags = {"before": oldest_id}
-    _attach_pagination(resp, next_flags)
+    _attach_pagination(
+        resp,
+        _messages_next_page(
+            messages,
+            has_more=bool(resp.get("has_more")),
+            thread=bool(thread),
+            forward=bool(after),
+        ),
+    )
 
     lines = [fmt_message(m) for m in messages]
     if resp.get("has_more"):

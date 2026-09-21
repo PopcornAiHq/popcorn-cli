@@ -174,6 +174,8 @@ done
 
 Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`, `table rows`, `table scalar list`, `table audit`.
 
+`message list` reads history oldest-first, and its cursor follows the direction the anchor implies: a default or `--before` read pages back into history, while `--after` pages forward. Reading thread replies (`message list --thread`) is not cursor-paged — that endpoint pages by an offset the CLI does not expose, so `next` is always `null`; raise `--limit` to read a long thread.
+
 For commands where the backend does not return `has_more`, the CLI uses a safe heuristic: emit `next` when the returned page is at least `--limit` items long. Worst case the agent fetches one empty page and stops — the loop always converges.
 
 ---
