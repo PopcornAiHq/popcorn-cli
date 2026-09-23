@@ -25,6 +25,7 @@ Two of them are worth naming:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -410,8 +411,55 @@ class TreeDiff:
         ]
 
 
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}")
+
+
+def file_sha256(text: str) -> str:
+    """A file's hash in the server's terms: sha256 of its raw bytes.
+
+    `_read_text` decodes the bytes on disk as UTF-8 with no newline
+    translation, and the server stores exactly what a publish sends, so
+    re-encoding gives back the bytes both sides hashed — an untouched file
+    hashes equal to the served one.
+    """
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def served_hashes(tree: dict[str, Any]) -> dict[str, str] | None:
+    """`{path: sha256}` from an `/apps/tree` response, or None to fall back.
+
+    None when the server predates the field, and also when it is malformed —
+    a hash map that does not cover `paths` exactly would diff a file as
+    deleted or added when it was neither, and the full-tree read is always
+    available as the answer instead.
+    """
+    raw = tree.get("sha256")
+    if not isinstance(raw, dict):
+        return None
+    if not all(isinstance(p, str) and isinstance(h, str) for p, h in raw.items()):
+        return None
+    # Anything but lowercase sha256 hex never equals `file_sha256`, so every
+    # file would diff as changed and an untouched checkout would publish.
+    if not all(_SHA256_HEX_RE.fullmatch(h) for h in raw.values()):
+        return None
+    if set(raw) != set(tree.get("paths") or []):
+        return None
+    return dict(raw)
+
+
 def diff_tree(base: dict[str, str], local: dict[str, str]) -> TreeDiff:
-    """What changed from the checked-out tree to the working copy.
+    """What changed from the checked-out tree (`{path: content}`) to the
+    working copy. See `diff_tree_hashes`, which this delegates to."""
+    return diff_tree_hashes({path: file_sha256(text) for path, text in base.items()}, local)
+
+
+def diff_tree_hashes(base: dict[str, str], local: dict[str, str]) -> TreeDiff:
+    """What changed from the checked-out tree (`{path: sha256}`) to the
+    working copy.
+
+    Hashes are all the base side needs: a publish sends local content, and
+    every other decision here is on paths. So a caller that has the served
+    hashes never has to download the base tree's content at all.
 
     `files` carries COMPLETE new contents for added and changed paths — the
     endpoint takes whole files, not patches — and untouched paths are omitted
@@ -427,7 +475,7 @@ def diff_tree(base: dict[str, str], local: dict[str, str]) -> TreeDiff:
         if path not in base:
             diff.added.append(path)
             diff.files[path] = local[path]
-        elif local[path] != base[path]:
+        elif file_sha256(local[path]) != base[path]:
             diff.changed.append(path)
             diff.files[path] = local[path]
     for path in sorted(base):

@@ -1,12 +1,10 @@
-"""Parameter merging and the config lint, for `popcorn channel-config`.
+"""Parameter parsing and the config lint, for `popcorn channel-config`.
 
-The one thing this module exists to get right: `PUT
-/channel-config/parameters` REPLACES the whole `channel_parameters` section.
-A `params set tone=crisp` that sent only `{"tone": "crisp"}` would delete
-every other parameter on the channel, silently and successfully. So every
-per-key edit here is read-merge-write, and inherits the backend's documented
-last-write-wins — two concurrent edits race on the whole document and the
-loser's keys vanish with no error.
+The one thing to get right about editing: `PUT /channel-config/parameters`
+REPLACES the whole `channel_parameters` section. A `params set tone=crisp`
+sent there as `{"tone": "crisp"}` would delete every other parameter on the
+channel, silently and successfully. Per-key edits therefore go through the
+PATCH, which merges on the server; nothing here merges.
 
 The lint is not computed here. `inspect_channel_config` returns the
 `comparison` the server computes between a channel's config and what its
@@ -67,33 +65,6 @@ def parse_assignments(pairs: list[str]) -> dict[str, Any]:
         except json.JSONDecodeError:
             out[key] = raw
     return out
-
-
-def merge_parameters(current: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-    """The whole section to PUT after setting `updates`.
-
-    A shallow merge on purpose: the endpoint takes one flat map and the CLI
-    offers no path syntax, so a key whose value is an object is replaced
-    wholesale rather than deep-merged. Deep-merging would make `--replace`
-    the only way to ever shrink a nested value.
-    """
-    merged = dict(current)
-    merged.update(updates)
-    return merged
-
-
-def remove_parameters(current: dict[str, Any], keys: list[str]) -> tuple[dict[str, Any], list[str]]:
-    """The whole section to PUT after unsetting `keys`, plus those not present.
-
-    Absent keys are reported rather than raised: unsetting something already
-    gone is the desired end state, and failing would make the command
-    non-idempotent for no gain.
-    """
-    remaining = dict(current)
-    missing = [key for key in keys if key not in remaining]
-    for key in keys:
-        remaining.pop(key, None)
-    return remaining, missing
 
 
 def fatal_findings(comparison: dict[str, Any]) -> dict[str, list[str]]:

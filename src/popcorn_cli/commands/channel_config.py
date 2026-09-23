@@ -9,15 +9,14 @@ flows actually reference, and the diff between them. That diff is the lint the
 CLI never had for a bundle under iteration — `--strict` turns it into an exit
 code.
 
-**Every per-key edit is a read-modify-write.** `PUT
+**Per-key edits are a PATCH; only `--replace` is a PUT.** `PUT
 /channel-config/parameters` replaces the whole `channel_parameters` section,
-so `params set` GETs, merges and PUTs; see `popcorn_core.channel_config`. That
-inherits the backend's last-write-wins, which the command help states rather
-than hides.
+so a per-key edit built on it is a read-modify-write that loses a concurrent
+edit's keys. The PATCH sends only the keys being changed and the server
+merges them under a row lock; see `operations.patch_channel_parameters`.
 
-The CLI has no opinion about WHERE config lives. Bundle channels keep it on
-`channel_app.config` and legacy channels in S3, the API branches, and every
-command here goes through the endpoints so the migration cannot strand it.
+The config lives on the channel's `channel_app` row, and every command here
+goes through the endpoints rather than assuming where.
 
 Handlers import `..cli` helpers inside the function body: cli.py imports this
 package at module load to build the parser, so a module-level import cycles.
@@ -30,12 +29,10 @@ import argparse
 from popcorn_core import operations
 from popcorn_core.channel_config import (
     fatal_findings,
-    merge_parameters,
     parameters_of,
     parse_assignments,
-    remove_parameters,
 )
-from popcorn_core.errors import EXIT_UNHEALTHY, PopcornError
+from popcorn_core.errors import EXIT_UNHEALTHY
 
 from ..registry import Argument, Command, Subcommand, register
 
@@ -141,16 +138,12 @@ def _params_set(args: argparse.Namespace) -> None:
     updates = parse_assignments(args.assignment)
 
     if args.replace:
-        section = updates
+        data = operations.replace_channel_parameters(client, args.channel, updates)
         note = "Replaced the parameters section"
     else:
-        # Read-modify-write: the endpoint replaces the whole section, so
-        # sending only the new keys would delete every other parameter.
-        current = parameters_of(operations.inspect_channel_config(client, args.channel))
-        section = merge_parameters(current, updates)
+        data = operations.patch_channel_parameters(client, args.channel, set_=updates)
         note = f"Set {', '.join(sorted(updates))}"
 
-    data = operations.replace_channel_parameters(client, args.channel, section)
     written = parameters_of(data)
     rendered = "\n".join(
         [
@@ -167,22 +160,16 @@ def _params_unset(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    current = parameters_of(operations.inspect_channel_config(client, args.channel))
-    remaining, missing = remove_parameters(current, args.key)
-    if len(remaining) == len(current):
-        raise PopcornError(
-            f"nothing to unset — {', '.join(args.key)} "
-            f"{'is' if len(args.key) == 1 else 'are'} not set",
-            error_code="not_found",
-        )
-
-    data = operations.replace_channel_parameters(client, args.channel, remaining)
+    # A key that was not set is not an error: the end state is what was
+    # asked for. The response carries the section as written, not what
+    # changed, so the CLI cannot say which keys were already absent.
+    data = operations.patch_channel_parameters(client, args.channel, unset=args.key)
     written = parameters_of(data)
-    lines = [f"Unset {', '.join(k for k in args.key if k not in missing)}"]
-    if missing:
-        # Reported, not raised: the end state is what was asked for.
-        lines.append(f"  (already absent: {', '.join(missing)})")
-    lines += ["", f"{len(written)} parameter{'s' if len(written) != 1 else ''} remain"]
+    lines = [
+        f"Unset {', '.join(args.key)}",
+        "",
+        f"{len(written)} parameter{'s' if len(written) != 1 else ''} remain",
+    ]
     _output(args, data, "\n".join(lines))
 
 
@@ -267,7 +254,7 @@ register(
             ),
             Subcommand(
                 "params",
-                "Set or unset channel_parameters (read-modify-write)",
+                "Set or unset individual channel_parameters",
                 None,
                 [],
                 subcommands=[
