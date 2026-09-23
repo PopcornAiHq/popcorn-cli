@@ -72,9 +72,11 @@ from popcorn_core import flow_rules, operations, schedule_drift
 # app_publish's returns the raw working-copy value, only ever to warn about it.
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
+    GUIDE_TEXT,
     Baseline,
     baseline_from_response,
     files_from_response,
+    guide_text,
     occupied,
     read_baseline,
     write_agent_guide,
@@ -356,13 +358,22 @@ def _app_checkout(args: argparse.Namespace) -> None:
             hint="pass --force to overwrite them",
         )
 
+    # Read before the new baseline overwrites it: the guide this directory
+    # would have been given last time is how an unedited one is recognised.
+    previous = read_baseline(directory)
     directory.mkdir(parents=True, exist_ok=True)
     written = write_tree(directory, files)
     baseline = baseline_from_response(resp, files, conversation_id=conv_id, historical=historical)
     write_baseline(directory, baseline)
     # --force is already the author saying "take checkout's version of this
-    # directory"; without it an existing guide is theirs to keep.
-    guide = write_agent_guide(directory, force=bool(getattr(args, "force", False)))
+    # directory"; without it an existing guide is theirs to keep, unless it is
+    # still checkout's own text for a different kind of checkout.
+    guide = write_agent_guide(
+        directory,
+        force=bool(getattr(args, "force", False)),
+        text=guide_text(baseline),
+        replaceable=(GUIDE_TEXT,) + ((guide_text(previous),) if previous else ()),
+    )
 
     # What the channel runs, alongside what was served. An older API sends
     # neither field; then the served version IS the bound one and there is
@@ -416,8 +427,13 @@ def _app_checkout(args: argparse.Namespace) -> None:
     ]
     if guide is not None:
         lines.append(
-            f"Also wrote {guide.name} — how to edit and publish this directory, "
-            "for whoever reads it next. It is not bundle content and does not publish."
+            f"Also wrote {guide.name} — "
+            + (
+                "what this snapshot is and how to republish its content, "
+                if historical
+                else "how to edit and publish this directory, "
+            )
+            + "for whoever reads it next. It is not bundle content and does not publish."
         )
     if not historical:
         lines += ["", f"Next: popcorn template check {directory}"]

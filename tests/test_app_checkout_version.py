@@ -439,3 +439,96 @@ class TestTemplateCheckOfHistorical:
         write_baseline(tmp_path, base)
         codes = {f.code for f in check_bundle(str(tmp_path)).findings}
         assert "version-not-advanced" in codes
+
+
+# ---------------------------------------------------------------------------
+# The CLAUDE.md a version checkout writes
+# ---------------------------------------------------------------------------
+
+
+class TestGuide:
+    def test_a_past_version_gets_the_snapshot_guide(self, tmp_path):
+        from popcorn_core.app_checkout import GUIDE_FILE, GUIDE_TEXT
+
+        target = tmp_path / "old"
+        out = _run(_args(directory=str(target)), files=_files_response(_TREE))
+        text = (target / GUIDE_FILE).read_text()
+
+        assert text != GUIDE_TEXT
+        assert "alerttracker 0.1.0 (version 5)" in text
+        assert "not its head" in text
+        assert "refuses this directory" in text
+        assert "popcorn app status" in text
+        # The same recipe `app publish` gives when it refuses this copy.
+        assert f"popcorn app checkout --channel {_CONV} --dir <new-dir>" in text
+        assert "popcorn app publish <new-dir> --bump patch" in text
+        # The publish loop is exactly what must not be promised here.
+        assert "popcorn template check ." not in text
+        assert "snapshot" in out["rendered"]
+
+    def test_the_head_by_id_gets_the_normal_guide_byte_for_byte(self, tmp_path):
+        from popcorn_core.app_checkout import GUIDE_FILE, GUIDE_TEXT
+
+        target = tmp_path / "head"
+        _run(
+            _args(directory=str(target), version=7),
+            files=_files_response(_TREE, version_id=7, semver="0.2.0"),
+            head=_head(7, "0.2.0"),
+        )
+        assert (target / GUIDE_FILE).read_text() == GUIDE_TEXT
+
+    def test_a_plain_checkout_gets_the_normal_guide_byte_for_byte(self, tmp_path):
+        from popcorn_core.app_checkout import GUIDE_FILE, GUIDE_TEXT
+
+        target = tmp_path / "p"
+        _run(
+            _args(directory=str(target), version=None),
+            files=_files_response(_TREE, ref="head", version_id=7, semver="0.2.0"),
+        )
+        assert (target / GUIDE_FILE).read_text() == GUIDE_TEXT
+
+    def test_an_unedited_guide_follows_the_kind_of_checkout(self, tmp_path):
+        """Only a baseline and our guide make a directory free to re-check out
+        without --force, so switching head ↔ past version there must not leave
+        the other kind's guide behind — it would promise or deny the wrong
+        publish loop."""
+        from popcorn_core.app_checkout import GUIDE_FILE, GUIDE_TEXT
+
+        _run(
+            _args(directory=str(tmp_path), version=None),
+            files=_files_response(_TREE, ref="head", version_id=7, semver="0.2.0"),
+        )
+        for p in _TREE:
+            (tmp_path / p).unlink()
+        _run(_args(directory=str(tmp_path)), files=_files_response(_TREE))
+        assert "(version 5)" in (tmp_path / GUIDE_FILE).read_text()
+
+        for p in _TREE:
+            (tmp_path / p).unlink()
+        _run(
+            _args(directory=str(tmp_path), version=6),
+            files=_files_response(_TREE, version_id=6, semver="0.1.1"),
+        )
+        assert "(version 6)" in (tmp_path / GUIDE_FILE).read_text()
+
+        for p in _TREE:
+            (tmp_path / p).unlink()
+        _run(
+            _args(directory=str(tmp_path), version=None),
+            files=_files_response(_TREE, ref="head", version_id=7, semver="0.2.0"),
+        )
+        assert (tmp_path / GUIDE_FILE).read_text() == GUIDE_TEXT
+
+    def test_an_edited_guide_is_still_kept(self, tmp_path):
+        from popcorn_core.app_checkout import GUIDE_FILE
+
+        _run(
+            _args(directory=str(tmp_path), version=None),
+            files=_files_response(_TREE, ref="head", version_id=7, semver="0.2.0"),
+        )
+        for p in _TREE:
+            (tmp_path / p).unlink()
+        (tmp_path / GUIDE_FILE).write_text("my own notes\n")
+        out = _run(_args(directory=str(tmp_path)), files=_files_response(_TREE))
+        assert (tmp_path / GUIDE_FILE).read_text() == "my own notes\n"
+        assert out["data"]["guide"] is None

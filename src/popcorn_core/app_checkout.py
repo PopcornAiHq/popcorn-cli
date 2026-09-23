@@ -317,7 +317,67 @@ def write_baseline(directory: Path, baseline: Baseline) -> Path:
     return target
 
 
-def write_agent_guide(directory: Path, force: bool = False) -> Path | None:
+def historical_guide_text(baseline: Baseline) -> str:
+    """The guide for a checkout of a past version, which does not publish.
+
+    Unlike `GUIDE_TEXT` this names the version, because a past version never
+    moves: the snapshot and the words describing it cannot drift apart. What
+    it must replace is the edit-and-publish loop, which `app publish` refuses
+    here — a guide promising that loop would send the next reader straight
+    into the refusal. The republish recipe matches that refusal's hint.
+    """
+    app = baseline.app or "this app"
+    channel = baseline.conversation_id or "<channel>"
+    return f"""# Popcorn app bundle — read-only snapshot of a past version
+
+This directory is **{app} {baseline.semver} (version {baseline.base_version_id})**,
+checked out with `popcorn app checkout --version`. It is a past version of the
+channel's line, **not its head**, and `{BASELINE_FILE}` beside this file marks
+it `historical`.
+
+**Nothing here publishes.** A publish is based on the line's head, so
+`popcorn app publish` refuses this directory outright, edited or not.
+
+## What it is for
+
+- **Reading** the tree as it was at {baseline.semver} — for instance, from before
+  a bad publish.
+- **Diffing** it against the head: check the head out into another directory
+  and compare the two, or run `popcorn app status` here, which lists what
+  differs from the line's head.
+
+## Republishing this content
+
+To make this version's content current again, publish it on top of the head:
+
+```
+popcorn app checkout --channel {channel} --dir <new-dir>
+# copy this directory's bundle files over <new-dir>, keeping <new-dir>'s own
+# {BASELINE_FILE}, and delete any file there that this version does not have
+popcorn app publish <new-dir> --bump patch -m "<why this content is back>"
+```
+
+The diff that publish prints is what gets reverted — everything published
+since {baseline.semver} that this content undoes.
+
+## What this file is
+
+`popcorn app checkout` wrote it, and nothing uploads it. It is local guidance
+for whoever reads this directory; deleting it changes nothing about the app.
+"""
+
+
+def guide_text(baseline: Baseline) -> str:
+    """The guide a checkout with this baseline should carry."""
+    return historical_guide_text(baseline) if baseline.historical else GUIDE_TEXT
+
+
+def write_agent_guide(
+    directory: Path,
+    force: bool = False,
+    text: str = GUIDE_TEXT,
+    replaceable: tuple[str, ...] = (),
+) -> Path | None:
     """Write `CLAUDE.md` into the checkout. Returns the path, or None if kept.
 
     Separate from `write_baseline` because the two answer to different rules:
@@ -326,11 +386,23 @@ def write_agent_guide(directory: Path, force: bool = False) -> Path | None:
     more than a refresh. So an existing file is left alone unless the caller
     is already overwriting the working copy (`--force`), which is the one
     moment the author has said they want checkout's version of these files.
+
+    `replaceable` names texts checkout itself would have written for the
+    directory's previous baseline. An existing guide still holding one of
+    those is unedited and simply wrong for the new checkout — a head checkout
+    over a past-version snapshot, or the reverse — so it is replaced; keeping
+    it would describe a publish loop to a copy that cannot publish, or deny
+    one to a copy that can.
     """
     target = directory / GUIDE_FILE
     if target.exists() and not force:
-        return None
-    target.write_text(GUIDE_TEXT)
+        try:
+            current = target.read_text()
+        except OSError:
+            return None
+        if current == text or current not in replaceable:
+            return None
+    target.write_text(text)
     return target
 
 
