@@ -1,10 +1,10 @@
 """Tests for `popcorn channel-config`.
 
-The load-bearing test is `test_set_keeps_the_other_parameters`. `PUT
-/channel-config/parameters` replaces the whole section, so the naive
-implementation — send only the new key — silently deletes every other
-parameter and reports success. That is the failure this command family exists
-to avoid, and it is invisible in any test that starts from an empty config.
+The load-bearing test is `test_sends_only_the_new_keys_as_a_patch`. `PUT
+/channel-config/parameters` replaces the whole section, so a per-key `set`
+sent there as only the new key silently deletes every other parameter and
+reports success; built as a read-merge-PUT instead, it loses a concurrent
+edit's keys. Only the PATCH, which merges on the server, is safe.
 """
 
 from __future__ import annotations
@@ -18,10 +18,8 @@ from popcorn_core import operations
 from popcorn_core.channel_config import (
     FATAL_COMPARISON_FIELDS,
     fatal_findings,
-    merge_parameters,
     parameters_of,
     parse_assignments,
-    remove_parameters,
 )
 from popcorn_core.errors import EXIT_UNHEALTHY, PopcornError
 
@@ -105,39 +103,6 @@ class TestParseAssignments:
 
 
 # ---------------------------------------------------------------------------
-# merge / remove
-# ---------------------------------------------------------------------------
-
-
-class TestMergeParameters:
-    def test_keeps_keys_not_being_set(self):
-        got = merge_parameters({"a": 1, "b": 2}, {"b": 3})
-        assert got == {"a": 1, "b": 3}
-
-    def test_does_not_mutate_the_input(self):
-        current = {"a": 1}
-        merge_parameters(current, {"b": 2})
-        assert current == {"a": 1}
-
-    def test_replaces_an_object_value_wholesale(self):
-        """Shallow on purpose — there is no path syntax to shrink a subtree."""
-        got = merge_parameters({"limits": {"max": 5, "min": 1}}, {"limits": {"max": 9}})
-        assert got == {"limits": {"max": 9}}
-
-
-class TestRemoveParameters:
-    def test_removes_and_keeps_the_rest(self):
-        remaining, missing = remove_parameters({"a": 1, "b": 2}, ["a"])
-        assert remaining == {"b": 2}
-        assert missing == []
-
-    def test_reports_absent_keys_without_raising(self):
-        remaining, missing = remove_parameters({"a": 1}, ["a", "gone"])
-        assert remaining == {}
-        assert missing == ["gone"]
-
-
-# ---------------------------------------------------------------------------
 # fatal_findings
 # ---------------------------------------------------------------------------
 
@@ -173,115 +138,127 @@ class TestParametersOf:
 
 
 class _Recorder:
-    def __init__(self, response=None):
+    """Stands in for `replace_channel_parameters` (the wholesale PUT)."""
+
+    def __init__(self):
         self.calls: list[tuple] = []
-        self.response = response or {"ok": True, "channel_parameters": {}}
 
     def __call__(self, client, conversation, parameters):
         self.calls.append((conversation, parameters))
-        return {**self.response, "channel_parameters": parameters}
+        return {"ok": True, "channel_parameters": parameters}
 
 
-def _run(handler, args, inspect_response, recorder=None, accounts=None):
+class _PatchRecorder:
+    """Stands in for `patch_channel_parameters`, applying the edit to `stored`."""
+
+    def __init__(self, stored=None):
+        self.calls: list[dict] = []
+        self.stored = dict(stored or {})
+
+    def __call__(self, client, conversation, set_=None, unset=None):
+        self.calls.append({"conversation": conversation, "set": set_, "unset": unset})
+        after = {**self.stored, **(set_ or {})}
+        for key in unset or []:
+            after.pop(key, None)
+        return {"ok": True, "channel_parameters": after, "rev": "r1"}
+
+
+def _run(handler, args, inspect_response=None, recorder=None, accounts=None, patcher=None):
+    """Run a handler with every endpoint stubbed.
+
+    `inspect_channel_config` and both writes are always patched, so an
+    unexpected call is recorded rather than reaching `object()` as a client.
+    """
+    from contextlib import ExitStack
+
     from popcorn_cli.commands import channel_config as mod
 
     captured: dict = {}
-    patches = [
-        patch("popcorn_cli.cli._get_client", return_value=object()),
-        patch(
-            "popcorn_cli.cli._output",
-            lambda a, d, r: captured.update(data=d, rendered=r),
-        ),
-        patch.object(operations, "inspect_channel_config", return_value=inspect_response),
-    ]
-    if recorder is not None:
-        patches.append(patch.object(operations, "replace_channel_parameters", recorder))
-    if accounts is not None:
-        patches.append(patch.object(operations, "list_own_integrations", return_value=accounts))
-    from contextlib import ExitStack
-
     with ExitStack() as stack:
-        for p in patches:
-            stack.enter_context(p)
+        stack.enter_context(patch("popcorn_cli.cli._get_client", return_value=object()))
+        stack.enter_context(
+            patch("popcorn_cli.cli._output", lambda a, d, r: captured.update(data=d, rendered=r))
+        )
+        captured["inspect"] = stack.enter_context(
+            patch.object(operations, "inspect_channel_config", return_value=inspect_response)
+        )
+        stack.enter_context(
+            patch.object(operations, "replace_channel_parameters", recorder or _Recorder())
+        )
+        stack.enter_context(
+            patch.object(operations, "patch_channel_parameters", patcher or _PatchRecorder())
+        )
+        if accounts is not None:
+            stack.enter_context(
+                patch.object(operations, "list_own_integrations", return_value=accounts)
+            )
         getattr(mod, handler)(args)
     return captured
 
 
 class TestParamsSet:
-    def test_keeps_the_other_parameters(self):
-        """The whole reason this is a read-modify-write.
+    def test_sends_only_the_new_keys_as_a_patch(self):
+        """The whole reason this command family is careful.
 
-        A naive `set` sends only {"tone": ...} and the endpoint's
-        whole-section replace deletes `retries` — successfully, with no error.
+        A PUT of only {"tone": ...} deletes `retries`; a read-merge-PUT loses
+        a concurrent edit's keys. The PATCH carries the edit alone and the
+        server merges it.
         """
-        rec = _Recorder()
-        _run(
-            "_params_set",
-            _args(assignment=["tone=crisp"]),
-            _inspect({"retries": 3, "tone": "flat"}),
-            rec,
-        )
-        assert rec.calls[0][1] == {"retries": 3, "tone": "crisp"}
+        put, patcher = _Recorder(), _PatchRecorder({"retries": 3, "tone": "flat"})
+        out = _run("_params_set", _args(assignment=["tone=crisp"]), recorder=put, patcher=patcher)
+        assert patcher.calls == [
+            {"conversation": "#alerts", "set": {"tone": "crisp"}, "unset": None}
+        ]
+        assert put.calls == [], "a per-key set must never PUT the section"
+        assert "2 parameters now set" in out["rendered"]
 
-    def test_replace_drops_the_rest(self):
-        rec = _Recorder()
+    def test_does_not_read_first(self):
+        """The inspect endpoint parses every flow in the bundle — not for a write."""
+        out = _run("_params_set", _args(assignment=["tone=crisp"]))
+        out["inspect"].assert_not_called()
+
+    def test_sets_several_keys_in_one_patch(self):
+        patcher = _PatchRecorder({"c": 3})
+        _run("_params_set", _args(assignment=["a=1", "b=2"]), patcher=patcher)
+        assert len(patcher.calls) == 1
+        assert patcher.calls[0]["set"] == {"a": 1, "b": 2}
+
+    def test_replace_puts_the_whole_section(self):
+        put, patcher = _Recorder(), _PatchRecorder()
         _run(
             "_params_set",
             _args(assignment=["tone=crisp"], replace=True),
-            _inspect({"retries": 3}),
-            rec,
+            recorder=put,
+            patcher=patcher,
         )
-        assert rec.calls[0][1] == {"tone": "crisp"}
+        assert put.calls == [("#alerts", {"tone": "crisp"})]
+        assert patcher.calls == []
 
     def test_replace_does_not_read_first(self):
         """--replace is the raw endpoint semantics; a GET would be wasted."""
-        from popcorn_cli.commands import channel_config as mod
-
-        rec = _Recorder()
-        with (
-            patch("popcorn_cli.cli._get_client", return_value=object()),
-            patch("popcorn_cli.cli._output"),
-            patch.object(operations, "inspect_channel_config") as inspect,
-            patch.object(operations, "replace_channel_parameters", rec),
-        ):
-            mod._params_set(_args(assignment=["tone=crisp"], replace=True))
-        inspect.assert_not_called()
-
-    def test_sets_several_keys_at_once(self):
-        rec = _Recorder()
-        _run(
-            "_params_set",
-            _args(assignment=["a=1", "b=2"]),
-            _inspect({"c": 3}),
-            rec,
-        )
-        assert rec.calls[0][1] == {"a": 1, "b": 2, "c": 3}
+        out = _run("_params_set", _args(assignment=["tone=crisp"], replace=True))
+        out["inspect"].assert_not_called()
 
 
 class TestParamsUnset:
-    def test_removes_one_and_keeps_the_rest(self):
-        rec = _Recorder()
-        _run("_params_unset", _args(key=["tone"]), _inspect({"tone": "x", "a": 1}), rec)
-        assert rec.calls[0][1] == {"a": 1}
+    def test_sends_only_the_keys_as_a_patch(self):
+        put, patcher = _Recorder(), _PatchRecorder({"tone": "x", "a": 1})
+        out = _run("_params_unset", _args(key=["tone"]), recorder=put, patcher=patcher)
+        assert patcher.calls == [{"conversation": "#alerts", "set": None, "unset": ["tone"]}]
+        assert put.calls == []
+        out["inspect"].assert_not_called()
+        assert "1 parameter remain" in out["rendered"]
 
-    def test_refuses_when_nothing_would_change(self):
-        """Distinct from the partial case: this would be a pointless write."""
-        rec = _Recorder()
-        with pytest.raises(PopcornError) as exc:
-            _run("_params_unset", _args(key=["gone"]), _inspect({"a": 1}), rec)
-        assert "nothing to unset" in str(exc.value)
-        assert rec.calls == []
+    def test_an_absent_key_is_not_an_error(self):
+        """Idempotent: the end state is what was asked for.
 
-    def test_a_partially_absent_key_still_writes(self):
-        rec = _Recorder()
-        out = _run(
-            "_params_unset",
-            _args(key=["tone", "gone"]),
-            _inspect({"tone": "x", "a": 1}),
-            rec,
-        )
-        assert rec.calls[0][1] == {"a": 1}
-        assert "already absent: gone" in out["rendered"]
+        The response carries the section as written, not what changed, so
+        there is no "already absent" note to give — and no reason to fail.
+        """
+        patcher = _PatchRecorder({"a": 1})
+        out = _run("_params_unset", _args(key=["gone"]), patcher=patcher)
+        assert patcher.calls[0]["unset"] == ["gone"]
+        assert out["data"]["channel_parameters"] == {"a": 1}
 
 
 class TestShow:
