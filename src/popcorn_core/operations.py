@@ -1524,10 +1524,11 @@ def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
 # Channel config
 # ---------------------------------------------------------------------------
 #
-# Five endpoints that predate any CLI coverage. The one shape to keep in mind:
-# `PUT .../parameters` REPLACES the whole `channel_parameters` section, so
-# per-key editing is a read-modify-write in the caller (see
-# `channel_config.merge_parameters`) — not something this layer hides.
+# The one shape to keep in mind: `PUT .../parameters` REPLACES the whole
+# `channel_parameters` section, and `PATCH .../parameters` edits individual
+# keys. A per-key edit must go through the PATCH — built on the PUT, it is a
+# client-side read-modify-write, and two concurrent edits each write back the
+# same snapshot and the later one drops the earlier one's keys.
 
 
 def inspect_channel_config(client: APIClient, conversation: str) -> dict[str, Any]:
@@ -1552,6 +1553,30 @@ def replace_channel_parameters(
     return client.put(
         "/api/customer-flows/channel-config/parameters",
         {"parameters": parameters},
+        {"conversation_id": conv_id},
+    )
+
+
+def patch_channel_parameters(
+    client: APIClient,
+    conversation: str,
+    set_: dict[str, Any] | None = None,
+    unset: list[str] | None = None,
+) -> dict[str, Any]:
+    """Set and unset individual `channel_parameters` keys, keeping the rest.
+
+    The server merges the edit into the stored section under a row lock, so
+    no read is needed first. `unset` of a key that is not set is not an
+    error — the response reports the section as written, not what changed.
+
+    No `If-Match`: that header is for a caller whose patch was computed from
+    a read. `params set tone=crisp` is self-contained, and the server-side
+    merge already protects every key the patch does not name.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.patch(
+        "/api/customer-flows/channel-config/parameters",
+        {"set": set_ or {}, "unset": unset or []},
         {"conversation_id": conv_id},
     )
 
