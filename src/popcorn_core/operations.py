@@ -1422,6 +1422,10 @@ def get_channel_app_tree(
 ) -> dict[str, Any]:
     """Every file path in the selected version (`paths`).
 
+    A current server also sends `sha256` — `{path: hash of the file's raw
+    bytes}` — which is what lets `app publish` and `app status` diff a working
+    copy without downloading the tree; an older one omits it.
+
     `ref` picks the version the same way `get_channel_app_files` does, and the
     response carries both sides of it: `version_id`/`semver` for the version
     served, `bound_version_id`/`bound_semver` for what the channel runs. That
