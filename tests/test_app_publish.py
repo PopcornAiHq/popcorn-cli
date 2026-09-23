@@ -1290,6 +1290,24 @@ class TestBaseReadByHash:
         assert calls["files"] == ["head"]
         assert payload["base_version_id"] == 7
 
+    def test_hashes_not_in_lowercase_hex_fall_back(self, tmp_path):
+        """A hash spelled any other way never equals the local one, so trusting
+        it would mark every file changed and let an untouched checkout mint a
+        version. The full read is the answer, and the refusal still holds."""
+        from popcorn_cli.commands import app as mod
+
+        base = {"manifest.yaml": _manifest("0.2.0"), "alert.yaml": "name: alert\n"}
+        _checkout(tmp_path, base)
+        tree = _tree_from(_files_response(base))
+        tree["sha256"] = {p: h.upper() for p, h in tree["sha256"].items()}
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            _serve(_files_response(base), tree=tree) as calls,
+            pytest.raises(PopcornError, match="nothing to publish"),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path), bump="patch"))
+        assert calls["files"] == ["head"]
+
     def test_a_hash_map_that_does_not_cover_the_tree_falls_back(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0"), "alert.yaml": "name: alert\n"}
         _checkout(tmp_path, base)

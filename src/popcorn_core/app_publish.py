@@ -411,6 +411,9 @@ class TreeDiff:
         ]
 
 
+_SHA256_HEX_RE = re.compile(r"[0-9a-f]{64}")
+
+
 def file_sha256(text: str) -> str:
     """A file's hash in the server's terms: sha256 of its raw bytes.
 
@@ -434,6 +437,10 @@ def served_hashes(tree: dict[str, Any]) -> dict[str, str] | None:
     if not isinstance(raw, dict):
         return None
     if not all(isinstance(p, str) and isinstance(h, str) for p, h in raw.items()):
+        return None
+    # Anything but lowercase sha256 hex never equals `file_sha256`, so every
+    # file would diff as changed and an untouched checkout would publish.
+    if not all(_SHA256_HEX_RE.fullmatch(h) for h in raw.values()):
         return None
     if set(raw) != set(tree.get("paths") or []):
         return None

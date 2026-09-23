@@ -386,9 +386,10 @@ def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
     """The fork line's head: its version fields, and `{path: sha256}` of its tree.
 
     Hashes are all a diff needs from the base side (see `diff_tree_hashes`),
-    so this reads `/apps/tree`, which serves them, and never the content. A
-    server that predates the hashes gets the full-tree read instead, exactly
-    as before, and its response then supplies the version fields as well —
+    so this reads `/apps/tree`, which serves them, and never the content.
+    When `/apps/tree` has no usable hashes — a server that predates them, or
+    a malformed map — the full-tree read runs instead, and its response then
+    supplies the version fields as well —
     the tree read is discarded rather than mixed with it, so the version and
     the hashes always come from one response.
     """
@@ -402,6 +403,9 @@ def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
 
 def _fetch_base(client, conversation: str, baseline: Baseline) -> tuple[dict, dict[str, str]]:
     """The fork line's head, refusing when it is not the version we edited.
+
+    Returns the version fields and `{path: sha256}`; see `_read_head` for
+    when those come from the full-tree read instead of `/apps/tree`.
 
     The diff is computed against this tree, so it must be the one the
     checkout came from — and the head is what a publish must be based on.
