@@ -104,7 +104,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
 | `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
-| `popcorn flow get <flow_id> --channel <conv>` | Get a flow definition |
+| `popcorn flow get <flow_id> --channel <conv> [--no-triggers]` | Get a flow definition and what starts it on the channel (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |
 | `popcorn flow runs list --channel <conv> [--status S] [--limit N] [--page-token T]` | List flow runs |
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on) |

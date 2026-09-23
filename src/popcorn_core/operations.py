@@ -825,13 +825,21 @@ def list_flows(
     return client.get("/api/customer-flows/list", params)
 
 
-def get_flow(client: APIClient, conversation: str, flow_id: str) -> dict[str, Any]:
-    """Get a single flow definition by ID."""
+def get_flow(
+    client: APIClient, conversation: str, flow_id: str, include_triggers: bool = False
+) -> dict[str, Any]:
+    """Get a single flow definition by ID.
+
+    `include_triggers` asks the server to add its report of what starts the
+    flow on this channel under `triggers`. A server that predates the report
+    ignores the parameter and leaves `triggers` absent or null, so the caller
+    must treat a missing report as "not checked", never as "nothing runs it".
+    """
     conv_id = resolve_conversation(client, conversation)
-    return client.get(
-        "/api/customer-flows/get",
-        {"conversation_id": conv_id, "flow_id": flow_id},
-    )
+    params: dict[str, Any] = {"conversation_id": conv_id, "flow_id": flow_id}
+    if include_triggers:
+        params["include_triggers"] = True
+    return client.get("/api/customer-flows/get", params)
 
 
 def _looks_like_uuid(value: str) -> bool:
