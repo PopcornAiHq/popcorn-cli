@@ -355,16 +355,23 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
         status=getattr(args, "status", None),
         limit=limit,
         page_token=getattr(args, "page_token", None),
+        flow_name=getattr(args, "flow", None),
     )
     execs = resp.get("executions", [])
     token = resp.get("next_page_token")
+    # Only the cursor goes in `next`: the caller re-runs the same command,
+    # `--flow` included, which is what keeps a filtered page sequence exact.
     _attach_pagination(resp, {"page-token": token} if token else None)
     count = resp.get("count", len(execs))
-    lines = [f"Flow runs in {args.channel} ({count}):"]
+    scope = f"'{args.flow}' runs" if getattr(args, "flow", None) else "Flow runs"
+    lines = [f"{scope} in {args.channel} ({count}):"]
     for e in execs:
         queue = f"  [{e['task_queue']}]" if e.get("task_queue") else ""
+        # A run old enough to predate the field has no flow name; "-" keeps
+        # the columns aligned without inventing one.
         lines.append(
-            f"  {(e.get('status') or '?'):<10} {e.get('workflow_id', '?')}  "
+            f"  {(e.get('status') or '?'):<10} {e.get('flow_name') or '-'}  "
+            f"{e.get('workflow_id', '?')}  "
             f"{e.get('workflow_type', '')}  {e.get('start_time', '')}{queue}"
         )
     _output(args, resp, "\n".join(lines))
@@ -634,6 +641,11 @@ register(
                                 "Filter by run status (default all)",
                                 type=str,
                                 choices=["all", "running", "failed", "closed"],
+                            ),
+                            Argument(
+                                "flow",
+                                "Flow name: list only that flow's runs on the channel",
+                                type=str,
                             ),
                             Argument("limit", "Max results, 1-200 (default 50)", type=int),
                             Argument(

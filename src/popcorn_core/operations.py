@@ -903,19 +903,85 @@ def list_flow_runs(
     status: str | None = None,
     limit: int = 50,
     page_token: str | None = None,
+    flow_name: str | None = None,
 ) -> dict[str, Any]:
     """List Temporal workflow executions (flow runs) for a channel.
 
     ``status`` is one of ``all | running | failed | closed``. ``page_token``
     is the ``next_page_token`` cursor from a previous response.
+
+    ``flow_name`` narrows the list to one flow's runs. The server applies it
+    in the query that selects the page, so a page is still ``limit`` long and
+    the cursor stays exact — as long as the same ``flow_name`` rides along on
+    every page.
+
+    An API older than the filter ignores the parameter and answers with every
+    flow's runs. That response is refused rather than trimmed here: trimming
+    would leave a short or empty page with more pages behind it and a
+    ``count`` that describes the unfiltered page, and a warning about it would
+    go to stderr, which agent mode silences. See ``_check_flow_filter_applied``.
     """
+    if flow_name is not None and not flow_name.strip():
+        raise PopcornError(
+            "--flow needs a flow name",
+            error_code="validation",
+            hint="popcorn flow runs list --channel <conv> --flow <name>",
+        )
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
     if status:
         params["status"] = status
     if page_token:
         params["page_token"] = page_token
-    return client.get("/api/customer-flow-runs/list", params)
+    if flow_name is not None:
+        params["flow_name"] = flow_name
+    try:
+        resp = client.get("/api/customer-flow-runs/list", params)
+    except APIError as e:
+        # The server's message names the rejected value but not the rule it
+        # broke, so say it: the name travels inside a quoted query string.
+        if e.status_code == 400 and _api_error_label(e) == "invalid_flow_name":
+            e.hint = "a flow name cannot contain a double quote or a backslash"
+        raise
+    if flow_name is not None:
+        _check_flow_filter_applied(resp, flow_name)
+    return resp
+
+
+def _api_error_label(err: APIError) -> str | None:
+    """The machine-readable `error` label of a structured API error, if any."""
+    try:
+        body = json.loads(err.body or "")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    label = detail.get("error") if isinstance(detail, dict) else None
+    return label if isinstance(label, str) else None
+
+
+def _check_flow_filter_applied(resp: dict[str, Any], flow_name: str) -> None:
+    """Refuse a filtered list that came back carrying another flow's runs.
+
+    A server that filters by flow never returns a run of a different flow, or
+    one with no flow name at all, so either means the filter was not applied.
+    An empty page proves nothing either way, and needs nothing: if every run
+    was returned and there were none, there are none of this flow either.
+    """
+    others = sorted(
+        {
+            str(e.get("flow_name") or "<none>")
+            for e in resp.get("executions") or []
+            if e.get("flow_name") != flow_name
+        }
+    )
+    if others:
+        raise PopcornError(
+            f"The server ignored --flow {flow_name!r}: its response includes "
+            f"runs of {', '.join(others)}. This API predates the flow filter, "
+            "so the list cannot be narrowed to one flow",
+            error_code="validation",
+            hint="list without --flow and read the flow_name of each run",
+        )
 
 
 def get_flow_run(
