@@ -471,6 +471,12 @@ class _Checker:
         baseline = read_baseline(self.dir)
         if baseline is None:
             return
+        # A past version checked out with `--version` is never a publish base
+        # (`app publish` refuses it outright), so "will a publish accept this
+        # version?" has no answer here, and an untouched old tree would
+        # otherwise fail the check it has every right to pass.
+        if baseline.historical:
+            return
         base_key = semver_key(baseline.semver)
         if base_key is None:
             # A baseline written before the version was knowable, or hand-

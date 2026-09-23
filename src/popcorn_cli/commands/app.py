@@ -23,6 +23,11 @@ install has not landed, or failed — and that is the case where a checkout of
 the bound tree used to leave the line stuck. `checkout` says so when it
 happens; `status` shows both versions.
 
+`checkout --version N` is the one way to read anything else: a past version
+of the line, to recover the tree from before a bad publish or to diff two
+versions. Its baseline is marked `historical` unless N is the head, and
+`publish` refuses a historical checkout rather than basing a publish on it.
+
 Two groups of commands, split by what they act on:
 
 - `list`, `lines` and `fork` act on a CHANNEL, so they take `--channel`.
@@ -67,9 +72,11 @@ from popcorn_core import flow_rules, operations, schedule_drift
 # app_publish's returns the raw working-copy value, only ever to warn about it.
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
+    GUIDE_TEXT,
     Baseline,
     baseline_from_response,
     files_from_response,
+    guide_text,
     occupied,
     read_baseline,
     write_agent_guide,
@@ -82,6 +89,7 @@ from popcorn_core.app_checkout import (
 from popcorn_core.app_publish import (
     BUMP_PARTS,
     bump_manifest_text,
+    classify_tree,
     collect_tree,
     diff_tree_hashes,
     file_sha256,
@@ -244,8 +252,70 @@ def _app_lines(args: argparse.Namespace) -> None:
     _output(args, payload, _render_lines(lines_data, str(args.channel)))
 
 
+# Where a version id can be seen, since nothing lists a line's past versions:
+# the API serves lineage heads and single versions, never a history. Shared by
+# the 404 hint and the publish refusal's wording so the two cannot disagree.
+_WHERE_VERSION_IDS_ARE = (
+    "'app publish' prints each version's id as it publishes it, 'app status' "
+    f"shows the line's head and what the channel runs, and a checkout's "
+    f"{BASELINE_FILE} records its base_version_id; no command lists a line's "
+    "past versions"
+)
+
+
+def _version_id(value: str) -> int:
+    """argparse type for `--version`: a version id, never a semver.
+
+    Plain `int` answers `--version 0.1.0` with "invalid int value", which
+    says nothing about why a version number is the wrong kind of version.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"takes a version id — a whole number as 'app publish' and 'app "
+            f"status' print it, e.g. 'version 12' — not a semver like {value!r}"
+        ) from None
+
+
+# `commands --json` reports an argument's type by its converter's name, and
+# the value this produces is an int.
+_version_id.__name__ = "int"
+
+
+def _read_version(client, conv_id: str, version_id: int) -> dict:
+    """The files of one named version, with the server's refusal made usable.
+
+    The 404 is deliberately one answer for every unreadable id — nonexistent,
+    another workspace's, another line's, a product version the channel is not
+    offered — so the hint says where valid ids come from and nothing about
+    which of those this was. Matched on the message so that a DIFFERENT 404
+    (a channel that runs no app) keeps its own text and gains no hint that
+    would misdirect.
+    """
+    try:
+        return operations.get_channel_app_files(client, conv_id, version_id=version_id)
+    except APIError as exc:
+        if exc.status_code == 404 and "is not a version of" in str(exc):
+            exc.hint = (
+                "a version id is readable only from this channel's own line — "
+                + _WHERE_VERSION_IDS_ARE
+            )
+        raise
+
+
 def _app_checkout(args: argparse.Namespace) -> None:
     from ..cli import _confirm_force, _get_client, _output
+
+    version_id = getattr(args, "version", None)
+    # Checked before any request: the server's own 422 for this is correct but
+    # names a query parameter the caller never typed.
+    if version_id is not None and version_id < 1:
+        raise PopcornError(
+            f"--version takes a version id, a whole number from 1 (got {version_id})",
+            error_code="validation",
+            hint=_WHERE_VERSION_IDS_ARE,
+        )
 
     client = _get_client(args)
     # Resolved here rather than inside the operation because the baseline
@@ -261,21 +331,52 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # the const "", which means "fork, infer the line" and must not read as
     # "no --fork". Absent, it stays None and this whole branch is skipped —
     # a fork-less checkout is a legitimate read of what a channel runs.
+    # argparse keeps `--fork` and `--version` apart, so this never runs for a
+    # version checkout.
     forked = None
     if getattr(args, "fork", None) is not None:
         forked = _fork(args, client, conv_id, args.fork or None)
 
-    resp = operations.get_channel_app_files(client, conv_id)
+    head: dict | None = None
+    if version_id is None:
+        resp = operations.get_channel_app_files(client, conv_id)
+    else:
+        resp = _read_version(client, conv_id, version_id)
+        # Whether the named version is the line's head decides what the
+        # baseline may be used for. The head needs no flag at all — it is
+        # exactly what a plain checkout would have written, and making it
+        # unpublishable would be a refusal with no reason behind it.
+        #
+        # Read AFTER the files: a publish landing between the two reads then
+        # makes the copy historical — the safe direction — where the other
+        # order could mark a superseded version publishable.
+        #
+        # Fork lines only. A product-bound channel is offered the version it
+        # runs and the workspace's release-track head, which is NEWER than
+        # what it runs, so "past version" would be simply wrong there; and a
+        # product checkout needs no flag, since publish refuses it already.
+        if resp.get("kind") == "fork":
+            head = operations.get_channel_app_tree(client, conv_id, ref="head")
     files = files_from_response(resp)
     if not files:
         raise PopcornError(
             f"{resp.get('app') or 'this channel'} returned no files to check out",
             error_code="not_found",
         )
+    historical = head is not None and head.get("version_id") != resp.get("version_id")
 
     # Default to ./<app> rather than '.', so a bare checkout in a working
     # directory cannot scatter bundle files over whatever is already there.
-    directory = Path(args.directory) if args.directory else Path(resp.get("app") or "app")
+    # A version checkout defaults to ./<app>-<semver> instead: reading an old
+    # version beside the working copy, or two versions side by side to diff
+    # them, is what it is for, and a shared default would collide every time.
+    app_name = resp.get("app") or "app"
+    if args.directory:
+        directory = Path(args.directory)
+    elif version_id is not None:
+        directory = Path(f"{app_name}-{resp.get('semver') or version_id}")
+    else:
+        directory = Path(app_name)
 
     # `_confirm_force`, not `_confirm`: this overwrites files the author may
     # be the only holder of, and `-y` must not be enough to lose them.
@@ -288,14 +389,30 @@ def _app_checkout(args: argparse.Namespace) -> None:
             hint="pass --force to overwrite them",
         )
 
+    # Read before the new baseline overwrites it: the guide this directory
+    # would have been given last time is how an unedited one is recognised.
+    previous = read_baseline(directory)
     directory.mkdir(parents=True, exist_ok=True)
     written = write_tree(directory, files)
-    baseline = baseline_from_response(resp, files, conversation_id=conv_id)
+    baseline = baseline_from_response(resp, files, conversation_id=conv_id, historical=historical)
     write_baseline(directory, baseline)
     # --force is already the author saying "take checkout's version of this
-    # directory"; without it an existing guide is theirs to keep.
-    guide = write_agent_guide(directory, force=bool(getattr(args, "force", False)))
+    # directory"; without it an existing guide is theirs to keep, unless it is
+    # still checkout's own text for a different kind of checkout.
+    guide = write_agent_guide(
+        directory,
+        force=bool(getattr(args, "force", False)),
+        text=guide_text(baseline),
+        replaceable=(GUIDE_TEXT,) + ((guide_text(previous),) if previous else ()),
+    )
 
+    # Checkout writes the served files and deletes nothing, so a re-checkout
+    # over an older tree keeps whatever that tree had and this one lacks — and
+    # those paths publish. Listed rather than removed: the baseline records a
+    # digest, not a file list, so nothing can tell a file the last checkout
+    # wrote from one the author added, and deleting the author's is the loss
+    # `_confirm_force` exists to prevent.
+    stale = sorted(rel for rel, _ in classify_tree(directory)[0] if rel not in files)
     # What the channel runs, alongside what was served. An older API sends
     # neither field; then the served version IS the bound one and there is
     # nothing to note.
@@ -314,14 +431,35 @@ def _app_checkout(args: argparse.Namespace) -> None:
         # Named rather than folded into `files`: it is not bundle content and
         # publish will not send it. None when an existing one was kept.
         "guide": guide.name if guide else None,
+        # Bundle paths on disk that the served tree lacks; see above.
+        "stale_files": stale,
     }
+    if head is not None:
+        data["historical"] = historical
+        data["head_version_id"] = head.get("version_id")
+        data["head_semver"] = head.get("semver")
     if forked is not None:
         data["fork"] = forked
     lines = [
         *(_fork_lines(forked) if forked is not None else []),
         f"Checked out {baseline.app} {baseline.semver} ({baseline.kind}) into {directory}",
     ]
-    if channel_id != baseline.base_version_id:
+    if historical:
+        assert head is not None
+        lines.append(
+            f"This is version {baseline.base_version_id}, not the line's head "
+            f"({head.get('semver')}, version {head.get('version_id')}); the channel "
+            f"runs {channel_semver} (version {channel_id}). It is a copy to read "
+            "and diff — 'app publish' refuses it, and says how to republish its "
+            "content on top of the head."
+        )
+    elif version_id is not None and baseline.kind != "fork":
+        lines.append(
+            f"This is a {baseline.kind} version (version {baseline.base_version_id}); "
+            f"the channel runs {channel_semver} (version {channel_id}). A publish "
+            "needs a fork line — 'popcorn app checkout --fork' makes one."
+        )
+    elif channel_id != baseline.base_version_id:
         lines.append(
             f"Note: this channel still runs {baseline.app} {channel_semver}; "
             f"{baseline.semver} is the fork line's head — edits publish on top of "
@@ -333,12 +471,24 @@ def _app_checkout(args: argparse.Namespace) -> None:
         f"{len(written)} file{'s' if len(written) != 1 else ''}, "
         f"baseline version {baseline.base_version_id}",
     ]
+    if stale:
+        lines += [
+            "",
+            f"Left in place, and NOT part of {baseline.app} {baseline.semver}: " + ", ".join(stale),
+            "checkout never deletes a file; these publish from here unless you delete them.",
+        ]
     if guide is not None:
         lines.append(
-            f"Also wrote {guide.name} — how to edit and publish this directory, "
-            "for whoever reads it next. It is not bundle content and does not publish."
+            f"Also wrote {guide.name} — "
+            + (
+                "what this snapshot is and how to republish its content, "
+                if historical
+                else "how to edit and publish this directory, "
+            )
+            + "for whoever reads it next. It is not bundle content and does not publish."
         )
-    lines += ["", f"Next: popcorn template check {directory}"]
+    if not historical:
+        lines += ["", f"Next: popcorn template check {directory}"]
     _output(args, data, "\n".join(lines))
 
 
@@ -601,6 +751,33 @@ def _publish_message(args: argparse.Namespace, files: dict[str, str]) -> str | N
     return message
 
 
+def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
+    """Refuse a publish from a `checkout --version` of a past version.
+
+    A publish is based on the line's head, and the server refuses any other
+    base, so this could only ever fail — but by the round trip it would fail
+    as "the fork line moved", which reads as someone else's publish and sends
+    the author to re-check-out, discarding exactly the old tree they came for.
+
+    Not offered as a one-step "revert": publishing an old tree over the head
+    silently undoes everything published since, and that deserves a working
+    copy of the head in front of the author when it happens, where `app
+    status` and the diff summary show what is being undone.
+    """
+    channel = baseline.conversation_id or "<channel>"
+    raise PopcornError(
+        f"{directory} is a checkout of {baseline.app} {baseline.semver} "
+        f"(version {baseline.base_version_id}), a past version rather than its "
+        "line's head — a publish is based on the head, so it cannot start here",
+        error_code="conflict",
+        hint="to republish this content: 'popcorn app checkout --channel "
+        f"{channel} --dir <new-dir>' for the head, copy these bundle files over it (leave its "
+        f"{BASELINE_FILE}) and delete any file there this version lacks — "
+        "or the publish keeps everything added since — then 'popcorn app publish <new-dir> --bump patch -m "
+        '"..."\' — the diff it prints is what reverts',
+    )
+
+
 def _app_publish(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -619,6 +796,8 @@ def _app_publish(args: argparse.Namespace) -> None:
             hint="re-run 'popcorn app checkout --channel <channel> --fork' — "
             "one command forks and checks out the line's head",
         )
+    if baseline.historical:
+        _refuse_historical_publish(baseline, directory)
 
     local = collect_tree(directory)
     # Refused before the round trip: the server rejects the whole tree over
@@ -993,7 +1172,7 @@ def _app_status(args: argparse.Namespace) -> None:
     # served one, and then the two are the same.
     channel_id = resp.get("bound_version_id", head_id)
     channel_semver = resp.get("bound_semver", head_semver)
-    in_sync = head_id == baseline.base_version_id
+    in_sync = head_id == baseline.base_version_id and not baseline.historical
 
     data = {
         "directory": str(directory),
@@ -1006,6 +1185,7 @@ def _app_status(args: argparse.Namespace) -> None:
         "channel_semver": channel_semver,
         "channel_version_id": channel_id,
         "in_sync": in_sync,
+        "historical": baseline.historical,
         "channel_behind": channel_id != head_id,
         "dirty": local_digest(local.files) != baseline.tree_digest,
         "added": diff.added,
@@ -1019,7 +1199,14 @@ def _app_status(args: argparse.Namespace) -> None:
     lines = [
         f"{baseline.app} {baseline.semver} ({baseline.kind}) in {directory}",
     ]
-    if not in_sync:
+    if baseline.historical:
+        # Not "the line moved": nobody moved it, this copy was asked for as a
+        # past version, and re-checking out would throw away what it is for.
+        lines.append(
+            f"A past version (checked out with --version); the line's head is "
+            f"{head_semver} (version {head_id}). 'app publish' refuses this copy."
+        )
+    elif not in_sync:
         lines.append(
             f"Fork line moved to {head_semver} (version {head_id}) — re-run 'popcorn app checkout'."
         )
@@ -1035,7 +1222,11 @@ def _app_status(args: argparse.Namespace) -> None:
     if diff.empty:
         lines.append("Working copy matches the fork line's head.")
     else:
-        lines.append("Uncommitted edits:")
+        # A past version differs from the head before anyone edits it, so
+        # calling the difference "edits" would claim work nobody did.
+        lines.append(
+            "Differs from the fork line's head:" if baseline.historical else "Uncommitted edits:"
+        )
         lines += diff.summary()
     if local.ignored:
         lines.append("")
@@ -1081,7 +1272,8 @@ register(
             ),
             Subcommand(
                 "checkout",
-                "Write the fork line's head to disk, with a baseline",
+                "Write the fork line's head (or, with --version, one past "
+                "version) to disk, with a baseline",
                 _app_checkout,
                 [
                     _CHANNEL,
@@ -1103,11 +1295,24 @@ register(
                         "bare --fork",
                         nargs="?",
                         const="",
+                        exclusive_group="checkout_source",
+                    ),
+                    Argument(
+                        "version",
+                        "Check out this version id of the channel's own line "
+                        "instead of its head, into ./<app>-<semver> by default. "
+                        "A past version is for reading and diffing; 'app "
+                        "publish' refuses it. Ids appear in 'app publish' and "
+                        "'app status' output",
+                        type=_version_id,
+                        exclusive_group="checkout_source",
                     ),
                     Argument(
                         "force",
                         "Overwrite bundle files in a non-empty directory "
-                        "without asking (--yes does not cover this)",
+                        "without asking (--yes does not cover this). Nothing "
+                        "is deleted: files the new tree lacks stay, and are "
+                        "listed",
                         action="store_true",
                     ),
                 ],

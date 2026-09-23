@@ -1,8 +1,8 @@
 """Materialize an app bundle onto disk, and the baseline that tracks it.
 
-`popcorn app checkout` writes the fork line's head as files plus a
-`.popcorn-app.json` baseline. The baseline is what `app publish` diffs
-against: it names the version the working copy came from, so a publish can be
+`popcorn app checkout` writes the fork line's head (or, with `--version`, one
+named version of the line) as files plus a `.popcorn-app.json` baseline. The
+baseline is what `app publish` diffs against: it names the version the working copy came from, so a publish can be
 refused when the line has moved underneath it, and it names the channel so
 `publish`/`apply`/`status` need no `--channel`.
 
@@ -34,12 +34,14 @@ BASELINE_FILE = ".popcorn-app.json"
 # Not a dotfile, unlike the baseline: Claude Code loads a subdirectory's
 # CLAUDE.md by that exact name, so the name is the mechanism.
 GUIDE_FILE = "CLAUDE.md"
-# 2 added `conversation_id`. 3 added `changelog`. An older baseline still
+# 2 added `conversation_id`. 3 added `changelog`. 4 added `historical`, whose
+# absence is exactly right for every earlier baseline: none could be anything
+# but a checkout of the line's head. An older baseline still
 # parses — every field is read with a default — and each command degrades to
 # what it can still answer rather than rewriting the file underneath the user:
 # a v1 falls back to an explicit --channel, and a v1/v2 simply has no recorded
 # changelog for `template check` to compare against.
-_VERSION = 3
+_VERSION = 4
 # The first baseline version that captured the checked-out manifest's
 # `changelog:`. Below it, absence of the field means "not recorded", which is
 # not the same answer as "the manifest had none".
@@ -196,6 +198,14 @@ class Baseline:
     # place. None means the manifest declared none — NOT that the baseline
     # predates the field; `changelog_recorded` is what separates those.
     changelog: str | None = None
+    # True for `app checkout --version N` when N was not the line's head: the
+    # copy is for reading and diffing, and `app publish` refuses it up front.
+    # `base_version_id` stays the version the files came from — it has to,
+    # since `status` and `tree_digest` describe those files — so this flag,
+    # not the id, is what stops it passing for a publish base. A popcorn that
+    # predates the field still cannot publish from it: its base is behind the
+    # head, which both that popcorn and the server refuse.
+    historical: bool = False
     version: int = _VERSION
 
     @property
@@ -218,6 +228,8 @@ class Baseline:
             d["conversation_id"] = self.conversation_id
         if self.changelog:
             d["changelog"] = self.changelog
+        if self.historical:
+            d["historical"] = True
         return d
 
 
@@ -305,7 +317,72 @@ def write_baseline(directory: Path, baseline: Baseline) -> Path:
     return target
 
 
-def write_agent_guide(directory: Path, force: bool = False) -> Path | None:
+def historical_guide_text(baseline: Baseline) -> str:
+    """The guide for a checkout of a past version, which does not publish.
+
+    Unlike `GUIDE_TEXT` this names the version, because a past version never
+    moves: the snapshot and the words describing it cannot drift apart. What
+    it must replace is the edit-and-publish loop, which `app publish` refuses
+    here — a guide promising that loop would send the next reader straight
+    into the refusal. The republish recipe matches that refusal's hint.
+    """
+    app = baseline.app or "this app"
+    channel = baseline.conversation_id or "<channel>"
+    return f"""# Popcorn app bundle — read-only snapshot of a past version
+
+This directory is **{app} {baseline.semver} (version {baseline.base_version_id})**,
+checked out with `popcorn app checkout --version`. It is a past version of the
+channel's line, **not its head**, and `{BASELINE_FILE}` beside this file marks
+it `historical`.
+
+**Nothing here publishes.** A publish is based on the line's head, so
+`popcorn app publish` refuses this directory outright, edited or not.
+
+## What it is for
+
+- **Reading** the tree as it was at {baseline.semver} — for instance, from before
+  a bad publish.
+- **Diffing** it against the head: check the head out into another directory
+  and compare the two, or run `popcorn app status` here, which lists what
+  differs from the line's head.
+
+## Republishing this content
+
+To make this version's content current again, publish it on top of the head:
+
+```
+popcorn app checkout --channel {channel} --dir <new-dir>
+# copy this directory's bundle files over <new-dir>, keeping <new-dir>'s own
+# {BASELINE_FILE}, and delete any file there that this version does not have
+popcorn app publish <new-dir> --bump patch -m "<why this content is back>"
+```
+
+The deletions are not optional. Copying adds and overwrites but removes
+nothing, so a file added to the line since {baseline.semver} would survive in
+<new-dir> and publish again — the result would be this version plus
+everything added after it, not this version.
+
+The diff that publish prints is what gets reverted — everything published
+since {baseline.semver} that this content undoes.
+
+## What this file is
+
+`popcorn app checkout` wrote it, and nothing uploads it. It is local guidance
+for whoever reads this directory; deleting it changes nothing about the app.
+"""
+
+
+def guide_text(baseline: Baseline) -> str:
+    """The guide a checkout with this baseline should carry."""
+    return historical_guide_text(baseline) if baseline.historical else GUIDE_TEXT
+
+
+def write_agent_guide(
+    directory: Path,
+    force: bool = False,
+    text: str = GUIDE_TEXT,
+    replaceable: tuple[str, ...] = (),
+) -> Path | None:
     """Write `CLAUDE.md` into the checkout. Returns the path, or None if kept.
 
     Separate from `write_baseline` because the two answer to different rules:
@@ -314,11 +391,23 @@ def write_agent_guide(directory: Path, force: bool = False) -> Path | None:
     more than a refresh. So an existing file is left alone unless the caller
     is already overwriting the working copy (`--force`), which is the one
     moment the author has said they want checkout's version of these files.
+
+    `replaceable` names texts checkout itself would have written for the
+    directory's previous baseline. An existing guide still holding one of
+    those is unedited and simply wrong for the new checkout — a head checkout
+    over a past-version snapshot, or the reverse — so it is replaced; keeping
+    it would describe a publish loop to a copy that cannot publish, or deny
+    one to a copy that can.
     """
     target = directory / GUIDE_FILE
     if target.exists() and not force:
-        return None
-    target.write_text(GUIDE_TEXT)
+        try:
+            current = target.read_text()
+        except OSError:
+            return None
+        if current == text or current not in replaceable:
+            return None
+    target.write_text(text)
     return target
 
 
@@ -346,6 +435,7 @@ def read_baseline(directory: Path) -> Baseline | None:
         fork_name=data.get("fork_name"),
         conversation_id=data.get("conversation_id"),
         changelog=data.get("changelog"),
+        historical=data.get("historical") is True,
         version=data.get("version", 1),
     )
 
@@ -354,6 +444,7 @@ def baseline_from_response(
     resp: dict[str, Any],
     files: dict[str, str],
     conversation_id: str | None = None,
+    historical: bool = False,
 ) -> Baseline:
     return Baseline(
         app=resp.get("app", ""),
@@ -363,4 +454,5 @@ def baseline_from_response(
         conversation_id=conversation_id,
         changelog=manifest_changelog(files),
         tree_digest=tree_digest(files),
+        historical=historical,
     )

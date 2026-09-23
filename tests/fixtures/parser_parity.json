@@ -1870,6 +1870,36 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
+      "version": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "checkout",
+      "x",
+      "--channel",
+      "x",
+      "--version",
+      "7",
+      "--force"
+    ],
+    "namespace": {
+      "app_command": "checkout",
+      "channel": "x",
+      "command": "app",
+      "debug": false,
+      "directory": "x",
+      "env": null,
+      "force": true,
+      "fork": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "version": 7,
       "workspace": null,
       "yes": false
     }

@@ -106,7 +106,9 @@ class Argument:
     name: str
     help: str
     required: bool = False
-    type: type | None = None
+    # A class (`int`) or any argparse-style converter; a converter raising
+    # `argparse.ArgumentTypeError` supplies its own usage message.
+    type: Callable[[str], Any] | None = None
     action: str | None = None
     choices: list[str] | None = None
     positional: bool = False
