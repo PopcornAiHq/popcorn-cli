@@ -367,12 +367,14 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
     lines = [f"{scope} in {args.channel} ({count}):"]
     for e in execs:
         queue = f"  [{e['task_queue']}]" if e.get("task_queue") else ""
-        # A run old enough to predate the field has no flow name; "-" keeps
-        # the columns aligned without inventing one.
+        # The flow name goes last so the columns before it keep their
+        # positions for anything splitting this output on whitespace. A run
+        # old enough to predate the field gets "-" rather than an invented
+        # name, which keeps it a present, non-empty field.
         lines.append(
-            f"  {(e.get('status') or '?'):<10} {e.get('flow_name') or '-'}  "
-            f"{e.get('workflow_id', '?')}  "
-            f"{e.get('workflow_type', '')}  {e.get('start_time', '')}{queue}"
+            f"  {(e.get('status') or '?'):<10} {e.get('workflow_id', '?')}  "
+            f"{e.get('workflow_type', '')}  {e.get('start_time', '')}{queue}  "
+            f"{e.get('flow_name') or '-'}"
         )
     _output(args, resp, "\n".join(lines))
 
@@ -644,7 +646,9 @@ register(
                             ),
                             Argument(
                                 "flow",
-                                "Flow name: list only that flow's runs on the channel",
+                                "Flow name: list only that flow's runs on the channel "
+                                "(older runs may be stamped with the flow's id instead; "
+                                "pass the id to list those)",
                                 type=str,
                             ),
                             Argument("limit", "Max results, 1-200 (default 50)", type=int),

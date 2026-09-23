@@ -91,6 +91,16 @@ class TestOldServerGuard:
         assert "alert, digest" in str(exc.value)
         assert exc.value.hint
 
+    def test_the_foreign_flow_list_is_capped(self, mock_client):
+        mock_client.get.return_value = {
+            "executions": [_run(f"flow_{i}", f"wf-{i}") for i in range(8)]
+        }
+        with pytest.raises(PopcornError) as exc:
+            operations.list_flow_runs(mock_client, "#ops", flow_name="claim_turn")
+        msg = str(exc.value)
+        assert "flow_0, flow_1, flow_2, flow_3, flow_4 (+3 more)" in msg
+        assert "flow_5" not in msg
+
     def test_a_run_with_no_flow_name_is_refused(self, mock_client):
         """A filtering server matches on the name, so it can never return a
         run that has none."""
@@ -205,8 +215,16 @@ class TestDispatch:
         assert seen["flow_name"] == "claim_turn"
         out = capsys.readouterr().out
         assert "'claim_turn' runs in #ops (1):" in out
-        assert "Running    claim_turn  wf-1  InterpreterWorkflow" in out
-        assert "[batch]" in out
+        run_line = next(line for line in out.splitlines() if "wf-1" in line)
+        # Existing columns keep their positions; the flow name is appended.
+        assert run_line.split() == [
+            "Running",
+            "wf-1",
+            "InterpreterWorkflow",
+            "2026-01-01T00:00:00Z",
+            "[batch]",
+            "claim_turn",
+        ]
 
     def test_unfiltered_lines_name_each_flow_and_dash_a_missing_one(self, monkeypatch, capsys):
         monkeypatch.setattr(
@@ -220,8 +238,10 @@ class TestDispatch:
         self._run_cli(monkeypatch, ["flow", "runs", "list", "--channel", "#ops"])
         out = capsys.readouterr().out
         assert "Flow runs in #ops (2):" in out
-        assert " digest  wf-1 " in out
-        assert " -  wf-old " in out
+        lines = out.splitlines()
+        assert next(x for x in lines if "wf-1" in x).split()[-1] == "digest"
+        old = next(x for x in lines if "wf-old" in x).split()
+        assert old[-1] == "-" and len(old) == 5
         assert "None" not in out
 
     def test_json_keeps_flow_name_and_the_next_page_resends_flow(self, monkeypatch, capsys):

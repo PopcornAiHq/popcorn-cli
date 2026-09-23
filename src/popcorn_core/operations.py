@@ -959,6 +959,11 @@ def _api_error_label(err: APIError) -> str | None:
     return label if isinstance(label, str) else None
 
 
+# How many foreign flow names the old-server refusal lists before summarising;
+# a busy channel's unfiltered page can name many flows.
+_MAX_NAMES_SHOWN = 5
+
+
 def _check_flow_filter_applied(resp: dict[str, Any], flow_name: str) -> None:
     """Refuse a filtered list that came back carrying another flow's runs.
 
@@ -975,9 +980,12 @@ def _check_flow_filter_applied(resp: dict[str, Any], flow_name: str) -> None:
         }
     )
     if others:
+        shown = ", ".join(others[:_MAX_NAMES_SHOWN])
+        if len(others) > _MAX_NAMES_SHOWN:
+            shown += f" (+{len(others) - _MAX_NAMES_SHOWN} more)"
         raise PopcornError(
             f"The server ignored --flow {flow_name!r}: its response includes "
-            f"runs of {', '.join(others)}. This API predates the flow filter, "
+            f"runs of {shown}. This API predates the flow filter, "
             "so the list cannot be narrowed to one flow",
             error_code="validation",
             hint="list without --flow and read the flow_name of each run",
