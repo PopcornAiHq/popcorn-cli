@@ -123,7 +123,7 @@ class TestVersionRead:
 # ---------------------------------------------------------------------------
 
 
-def _run(args, files=None, head=None, files_error=None):
+def _run(args, files=None, head=None, files_error=None, captured=None):
     """Run `_app_checkout` against a patched client; returns what it output.
 
     Patches the operation's HTTP call rather than the operation itself, so
@@ -131,7 +131,9 @@ def _run(args, files=None, head=None, files_error=None):
     """
     from popcorn_cli.commands import app as mod
 
-    captured: dict = {"gets": []}
+    if captured is None:
+        captured = {}
+    captured.setdefault("gets", [])
 
     class _Client:
         def get(self, path, params):
@@ -255,9 +257,59 @@ class TestCheckoutVersion:
 
     @pytest.mark.parametrize("bad", [0, -3])
     def test_a_non_positive_id_is_refused_before_any_request(self, tmp_path, bad):
+        captured: dict = {}
         with pytest.raises(PopcornError) as exc:
-            _run(_args(directory=str(tmp_path / "x"), version=bad), files=_files_response(_TREE))
+            _run(
+                _args(directory=str(tmp_path / "x"), version=bad),
+                files=_files_response(_TREE),
+                captured=captured,
+            )
         assert "whole number from 1" in str(exc.value)
+        assert captured["gets"] == []
+        assert not (tmp_path / "x").exists()
+
+    def test_the_files_are_read_before_the_head(self, tmp_path):
+        """A publish between the two reads must make the copy historical (the
+        safe direction), never mark a superseded version publishable."""
+        out = _run(_args(directory=str(tmp_path / "o")), files=_files_response(_TREE))
+        assert [p for p, _ in out["gets"]] == ["/api/apps/files", "/api/apps/tree"]
+        assert out["gets"][1][1]["ref"] == "head"
+
+    def test_a_head_that_moved_after_the_files_read_is_still_historical(self, tmp_path):
+        """Asked for the head (7), which a publish replaced with 8 before the
+        head read: the copy is behind the line and must not be publishable."""
+        target = tmp_path / "o"
+        _run(
+            _args(directory=str(target), version=7),
+            files=_files_response(_TREE, version_id=7, semver="0.2.0"),
+            head=_head(8, "0.2.1"),
+        )
+        assert read_baseline(target).historical is True
+
+    def test_a_product_track_head_is_not_called_a_past_version(self, tmp_path):
+        """A product-bound channel is offered the workspace's release-track
+        head, which is NEWER than what it runs. Nothing about that is past."""
+        target = tmp_path / "prod"
+        out = _run(
+            _args(directory=str(target), version=9),
+            files=_files_response(
+                _TREE,
+                kind="product",
+                version_id=9,
+                semver="1.4.0",
+                bound_version_id=6,
+                bound_semver="1.3.0",
+            ),
+        )
+        base = read_baseline(target)
+        assert (base.kind, base.historical) == ("product", False)
+        rendered = out["rendered"]
+        assert "past version" not in rendered and "not the line's head" not in rendered
+        assert "product version (version 9)" in rendered
+        assert "--fork" in rendered
+        # No head read: fork-line semantics do not apply to it.
+        assert [p for p, _ in out["gets"]] == ["/api/apps/files"]
+        assert "historical" not in out["data"]
 
     def test_existing_directory_protection_still_applies(self, tmp_path):
         (tmp_path / "manifest.yaml").write_text("mine")
@@ -532,3 +584,83 @@ class TestGuide:
         out = _run(_args(directory=str(tmp_path)), files=_files_response(_TREE))
         assert (tmp_path / GUIDE_FILE).read_text() == "my own notes\n"
         assert out["data"]["guide"] is None
+
+
+class TestBaselineCompatibility:
+    def _write(self, directory: Path, **fields) -> None:
+        import json
+
+        payload = {
+            "version": 3,
+            "app": "alerttracker",
+            "kind": "fork",
+            "semver": "0.1.0",
+            "base_version_id": 5,
+            "tree_digest": "d",
+            **fields,
+        }
+        (directory / BASELINE_FILE).write_text(json.dumps(payload))
+
+    def test_a_v3_baseline_is_not_historical(self, tmp_path):
+        self._write(tmp_path)
+        assert read_baseline(tmp_path).historical is False
+
+    @pytest.mark.parametrize("value", ["true", 1, "yes"])
+    def test_only_a_json_true_marks_it(self, tmp_path, value):
+        """A hand-edited `"true"` is not the flag checkout writes; reading it
+        as False keeps an unrecognised file on the ordinary path, where the
+        head comparison in publish still refuses a stale base."""
+        self._write(tmp_path, version=4, historical=value)
+        assert read_baseline(tmp_path).historical is False
+
+
+class TestVersionArgumentType:
+    def test_a_semver_is_told_it_is_the_wrong_kind_of_version(self, capsys):
+        from popcorn_cli.cli import build_parser
+
+        with pytest.raises(SystemExit):
+            build_parser().parse_args(["app", "checkout", "--channel", "x", "--version", "0.1.0"])
+        err = capsys.readouterr().err
+        assert "takes a version id" in err
+        assert "not a semver like '0.1.0'" in err
+        assert "invalid int value" not in err
+
+    def test_the_schema_still_reports_an_int(self):
+        from popcorn_cli.commands.app import _version_id
+
+        assert _version_id.__name__ == "int"
+        assert _version_id("12") == 12
+
+
+class TestStaleFiles:
+    def test_a_forced_re_checkout_lists_files_the_new_tree_lacks(self, tmp_path):
+        """Checkout deletes nothing, so a head checkout over an older tree
+        would publish whatever that tree had. Listed, never removed: the
+        baseline cannot tell a file checkout wrote from one the author added."""
+        (tmp_path / "manifest.yaml").write_text("old")
+        (tmp_path / "added_since.yaml").write_text("name: x\n")
+        out = _run(_args(directory=str(tmp_path), force=True), files=_files_response(_TREE))
+        assert (tmp_path / "added_since.yaml").exists()
+        assert out["data"]["stale_files"] == ["added_since.yaml"]
+        assert "NOT part of alerttracker 0.1.0: added_since.yaml" in out["rendered"]
+
+    def test_a_clean_checkout_lists_none(self, tmp_path):
+        out = _run(_args(directory=str(tmp_path / "n")), files=_files_response(_TREE))
+        assert out["data"]["stale_files"] == []
+        assert "Left in place" not in out["rendered"]
+
+    def test_the_publish_hint_and_the_guide_both_say_to_delete(self, tmp_path):
+        from popcorn_core.app_checkout import GUIDE_FILE
+
+        target = tmp_path / "old"
+        _run(_args(directory=str(target)), files=_files_response(_TREE))
+        assert "The deletions are not optional" in (target / GUIDE_FILE).read_text()
+
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            pytest.raises(PopcornError) as exc,
+        ):
+            mod._app_publish(_publish_args(target))
+        assert "delete any file there this version lacks" in (exc.value.hint or "")

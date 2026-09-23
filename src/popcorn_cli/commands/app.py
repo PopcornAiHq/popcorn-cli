@@ -89,6 +89,7 @@ from popcorn_core.app_checkout import (
 from popcorn_core.app_publish import (
     BUMP_PARTS,
     bump_manifest_text,
+    classify_tree,
     collect_tree,
     diff_tree_hashes,
     file_sha256,
@@ -262,6 +263,26 @@ _WHERE_VERSION_IDS_ARE = (
 )
 
 
+def _version_id(value: str) -> int:
+    """argparse type for `--version`: a version id, never a semver.
+
+    Plain `int` answers `--version 0.1.0` with "invalid int value", which
+    says nothing about why a version number is the wrong kind of version.
+    """
+    try:
+        return int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"takes a version id — a whole number as 'app publish' and 'app "
+            f"status' print it, e.g. 'version 12' — not a semver like {value!r}"
+        ) from None
+
+
+# `commands --json` reports an argument's type by its converter's name, and
+# the value this produces is an int.
+_version_id.__name__ = "int"
+
+
 def _read_version(client, conv_id: str, version_id: int) -> dict:
     """The files of one named version, with the server's refusal made usable.
 
@@ -325,7 +346,17 @@ def _app_checkout(args: argparse.Namespace) -> None:
         # baseline may be used for. The head needs no flag at all — it is
         # exactly what a plain checkout would have written, and making it
         # unpublishable would be a refusal with no reason behind it.
-        head = operations.get_channel_app_tree(client, conv_id, ref="head")
+        #
+        # Read AFTER the files: a publish landing between the two reads then
+        # makes the copy historical — the safe direction — where the other
+        # order could mark a superseded version publishable.
+        #
+        # Fork lines only. A product-bound channel is offered the version it
+        # runs and the workspace's release-track head, which is NEWER than
+        # what it runs, so "past version" would be simply wrong there; and a
+        # product checkout needs no flag, since publish refuses it already.
+        if resp.get("kind") == "fork":
+            head = operations.get_channel_app_tree(client, conv_id, ref="head")
     files = files_from_response(resp)
     if not files:
         raise PopcornError(
@@ -375,6 +406,13 @@ def _app_checkout(args: argparse.Namespace) -> None:
         replaceable=(GUIDE_TEXT,) + ((guide_text(previous),) if previous else ()),
     )
 
+    # Checkout writes the served files and deletes nothing, so a re-checkout
+    # over an older tree keeps whatever that tree had and this one lacks — and
+    # those paths publish. Listed rather than removed: the baseline records a
+    # digest, not a file list, so nothing can tell a file the last checkout
+    # wrote from one the author added, and deleting the author's is the loss
+    # `_confirm_force` exists to prevent.
+    stale = sorted(rel for rel, _ in classify_tree(directory)[0] if rel not in files)
     # What the channel runs, alongside what was served. An older API sends
     # neither field; then the served version IS the bound one and there is
     # nothing to note.
@@ -393,6 +431,8 @@ def _app_checkout(args: argparse.Namespace) -> None:
         # Named rather than folded into `files`: it is not bundle content and
         # publish will not send it. None when an existing one was kept.
         "guide": guide.name if guide else None,
+        # Bundle paths on disk that the served tree lacks; see above.
+        "stale_files": stale,
     }
     if head is not None:
         data["historical"] = historical
@@ -413,6 +453,12 @@ def _app_checkout(args: argparse.Namespace) -> None:
             "and diff — 'app publish' refuses it, and says how to republish its "
             "content on top of the head."
         )
+    elif version_id is not None and baseline.kind != "fork":
+        lines.append(
+            f"This is a {baseline.kind} version (version {baseline.base_version_id}); "
+            f"the channel runs {channel_semver} (version {channel_id}). A publish "
+            "needs a fork line — 'popcorn app checkout --fork' makes one."
+        )
     elif channel_id != baseline.base_version_id:
         lines.append(
             f"Note: this channel still runs {baseline.app} {channel_semver}; "
@@ -425,6 +471,12 @@ def _app_checkout(args: argparse.Namespace) -> None:
         f"{len(written)} file{'s' if len(written) != 1 else ''}, "
         f"baseline version {baseline.base_version_id}",
     ]
+    if stale:
+        lines += [
+            "",
+            f"Left in place, and NOT part of {baseline.app} {baseline.semver}: " + ", ".join(stale),
+            "checkout never deletes a file; these publish from here unless you delete them.",
+        ]
     if guide is not None:
         lines.append(
             f"Also wrote {guide.name} — "
@@ -720,7 +772,8 @@ def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
         error_code="conflict",
         hint="to republish this content: 'popcorn app checkout --channel "
         f"{channel} --dir <new-dir>' for the head, copy these bundle files over it (leave its "
-        f"{BASELINE_FILE}), then 'popcorn app publish <new-dir> --bump patch -m "
+        f"{BASELINE_FILE}) and delete any file there this version lacks — "
+        "or the publish keeps everything added since — then 'popcorn app publish <new-dir> --bump patch -m "
         '"..."\' — the diff it prints is what reverts',
     )
 
@@ -1251,13 +1304,15 @@ register(
                         "A past version is for reading and diffing; 'app "
                         "publish' refuses it. Ids appear in 'app publish' and "
                         "'app status' output",
-                        type=int,
+                        type=_version_id,
                         exclusive_group="checkout_source",
                     ),
                     Argument(
                         "force",
                         "Overwrite bundle files in a non-empty directory "
-                        "without asking (--yes does not cover this)",
+                        "without asking (--yes does not cover this). Nothing "
+                        "is deleted: files the new tree lacks stay, and are "
+                        "listed",
                         action="store_true",
                     ),
                 ],

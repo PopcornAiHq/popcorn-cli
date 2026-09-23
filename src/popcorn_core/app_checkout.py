@@ -357,6 +357,11 @@ popcorn app checkout --channel {channel} --dir <new-dir>
 popcorn app publish <new-dir> --bump patch -m "<why this content is back>"
 ```
 
+The deletions are not optional. Copying adds and overwrites but removes
+nothing, so a file added to the line since {baseline.semver} would survive in
+<new-dir> and publish again — the result would be this version plus
+everything added after it, not this version.
+
 The diff that publish prints is what gets reverted — everything published
 since {baseline.semver} that this content undoes.
 
