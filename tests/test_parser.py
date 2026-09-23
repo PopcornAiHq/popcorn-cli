@@ -883,6 +883,12 @@ class TestFlowCommands:
         with pytest.raises(SystemExit):
             parser.parse_args(["flow", "runs", "list", "--channel", "#ops", "--status", "bogus"])
 
+    def test_flow_runs_list_flow(self, parser):
+        args = parser.parse_args(
+            ["flow", "runs", "list", "--channel", "#ops", "--flow", "claim_turn"]
+        )
+        assert args.flow == "claim_turn"
+
     def test_flow_runs_list_page_token(self, parser):
         args = parser.parse_args(
             ["flow", "runs", "list", "--channel", "#ops", "--page-token", "tok"]
