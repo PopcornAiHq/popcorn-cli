@@ -92,8 +92,9 @@ Families still living in `cli.py` are mid-migration; see
 
 ## Channel templates
 
-`docs/TEMPLATE_AUTHORING.md` is the guide for authoring a channel-template
-bundle with this CLI. Its §2 is the thing to keep straight: a **new** app type
+The authoring guide is at <https://docs.popcorn.ai/guides/template-authoring.md>
+(`docs/TEMPLATE_AUTHORING.md` here is a pointer to it). It describes the
+platform rather than this CLI, which is why it does not live here. Its §2 is the thing to keep straight: a **new** app type
 needs a server-side registration plus a deploy, neither of which the CLI can
 do, but **editing** one is a pure CLI loop (`app fork` → `checkout` →
 `publish`) with no deploy in it.
