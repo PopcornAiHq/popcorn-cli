@@ -948,3 +948,80 @@ class TestTemplateImportIsFenced:
         assert "bundle registry" in msg
         assert "channel create" in msg
         assert "template check" in msg
+
+
+class TestChannelParameterRequests:
+    """Pin the request each channel-parameter edit sends.
+
+    The command tests stand in for these functions, so this is the only place
+    the wire shape is checked. It needs checking because the server ignores
+    body keys it does not know and still answers 200: a PATCH that spelled
+    `unset` as `remove` would report success and change nothing.
+    """
+
+    PATH = "/api/customer-flows/channel-config/parameters"
+    CONV = "00000000-0000-4000-8000-000000000001"
+
+    def test_a_set_is_a_patch_with_an_empty_unset(self, mock_client):
+        mock_client.patch.return_value = {"ok": True}
+        operations.patch_channel_parameters(mock_client, self.CONV, set_={"tone": "crisp"})
+        mock_client.patch.assert_called_once_with(
+            self.PATH, {"set": {"tone": "crisp"}, "unset": []}, {"conversation_id": self.CONV}
+        )
+        mock_client.put.assert_not_called()
+
+    def test_an_unset_is_a_patch_with_an_empty_set(self, mock_client):
+        mock_client.patch.return_value = {"ok": True}
+        operations.patch_channel_parameters(mock_client, self.CONV, unset=["tone", "stale_hours"])
+        mock_client.patch.assert_called_once_with(
+            self.PATH,
+            {"set": {}, "unset": ["tone", "stale_hours"]},
+            {"conversation_id": self.CONV},
+        )
+
+    def test_a_null_value_is_kept_in_set(self, mock_client):
+        """Setting a key to null is a value, not a removal, so it must reach
+        the server rather than being filtered out as "absent"."""
+        mock_client.patch.return_value = {"ok": True}
+        operations.patch_channel_parameters(mock_client, self.CONV, set_={"owner": None})
+        body = mock_client.patch.call_args[0][1]
+        assert body == {"set": {"owner": None}, "unset": []}
+
+    def test_replace_is_a_put_of_the_whole_section(self, mock_client):
+        mock_client.put.return_value = {"ok": True}
+        operations.replace_channel_parameters(mock_client, self.CONV, {"a": 1, "b": None})
+        mock_client.put.assert_called_once_with(
+            self.PATH, {"parameters": {"a": 1, "b": None}}, {"conversation_id": self.CONV}
+        )
+        mock_client.patch.assert_not_called()
+
+    def test_the_patch_on_the_wire(self, profile, monkeypatch):
+        """Through the real client: method, path, query, the JSON body with a
+        literal null, and no `If-Match` — the edit is self-contained, not a
+        patch computed from an earlier read."""
+        from popcorn_core.client import APIClient
+
+        monkeypatch.delenv("POPCORN_PROXY_MODE", raising=False)
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"ok": True, "channel_parameters": {}})
+
+        client = APIClient(profile)
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+        operations.patch_channel_parameters(
+            client, self.CONV, set_={"tone": "crisp", "owner": None}, unset=["stale_hours"]
+        )
+
+        assert len(seen) == 1
+        req = seen[0]
+        assert req.method == "PATCH"
+        assert req.url.path == self.PATH
+        assert req.url.params["conversation_id"] == self.CONV
+        assert json.loads(req.content) == {
+            "set": {"tone": "crisp", "owner": None},
+            "unset": ["stale_hours"],
+        }
+        assert b'"owner": null' in req.content or b'"owner":null' in req.content
+        assert "if-match" not in req.headers
