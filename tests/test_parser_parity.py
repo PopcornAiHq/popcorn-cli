@@ -70,7 +70,7 @@ _MINIMUM_ROWS = {
     "auth": 8,
     "channel": 30,
     "channel-config": 7,
-    "flow": 10,
+    "flow": 11,
     "message": 24,
     "schedule": 2,
     "table": 11,

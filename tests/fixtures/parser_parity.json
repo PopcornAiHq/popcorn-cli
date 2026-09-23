@@ -2236,6 +2236,32 @@
       "flow_id": "x",
       "json": false,
       "no_color": false,
+      "no_triggers": false,
+      "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "flow",
+      "get",
+      "x",
+      "--channel",
+      "x",
+      "--no-triggers"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "flow",
+      "debug": false,
+      "env": null,
+      "flow_command": "get",
+      "flow_id": "x",
+      "json": false,
+      "no_color": false,
+      "no_triggers": true,
       "quiet": false,
       "timeout": null,
       "workspace": null,

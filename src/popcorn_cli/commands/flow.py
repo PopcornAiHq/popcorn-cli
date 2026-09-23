@@ -291,11 +291,79 @@ def _flow_list(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+# Said when a server was asked for the trigger report and did not send one. An
+# older API ignores the unknown query parameter rather than rejecting it, so
+# "absent" is the only signal there is — and it must never read as "nothing
+# starts this flow".
+_TRIGGERS_UNSUPPORTED = "this server does not report flow triggers (needs a newer API)"
+
+
+def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[str]:
+    """The `Triggers:` block, from the server's report — including when it is empty.
+
+    Each trigger's `summary` is the server's own sentence and is printed as
+    is: it already says whether a webhook is disabled, a schedule paused or a
+    message trigger switched off, and rebuilding it here would put two
+    wordings of one fact in circulation.
+
+    "Nothing on this channel starts this flow" is a real and wanted answer — it
+    is how a dead bundle flow gets found — but only when `complete` is true.
+    When a source could not be read, an empty list means "none found among the
+    sources that answered", so the verdict is withheld and the unread sources
+    are named instead. Launchers whose target is computed at run time print
+    after the verdict rather than inside it: a bundle's button engine can reach
+    any flow, and folding it in would make every flow look triggered.
+    """
+    if error is not None:
+        return ["", f"  Triggers: not checked — {error}"]
+    assert report is not None
+
+    triggers = [t for t in report.get("triggers") or [] if isinstance(t, dict)]
+    unread = [u for u in report.get("unread") or [] if isinstance(u, dict)]
+    complete = bool(report.get("complete")) and not unread
+
+    dynamic = [c for c in report.get("dynamic_callers") or [] if isinstance(c, dict)]
+
+    lines = ["", "  Triggers:"]
+    if not triggers:
+        if not complete:
+            lines[-1] = "  Triggers: none found — some sources could not be read (below)"
+        elif dynamic:
+            # Not the flat verdict: the server keeps run-time launchers apart
+            # precisely so a flow one of them reaches is not reported dead.
+            n = len(dynamic)
+            lines[-1] = (
+                "  Triggers: nothing names this flow as its target — "
+                f"{n} run-time launcher{'s' if n != 1 else ''} may start it (below)"
+            )
+        else:
+            lines[-1] = "  Triggers: nothing on this channel starts this flow"
+    elif not any(t.get("kind") == "schedule" for t in triggers) and not any(
+        u.get("source") == "schedules" for u in unread
+    ):
+        # Stated rather than left to inference. "Does this run on a timer?" is
+        # the first question asked of a flow, and an absent line answers it
+        # only for a reader who knows the section would have carried one.
+        lines.append("    no schedule of its own")
+    for trigger in triggers:
+        lines.append(f"    {trigger.get('summary') or trigger.get('kind') or '?'}")
+    if report.get("agent_runnable"):
+        lines.append("    the channel agent may run it ('flow run', agent_runnable_flows)")
+    else:
+        lines.append("    not agent-runnable — 'flow run' is operator-only")
+    for caller in dynamic:
+        lines.append(f"    Unresolved: {caller.get('summary') or '?'}")
+    for source in unread:
+        lines.append(f"    Not read: {source.get('source') or '?'} — {source.get('error') or '?'}")
+    return lines
+
+
 def _flow_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    resp = operations.get_flow(client, args.channel, args.flow_id)
+    want_triggers = not getattr(args, "no_triggers", False)
+    resp = operations.get_flow(client, args.channel, args.flow_id, include_triggers=want_triggers)
     flow = resp.get("flow") or resp
     lines = [
         f"{flow.get('name', '?')} (v{flow.get('version', '?')})",
@@ -303,6 +371,21 @@ def _flow_get(args: argparse.Namespace) -> None:
     ]
     if flow.get("description"):
         lines.append(f"  {flow['description']}")
+
+    if want_triggers:
+        report = resp.get("triggers")
+        if isinstance(report, dict):
+            resp["triggers_error"] = None
+            lines += _render_triggers(report, None)
+        else:
+            resp["triggers"] = None
+            resp["triggers_error"] = _TRIGGERS_UNSUPPORTED
+            lines += _render_triggers(None, _TRIGGERS_UNSUPPORTED)
+    else:
+        # Present either way, so `--json` has one key set whatever was asked.
+        resp.setdefault("triggers", None)
+        resp["triggers_error"] = None
+
     _output(args, resp, "\n".join(lines))
 
 
@@ -595,11 +678,20 @@ register(
             ),
             Subcommand(
                 "get",
-                "Get a flow definition",
+                "Get a flow definition and what triggers it",
                 _flow_get,
                 [
-                    Argument("flow_id", "Flow UUID", positional=True),
+                    Argument("flow_id", "Flow name (as `flow list` prints it)", positional=True),
                     _CHANNEL,
+                    # On by default: "what makes this run" is the question
+                    # asked of a flow. The opt-out is for a caller looping
+                    # over every flow in a channel, where the server would
+                    # re-read the whole bundle and its live state per flow.
+                    Argument(
+                        "no-triggers",
+                        "Skip the trigger report (a cheaper read of the definition only)",
+                        action="store_true",
+                    ),
                 ],
             ),
             Subcommand(

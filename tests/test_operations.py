@@ -558,6 +558,14 @@ class TestFlows:
             "/api/customer-flows/get", {"conversation_id": "conv-1", "flow_id": "f1"}
         )
 
+    def test_get_flow_include_triggers(self, mock_client):
+        mock_client.get.return_value = {"flow": {"id": "f1"}, "triggers": None}
+        operations.get_flow(mock_client, "conv-1", "f1", include_triggers=True)
+        mock_client.get.assert_called_once_with(
+            "/api/customer-flows/get",
+            {"conversation_id": "conv-1", "flow_id": "f1", "include_triggers": True},
+        )
+
     def test_run_flow_no_inputs(self, mock_client):
         """conversation_id is supplied even with no --inputs: nearly every flow
         declares it, and omitting it fails at runtime rather than here."""
