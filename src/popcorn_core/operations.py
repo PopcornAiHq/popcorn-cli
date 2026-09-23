@@ -1447,7 +1447,10 @@ def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dic
 
 
 def get_channel_app_files(
-    client: APIClient, conversation: str, ref: str = "head"
+    client: APIClient,
+    conversation: str,
+    ref: str = "head",
+    version_id: int | None = None,
 ) -> dict[str, Any]:
     """One version's complete tree in one round trip.
 
@@ -1461,9 +1464,42 @@ def get_channel_app_files(
     tree would produce an edit no publish can accept.
     The response carries both: `version_id`/`semver` for the served version
     and `bound_version_id`/`bound_semver` for the channel's own.
+
+    `version_id` reads one specific version of the channel's own line instead,
+    and replaces `ref` rather than accompanying it. A server that predates the
+    parameter ignores it and answers with the bound tree, which would be
+    written to disk under the requested version's name — so the response is
+    checked here, at the read, and refused unless it says it IS that version
+    (`require_version_served`). Every caller gets the check by asking.
     """
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/apps/files", {"conversation_id": conv_id, "ref": ref})
+    if version_id is None:
+        return client.get("/api/apps/files", {"conversation_id": conv_id, "ref": ref})
+    resp = client.get("/api/apps/files", {"conversation_id": conv_id, "version_id": version_id})
+    require_version_served(resp, version_id)
+    return resp
+
+
+def require_version_served(resp: dict[str, Any], version_id: int) -> None:
+    """Refuse a response that is not the version that was asked for.
+
+    Both fields, because either alone can be satisfied by accident: a server
+    that ignores `version_id` still reports a `version_id` (the bound one,
+    which may happen to equal the request), and `ref` alone says a version
+    was served without saying which.
+    """
+    served_ref = resp.get("ref")
+    served_id = resp.get("version_id")
+    if served_ref == "version" and served_id == version_id and not isinstance(served_id, bool):
+        return
+    raise PopcornError(
+        f"this server does not support reading a specific version (asked for "
+        f"version {version_id}, it answered with ref={served_ref!r}, "
+        f"version {served_id}) — nothing was written",
+        error_code="validation",
+        hint="the server predates --version; check out without it to read what "
+        "the channel runs, or retry once the server is upgraded",
+    )
 
 
 # ---------------------------------------------------------------------------

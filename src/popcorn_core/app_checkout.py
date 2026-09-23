@@ -1,8 +1,8 @@
 """Materialize an app bundle onto disk, and the baseline that tracks it.
 
-`popcorn app checkout` writes the fork line's head as files plus a
-`.popcorn-app.json` baseline. The baseline is what `app publish` diffs
-against: it names the version the working copy came from, so a publish can be
+`popcorn app checkout` writes the fork line's head (or, with `--version`, one
+named version of the line) as files plus a `.popcorn-app.json` baseline. The
+baseline is what `app publish` diffs against: it names the version the working copy came from, so a publish can be
 refused when the line has moved underneath it, and it names the channel so
 `publish`/`apply`/`status` need no `--channel`.
 
@@ -34,12 +34,14 @@ BASELINE_FILE = ".popcorn-app.json"
 # Not a dotfile, unlike the baseline: Claude Code loads a subdirectory's
 # CLAUDE.md by that exact name, so the name is the mechanism.
 GUIDE_FILE = "CLAUDE.md"
-# 2 added `conversation_id`. 3 added `changelog`. An older baseline still
+# 2 added `conversation_id`. 3 added `changelog`. 4 added `historical`, whose
+# absence is exactly right for every earlier baseline: none could be anything
+# but a checkout of the line's head. An older baseline still
 # parses — every field is read with a default — and each command degrades to
 # what it can still answer rather than rewriting the file underneath the user:
 # a v1 falls back to an explicit --channel, and a v1/v2 simply has no recorded
 # changelog for `template check` to compare against.
-_VERSION = 3
+_VERSION = 4
 # The first baseline version that captured the checked-out manifest's
 # `changelog:`. Below it, absence of the field means "not recorded", which is
 # not the same answer as "the manifest had none".
@@ -196,6 +198,14 @@ class Baseline:
     # place. None means the manifest declared none — NOT that the baseline
     # predates the field; `changelog_recorded` is what separates those.
     changelog: str | None = None
+    # True for `app checkout --version N` when N was not the line's head: the
+    # copy is for reading and diffing, and `app publish` refuses it up front.
+    # `base_version_id` stays the version the files came from — it has to,
+    # since `status` and `tree_digest` describe those files — so this flag,
+    # not the id, is what stops it passing for a publish base. A popcorn that
+    # predates the field still cannot publish from it: its base is behind the
+    # head, which both that popcorn and the server refuse.
+    historical: bool = False
     version: int = _VERSION
 
     @property
@@ -218,6 +228,8 @@ class Baseline:
             d["conversation_id"] = self.conversation_id
         if self.changelog:
             d["changelog"] = self.changelog
+        if self.historical:
+            d["historical"] = True
         return d
 
 
@@ -346,6 +358,7 @@ def read_baseline(directory: Path) -> Baseline | None:
         fork_name=data.get("fork_name"),
         conversation_id=data.get("conversation_id"),
         changelog=data.get("changelog"),
+        historical=data.get("historical") is True,
         version=data.get("version", 1),
     )
 
@@ -354,6 +367,7 @@ def baseline_from_response(
     resp: dict[str, Any],
     files: dict[str, str],
     conversation_id: str | None = None,
+    historical: bool = False,
 ) -> Baseline:
     return Baseline(
         app=resp.get("app", ""),
@@ -363,4 +377,5 @@ def baseline_from_response(
         conversation_id=conversation_id,
         changelog=manifest_changelog(files),
         tree_digest=tree_digest(files),
+        historical=historical,
     )
