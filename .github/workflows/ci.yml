@@ -22,12 +22,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The commit-message scan walks the PR's own commits.
+          fetch-depth: 0
 
       # A hook only sees what someone with `pre-commit install` staged. This is
       # the check that holds for a contributor who never ran it, and for content
       # that is already committed.
       - name: Check for internal-only references
         run: scripts/check-public-repo.sh
+
+      # The squash merge takes main's commit body from these messages and its
+      # subject from the commit or the PR title, so both are published on main.
+      - name: Check commit messages and PR title
+        if: github.event_name == 'pull_request'
+        env:
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          scripts/check-public-repo.sh --commits "$RANGE"
+          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/pr-title"
+          scripts/check-public-repo.sh --message "$RUNNER_TEMP/pr-title"
 
   # PR-only: on `main` an already-tagged version is the normal state for a
   # merge that ships nothing, so a check that fired there would be red for a
