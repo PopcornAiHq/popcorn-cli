@@ -107,3 +107,56 @@ class TestStructuredIssueLists:
         with pytest.raises(APIError) as exc:
             client.post("/api/x", data={})
         assert str(exc.value) == "nope"
+
+
+class TestNullFieldsInTheErrorEnvelope:
+    """A field present but null must fall through to the next candidate.
+
+    The backend's `ErrorResponse` declares `detail: Optional[str] = None`, so a
+    structured error serialises as `{"ok": false, "error": "not_found",
+    "detail": null}`. `dict.get(key, default)` returns that `None` rather than
+    the default, which printed the literal string "None" in place of the code
+    the server sent — on the API's most common 404.
+    """
+
+    def test_a_null_inner_detail_falls_through_to_the_error_code(self, monkeypatch, client):
+        _respond(
+            monkeypatch,
+            client,
+            httpx.Response(
+                404, json={"detail": {"ok": False, "error": "not_found", "detail": None}}
+            ),
+        )
+        with pytest.raises(APIError) as exc:
+            client.get("/api/conversations/info")
+        assert str(exc.value) == "not_found"
+
+    def test_a_null_inner_detail_keeps_the_issue_list(self, monkeypatch, client):
+        _respond(
+            monkeypatch,
+            client,
+            httpx.Response(
+                400,
+                json={
+                    "detail": {
+                        "ok": False,
+                        "error": "flow_validation_failed",
+                        "detail": None,
+                        "issues": ["boom"],
+                    }
+                },
+            ),
+        )
+        with pytest.raises(APIError) as exc:
+            client.post("/api/customer-flows/run", data={})
+        assert str(exc.value) == "flow_validation_failed\n  - boom"
+
+    def test_a_null_top_level_detail_falls_through_to_the_error_code(self, monkeypatch, client):
+        _respond(
+            monkeypatch,
+            client,
+            httpx.Response(404, json={"ok": False, "error": "not_found", "detail": None}),
+        )
+        with pytest.raises(APIError) as exc:
+            client.get("/api/conversations/info")
+        assert str(exc.value) == "not_found"

@@ -247,13 +247,16 @@ class APIClient:
             except (ValueError, Exception):
                 msg = resp.text[:200]
             else:
-                # Try common API error response shapes
-                detail = body.get("detail", body.get("message", body.get("error", "")))
+                # Try common API error response shapes. `or`, not a `.get`
+                # default: ErrorResponse serialises an unset field as null, and
+                # a present-but-null key never reaches a `.get` default.
+                detail = body.get("detail") or body.get("message") or body.get("error") or ""
                 if isinstance(detail, dict):
                     msg = str(
-                        detail.get(
-                            "detail", detail.get("error", detail.get("message", str(detail)))
-                        )
+                        detail.get("detail")
+                        or detail.get("error")
+                        or detail.get("message")
+                        or detail
                     )
                     # Keep a structured `issues` list. For flow validation it is
                     # the entire diagnostic, and collapsing it to the error slug
