@@ -780,6 +780,7 @@ popcorn webhook send Intake @fixtures/sample.json --channel <id>
 
 popcorn flow runs list --channel <id>
 popcorn flow runs get <workflow-id> --channel <id> --include-errors
+popcorn flow runs cancel --flow <flow-name> --channel <id>   # stop every running run of a flow
 popcorn table rows alerts --channel <id>
 popcorn table schema alerts --channel <id>
 ```

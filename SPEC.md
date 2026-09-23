@@ -172,7 +172,7 @@ while [ "$next_flags" != "null" ]; do
 done
 ```
 
-Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`, `table rows`, `table scalar list`, `table audit`.
+Commands that emit `pagination.next` today: `message list`, `message search`, `message threads`, `workspace inbox`, `flow list`, `flow runs list`, `flow runs cancel --flow`, `table rows`, `table scalar list`, `table audit`.
 
 `message list` reads history oldest-first, and its cursor follows the direction the anchor implies: a default or `--before` read pages back into history, while `--after` pages forward. Reading thread replies (`message list --thread`) is not cursor-paged — that endpoint pages by an offset the CLI does not expose, so `next` is always `null`; raise `--limit` to read a long thread.
 

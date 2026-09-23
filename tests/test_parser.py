@@ -1017,7 +1017,7 @@ class TestCommands:
         runs = next(s for s in flow["subcommands"] if s["name"] == "runs")
         # `runs` is itself a group → its own nested subcommands are described
         runs_names = {s["name"] for s in runs["subcommands"]}
-        assert runs_names == {"list", "get"}
+        assert runs_names == {"list", "get", "cancel"}
 
     def test_flow_runs_list_in_pagination_commands(self, capsys):
         import argparse
@@ -1027,7 +1027,11 @@ class TestCommands:
 
         cmd_commands(argparse.Namespace(command="commands", groups=None))
         schema = json.loads(capsys.readouterr().out)
-        assert "flow runs list" in schema["envelope"]["pagination"]["commands"]
+        paginated = schema["envelope"]["pagination"]["commands"]
+        assert "flow runs list" in paginated
+        # The bulk cancel pages on the same cursor; an agent reading the
+        # schema has to learn that a sweep of >200 continues with --page-token.
+        assert "flow runs cancel --flow" in paginated
 
     def test_commands_json_output(self, capsys):
         import json

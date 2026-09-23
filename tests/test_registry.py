@@ -186,7 +186,7 @@ class TestDispatchIsWired:
         with pytest.raises(SystemExit) as exc:
             self._run(monkeypatch, ["flow", "runs"])
         assert exc.value.code == EXIT_VALIDATION
-        assert "popcorn flow runs [get|list]" in capsys.readouterr().err
+        assert "popcorn flow runs [cancel|get|list]" in capsys.readouterr().err
 
 
 class TestFlowActivities:

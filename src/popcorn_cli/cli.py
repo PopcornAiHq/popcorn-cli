@@ -2261,6 +2261,7 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "workspace inbox",
                     "flow list",
                     "flow runs list",
+                    "flow runs cancel --flow",
                     "table rows",
                     "table scalar list",
                     "table audit",
