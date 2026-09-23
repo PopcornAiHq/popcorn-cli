@@ -83,7 +83,8 @@ from popcorn_core.app_publish import (
     BUMP_PARTS,
     bump_manifest_text,
     collect_tree,
-    diff_tree,
+    diff_tree_hashes,
+    file_sha256,
     fork_line_reach,
     ignored_note,
     local_digest,
@@ -95,6 +96,7 @@ from popcorn_core.app_publish import (
     preserved_note,
     publish_payload,
     require_bump,
+    served_hashes,
     unrecognized_code_note,
     unrecognized_code_paths,
 )
@@ -380,8 +382,30 @@ def _channel_of(args: argparse.Namespace, baseline: Baseline) -> str:
     )
 
 
-def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
+def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
+    """The fork line's head: its version fields, and `{path: sha256}` of its tree.
+
+    Hashes are all a diff needs from the base side (see `diff_tree_hashes`),
+    so this reads `/apps/tree`, which serves them, and never the content.
+    When `/apps/tree` has no usable hashes — a server that predates them, or
+    a malformed map — the full-tree read runs instead, and its response then
+    supplies the version fields as well —
+    the tree read is discarded rather than mixed with it, so the version and
+    the hashes always come from one response.
+    """
+    tree = operations.get_channel_app_tree(client, conversation, ref="head")
+    hashes = served_hashes(tree)
+    if hashes is not None:
+        return tree, hashes
+    resp = operations.get_channel_app_files(client, conversation, ref="head")
+    return resp, {path: file_sha256(text) for path, text in files_from_response(resp).items()}
+
+
+def _fetch_base(client, conversation: str, baseline: Baseline) -> tuple[dict, dict[str, str]]:
     """The fork line's head, refusing when it is not the version we edited.
+
+    Returns the version fields and `{path: sha256}`; see `_read_head` for
+    when those come from the full-tree read instead of `/apps/tree`.
 
     The diff is computed against this tree, so it must be the one the
     checkout came from — and the head is what a publish must be based on.
@@ -391,10 +415,10 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> dict:
     means someone else published on the line; the server would refuse the
     stale base, and the answer is the same here: check out again.
     """
-    resp = operations.get_channel_app_files(client, conversation, ref="head")
+    resp, hashes = _read_head(client, conversation)
     head_id = resp.get("version_id")
     if head_id == baseline.base_version_id:
-        return resp
+        return resp, hashes
     raise PopcornError(
         f"the fork line moved to {resp.get('app')} {resp.get('semver')} "
         f"(version {head_id}) since this checkout of {baseline.semver} "
@@ -613,13 +637,12 @@ def _app_publish(args: argparse.Namespace) -> None:
         _refuse_bump_over_a_hand_edit(version, baseline.semver, bump)
     message = _publish_message(args, local.files)
 
-    resp = _fetch_base(client, conversation, baseline)
-    base_files = files_from_response(resp)
+    _, base_hashes = _fetch_base(client, conversation, baseline)
     # The emptiness check runs against the tree AS EDITED, before any bump is
     # applied. Otherwise `--bump patch` on an untouched checkout would write a
     # one-line manifest change and mint a version whose only content is its
     # own number — the wasted version this pair of tickets is about.
-    if diff_tree(base_files, local.files).empty:
+    if diff_tree_hashes(base_hashes, local.files).empty:
         raise PopcornError(
             f"nothing to publish — {directory} matches {baseline.app} {baseline.semver}",
             error_code="validation",
@@ -628,7 +651,7 @@ def _app_publish(args: argparse.Namespace) -> None:
     if bump:
         version = next_version(baseline.semver, bump)
         local.files[manifest] = bump_manifest_text(local.files[manifest], version)
-    diff = diff_tree(base_files, local.files)
+    diff = diff_tree_hashes(base_hashes, local.files)
     require_bump(version, baseline.semver)
 
     payload = publish_payload(baseline.base_version_id, diff, message)
@@ -959,12 +982,11 @@ def _app_status(args: argparse.Namespace) -> None:
 
     local = collect_tree(directory)
     unpublishable = unrecognized_code_paths(local.files)
-    resp = operations.get_channel_app_files(client, conversation, ref="head")
-    base_files = files_from_response(resp)
+    resp, base_hashes = _read_head(client, conversation)
     # Diffed against the line's HEAD, not the baseline's digest: status is
     # the command you run when the two disagree, so it must not refuse the
     # way publish does.
-    diff = diff_tree(base_files, local.files)
+    diff = diff_tree_hashes(base_hashes, local.files)
     head_id = resp.get("version_id")
     head_semver = resp.get("semver")
     # The channel's own version rides along; an older API sends only the

@@ -1,0 +1,37 @@
+name: Public guard
+
+# Commit messages and the PR title, scanned for internal-only references (see
+# scripts/check-public-repo.sh). Its own workflow, rather than a step in CI,
+# because the title can change after CI is green: `edited` re-runs this on a
+# retitle without re-running the test matrix on every description edit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: public-guard-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  messages:
+    name: No internal-only references in commit messages or PR title
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The scan walks the PR's own commits, which a shallow clone lacks.
+          fetch-depth: 0
+
+      # Every merge method main allows publishes these commit messages, the PR
+      # title, or both.
+      - name: Check commit messages and PR title
+        env:
+          RANGE: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          scripts/check-public-repo.sh --commits "$RANGE"
+          printf '%s\n' "$TITLE" > "$RUNNER_TEMP/pr-title"
+          scripts/check-public-repo.sh --message "$RUNNER_TEMP/pr-title"
