@@ -16,12 +16,101 @@
 # staged paths is deliberate: a hook that sees a single file cannot tell you the
 # tree already contains a violation.
 #
-# Usage: scripts/check-public-repo.sh   (no arguments, in either context)
+# Commit messages are scanned too, because they are published as-is: every
+# merge method `main` allows publishes the branch's commit messages, the pull
+# request's title, or both, so an id in a feature-branch commit lands on `main`
+# permanently. `--message` is the commit-msg hook; `--commits` is the CI pass
+# over a pull request's commits.
+#
+# Usage: scripts/check-public-repo.sh                         tracked files (index)
+#        scripts/check-public-repo.sh --message <file>        one commit message
+#        scripts/check-public-repo.sh --commits <base>..<head> every message in a range
 
 set -eu
 
 # Skip this file: it necessarily contains the patterns it searches for.
 self=':(exclude)scripts/check-public-repo.sh'
+
+mode=index
+target=
+case "${1:-}" in
+    "") ;;
+    --message|--commits)
+        [ $# -eq 2 ] || { echo "usage: $0 [--message <file> | --commits <base>..<head>]" >&2; exit 2; }
+        mode=${1#--}
+        target=$2
+        ;;
+    *)
+        echo "usage: $0 [--message <file> | --commits <base>..<head>]" >&2
+        exit 2
+        ;;
+esac
+
+if [ "$mode" = message ] && [ ! -r "$target" ]; then
+    echo "✖  cannot read commit message file: $target" >&2
+    exit 2
+fi
+
+# The comment character git strips from a message. `auto` picks one per commit
+# from the message's own content, which this cannot reproduce, so it falls back
+# to the default like an unset value does.
+cc=$(git config --get core.commentChar 2>/dev/null || true)
+case "$cc" in
+    ""|auto) cc='#' ;;
+esac
+
+# Resolved once, up front: inside `search` a bad range would fail in a command
+# substitution nobody checks, and a scan of zero commits reports clean.
+if [ "$mode" = commits ]; then
+    # A single ref is valid rev-list syntax meaning "all of its history", which
+    # would scan every commit ever made rather than the pull request's own.
+    case "$target" in
+        *..*) ;;
+        *)
+            echo "✖  --commits needs a range (<base>..<head>), got: $target" >&2
+            exit 2
+            ;;
+    esac
+    commits=$(git rev-list "$target") || {
+        echo "✖  cannot resolve commit range: $target" >&2
+        exit 2
+    }
+fi
+
+# Print matches of $1 in whatever this mode scans; exit 0 on a match, 1 on
+# none, anything else on failure — git grep's contract, kept for every mode.
+search() {
+    case "$mode" in
+        index)
+            git grep --cached -nIE -e "$1" -- "$self"
+            ;;
+        message)
+            # Only what git keeps is published. `git commit -v` appends the
+            # diff below a scissors line WITHOUT comment prefixes, and the hook
+            # sees that unstripped file — so a commit that removes an id would
+            # be blocked by its own diff. Cut at the scissors, then drop comment
+            # lines. awk compares strings, so no comment character needs regex
+            # escaping.
+            awk -v cc="$cc" '
+                BEGIN { scissors = cc " ------------------------ >8 ------------------------" }
+                $0 == scissors { exit }
+                substr($0, 1, length(cc)) == cc { next }
+                { print }
+            ' "$target" | grep -nE -e "$1"
+            ;;
+        commits)
+            out=
+            for commit in $commits; do
+                short=$(git rev-parse --short "$commit")
+                hits=$(git log -1 --format=%B "$commit" | grep -nE -e "$1" || true)
+                [ -z "$hits" ] || out="$out$(printf '%s\n' "$hits" | sed "s/^/$short:/")
+"
+            done
+            [ -n "$out" ] || return 1
+            printf '%s' "$out"
+            ;;
+    esac
+}
 
 # Each line is "<what it is>|<extended regex>". Deliberately narrow — a pattern
 # that cries wolf gets switched off, which is worse than one that misses.
@@ -39,7 +128,7 @@ while IFS='|' read -r label regex; do
     [ -n "$label" ] || continue
 
     set +e
-    hits=$(git grep --cached -nIE -e "$regex" -- "$self")
+    hits=$(search "$regex")
     status=$?
     set -e
 
@@ -52,7 +141,7 @@ while IFS='|' read -r label regex; do
             ;;
         1) ;;  # no match — the success case
         *)
-            echo "✖  git grep failed (exit $status) scanning for $label" >&2
+            echo "✖  scan failed (exit $status) looking for $label" >&2
             exit "$status"
             ;;
     esac
@@ -71,5 +160,14 @@ if [ "$found" -eq 1 ]; then
 
    See CLAUDE.md — "This repository is public".
 MSG
+    if [ "$mode" != index ]; then
+        cat <<'MSG'
+
+   A commit message on a branch becomes part of main's history when the pull
+   request is merged, whichever merge method is used. Reword it before
+   pushing: `git commit --amend` for the last commit, an interactive rebase for
+   an earlier one.
+MSG
+    fi
     exit 1
 fi
