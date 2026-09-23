@@ -322,13 +322,22 @@ def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[s
     unread = [u for u in report.get("unread") or [] if isinstance(u, dict)]
     complete = bool(report.get("complete")) and not unread
 
+    dynamic = [c for c in report.get("dynamic_callers") or [] if isinstance(c, dict)]
+
     lines = ["", "  Triggers:"]
     if not triggers:
-        lines[-1] = (
-            "  Triggers: nothing on this channel starts this flow"
-            if complete
-            else "  Triggers: none found — some sources could not be read (below)"
-        )
+        if not complete:
+            lines[-1] = "  Triggers: none found — some sources could not be read (below)"
+        elif dynamic:
+            # Not the flat verdict: the server keeps run-time launchers apart
+            # precisely so a flow one of them reaches is not reported dead.
+            n = len(dynamic)
+            lines[-1] = (
+                "  Triggers: nothing names this flow as its target — "
+                f"{n} run-time launcher{'s' if n != 1 else ''} may start it (below)"
+            )
+        else:
+            lines[-1] = "  Triggers: nothing on this channel starts this flow"
     elif not any(t.get("kind") == "schedule" for t in triggers) and not any(
         u.get("source") == "schedules" for u in unread
     ):
@@ -342,11 +351,10 @@ def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[s
         lines.append("    the channel agent may run it ('flow run', agent_runnable_flows)")
     else:
         lines.append("    not agent-runnable — 'flow run' is operator-only")
-    for caller in report.get("dynamic_callers") or []:
-        if isinstance(caller, dict):
-            lines.append(f"  Unresolved: {caller.get('summary') or '?'}")
+    for caller in dynamic:
+        lines.append(f"    Unresolved: {caller.get('summary') or '?'}")
     for source in unread:
-        lines.append(f"  Not read: {source.get('source') or '?'} — {source.get('error') or '?'}")
+        lines.append(f"    Not read: {source.get('source') or '?'} — {source.get('error') or '?'}")
     return lines
 
 
@@ -373,6 +381,10 @@ def _flow_get(args: argparse.Namespace) -> None:
             resp["triggers"] = None
             resp["triggers_error"] = _TRIGGERS_UNSUPPORTED
             lines += _render_triggers(None, _TRIGGERS_UNSUPPORTED)
+    else:
+        # Present either way, so `--json` has one key set whatever was asked.
+        resp.setdefault("triggers", None)
+        resp["triggers_error"] = None
 
     _output(args, resp, "\n".join(lines))
 
@@ -660,7 +672,7 @@ register(
                 "Get a flow definition and what triggers it",
                 _flow_get,
                 [
-                    Argument("flow_id", "Flow UUID", positional=True),
+                    Argument("flow_id", "Flow name (as `flow list` prints it)", positional=True),
                     _CHANNEL,
                     # On by default: "what makes this run" is the question
                     # asked of a flow. The opt-out is for a caller looping

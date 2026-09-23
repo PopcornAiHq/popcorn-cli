@@ -139,11 +139,25 @@ class TestRendering:
         assert "the channel agent may run it" in out
         assert "operator-only" not in out
 
-    def test_a_dynamic_launcher_prints_after_the_verdict(self):
+    def test_a_dynamic_launcher_softens_the_verdict_and_prints_after_it(self):
         out = _render(_report(dynamic_callers=[_DYNAMIC]))
-        assert "nothing on this channel starts this flow" in out
-        assert out.index("nothing on this channel") < out.index("Unresolved:")
-        assert f"Unresolved: {_DYNAMIC['summary']}" in out
+        assert "nothing on this channel starts this flow" not in out
+        assert (
+            "Triggers: nothing names this flow as its target — "
+            "1 run-time launcher may start it (below)"
+        ) in out
+        assert out.index("nothing names this flow") < out.index("Unresolved:")
+        assert f"    Unresolved: {_DYNAMIC['summary']}" in out.splitlines()
+
+    def test_several_dynamic_launchers_are_counted(self):
+        out = _render(_report(dynamic_callers=[_DYNAMIC, _DYNAMIC]))
+        assert "2 run-time launchers may start it" in out
+
+    def test_unread_sources_withhold_the_verdict_even_if_complete_says_true(self):
+        out = _render(_report(complete=True, unread=[{"source": "webhooks", "error": "boom"}]))
+        assert "nothing" not in out
+        assert "none found" in out
+        assert "    Not read: webhooks — boom" in out.splitlines()
 
     def test_not_checked_says_why_rather_than_reporting_no_triggers(self):
         out = _render(None, _TRIGGERS_UNSUPPORTED)
@@ -178,6 +192,16 @@ class TestCommand:
         )
         assert get_flow.call_args.kwargs["include_triggers"] is False
         assert "Triggers" not in "\n".join(printed)
+
+    def test_no_triggers_json_keeps_the_same_key_set(self):
+        printed, _ = _run(
+            ["--json", "flow", "get", "example_turn", "--channel", "#x", "--no-triggers"],
+            {"ok": True, "flow": dict(_FLOW)},
+        )
+        data = json.loads(printed[0])["data"]
+        assert data["triggers"] is None
+        assert "triggers_error" in data
+        assert data["triggers_error"] is None
 
     def test_json_carries_the_server_report_verbatim(self):
         report = _report(triggers=[_FLOW_CALL], dynamic_callers=[_DYNAMIC])
