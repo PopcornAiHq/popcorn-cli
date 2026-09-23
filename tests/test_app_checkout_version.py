@@ -26,6 +26,7 @@ from popcorn_core.app_checkout import (
     read_baseline,
     write_baseline,
 )
+from popcorn_core.app_publish import file_sha256
 from popcorn_core.errors import APIError, PopcornError
 
 _CONV = "00000000-0000-4000-8000-000000000001"
@@ -443,16 +444,31 @@ class TestStatusOfHistorical:
             version_id=7,
             semver="0.2.0",
         )
+        head_tree = {
+            **{k: v for k, v in head.items() if k != "files"},
+            "paths": [f["path"] for f in head["files"]],
+            "sha256": {f["path"]: file_sha256(f["content"]) for f in head["files"]},
+        }
+        files_reads: list = []
+
+        def files_read(*a, **k):
+            files_reads.append(a)
+            return head
+
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch(
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "get_channel_app_files", return_value=head),
+            patch.object(operations, "get_channel_app_tree", return_value=head_tree),
+            patch.object(operations, "get_channel_app_files", files_read),
             patch.object(operations, "get_channel_app_file", return_value={"content": "a: 1\n"}),
         ):
             mod._app_status(argparse.Namespace(directory=str(tmp_path), channel=None, json=False))
+
+        # The head's hashes are all status reads; no content is fetched.
+        assert files_reads == []
 
         assert captured["data"]["historical"] is True
         assert captured["data"]["in_sync"] is False
