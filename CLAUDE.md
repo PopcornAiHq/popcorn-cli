@@ -27,6 +27,16 @@ have zero false positives here. It catches an id or a path; it cannot catch a
 paragraph that describes internal architecture, so the judgement above is still
 yours.
 
+**Commit messages count.** Every merge method `main` allows — squash, merge
+commit, rebase — publishes the branch's commit messages, the pull request's
+title, or both, so an id in a feature-branch commit is published on `main` for
+good. The same script checks each message as a `commit-msg` hook and, in CI
+(`.github/workflows/public-guard.yml`, which re-runs when the pull request is
+retitled), every commit in the pull request plus its title. A clone set up
+before the hook existed needs `make install` again to get it. The PR
+description is not scanned — it never reaches `main`, but it is public, so
+keep it to the same rule.
+
 **Audit with `git ls-files`, not `ls`, `grep -r`, `find` or `wc`.** Those walk
 gitignored scratch directories and over-report, in the direction that
 manufactures false alarms — a previous audit claimed private planning documents

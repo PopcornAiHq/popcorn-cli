@@ -911,19 +911,93 @@ def list_flow_runs(
     status: str | None = None,
     limit: int = 50,
     page_token: str | None = None,
+    flow_name: str | None = None,
 ) -> dict[str, Any]:
     """List Temporal workflow executions (flow runs) for a channel.
 
     ``status`` is one of ``all | running | failed | closed``. ``page_token``
     is the ``next_page_token`` cursor from a previous response.
+
+    ``flow_name`` narrows the list to one flow's runs. The server applies it
+    in the query that selects the page, so a page is still ``limit`` long and
+    the cursor stays exact — as long as the same ``flow_name`` rides along on
+    every page.
+
+    An API older than the filter ignores the parameter and answers with every
+    flow's runs. That response is refused rather than trimmed here: trimming
+    would leave a short or empty page with more pages behind it and a
+    ``count`` that describes the unfiltered page, and a warning about it would
+    go to stderr, which agent mode silences. See ``_check_flow_filter_applied``.
     """
+    if flow_name is not None and not flow_name.strip():
+        raise PopcornError(
+            "--flow needs a flow name",
+            error_code="validation",
+            hint="popcorn flow runs list --channel <conv> --flow <name>",
+        )
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
     if status:
         params["status"] = status
     if page_token:
         params["page_token"] = page_token
-    return client.get("/api/customer-flow-runs/list", params)
+    if flow_name is not None:
+        params["flow_name"] = flow_name
+    try:
+        resp = client.get("/api/customer-flow-runs/list", params)
+    except APIError as e:
+        # The server's message names the rejected value but not the rule it
+        # broke, so say it: the name travels inside a quoted query string.
+        if e.status_code == 400 and _api_error_label(e) == "invalid_flow_name":
+            e.hint = "a flow name cannot contain a double quote or a backslash"
+        raise
+    if flow_name is not None:
+        _check_flow_filter_applied(resp, flow_name)
+    return resp
+
+
+def _api_error_label(err: APIError) -> str | None:
+    """The machine-readable `error` label of a structured API error, if any."""
+    try:
+        body = json.loads(err.body or "")
+    except (json.JSONDecodeError, TypeError):
+        return None
+    detail = body.get("detail") if isinstance(body, dict) else None
+    label = detail.get("error") if isinstance(detail, dict) else None
+    return label if isinstance(label, str) else None
+
+
+# How many foreign flow names the old-server refusal lists before summarising;
+# a busy channel's unfiltered page can name many flows.
+_MAX_NAMES_SHOWN = 5
+
+
+def _check_flow_filter_applied(resp: dict[str, Any], flow_name: str) -> None:
+    """Refuse a filtered list that came back carrying another flow's runs.
+
+    A server that filters by flow never returns a run of a different flow, or
+    one with no flow name at all, so either means the filter was not applied.
+    An empty page proves nothing either way, and needs nothing: if every run
+    was returned and there were none, there are none of this flow either.
+    """
+    others = sorted(
+        {
+            str(e.get("flow_name") or "<none>")
+            for e in resp.get("executions") or []
+            if e.get("flow_name") != flow_name
+        }
+    )
+    if others:
+        shown = ", ".join(others[:_MAX_NAMES_SHOWN])
+        if len(others) > _MAX_NAMES_SHOWN:
+            shown += f" (+{len(others) - _MAX_NAMES_SHOWN} more)"
+        raise PopcornError(
+            f"The server ignored --flow {flow_name!r}: its response includes "
+            f"runs of {shown}. This API predates the flow filter, "
+            "so the list cannot be narrowed to one flow",
+            error_code="validation",
+            hint="list without --flow and read the flow_name of each run",
+        )
 
 
 def get_flow_run(
@@ -1430,6 +1504,10 @@ def get_channel_app_tree(
 ) -> dict[str, Any]:
     """Every file path in the selected version (`paths`).
 
+    A current server also sends `sha256` — `{path: hash of the file's raw
+    bytes}` — which is what lets `app publish` and `app status` diff a working
+    copy without downloading the tree; an older one omits it.
+
     `ref` picks the version the same way `get_channel_app_files` does, and the
     response carries both sides of it: `version_id`/`semver` for the version
     served, `bound_version_id`/`bound_semver` for what the channel runs. That
@@ -1451,7 +1529,10 @@ def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dic
 
 
 def get_channel_app_files(
-    client: APIClient, conversation: str, ref: str = "head"
+    client: APIClient,
+    conversation: str,
+    ref: str = "head",
+    version_id: int | None = None,
 ) -> dict[str, Any]:
     """One version's complete tree in one round trip.
 
@@ -1465,9 +1546,42 @@ def get_channel_app_files(
     tree would produce an edit no publish can accept.
     The response carries both: `version_id`/`semver` for the served version
     and `bound_version_id`/`bound_semver` for the channel's own.
+
+    `version_id` reads one specific version of the channel's own line instead,
+    and replaces `ref` rather than accompanying it. A server that predates the
+    parameter ignores it and answers with the bound tree, which would be
+    written to disk under the requested version's name — so the response is
+    checked here, at the read, and refused unless it says it IS that version
+    (`require_version_served`). Every caller gets the check by asking.
     """
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/apps/files", {"conversation_id": conv_id, "ref": ref})
+    if version_id is None:
+        return client.get("/api/apps/files", {"conversation_id": conv_id, "ref": ref})
+    resp = client.get("/api/apps/files", {"conversation_id": conv_id, "version_id": version_id})
+    require_version_served(resp, version_id)
+    return resp
+
+
+def require_version_served(resp: dict[str, Any], version_id: int) -> None:
+    """Refuse a response that is not the version that was asked for.
+
+    Both fields, because either alone can be satisfied by accident: a server
+    that ignores `version_id` still reports a `version_id` (the bound one,
+    which may happen to equal the request), and `ref` alone says a version
+    was served without saying which.
+    """
+    served_ref = resp.get("ref")
+    served_id = resp.get("version_id")
+    if served_ref == "version" and served_id == version_id and not isinstance(served_id, bool):
+        return
+    raise PopcornError(
+        f"this server does not support reading a specific version (asked for "
+        f"version {version_id}, it answered with ref={served_ref!r}, "
+        f"version {served_id}) — nothing was written",
+        error_code="validation",
+        hint="the server predates --version; check out without it to read what "
+        "the channel runs, or retry once the server is upgraded",
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1528,10 +1642,11 @@ def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
 # Channel config
 # ---------------------------------------------------------------------------
 #
-# Five endpoints that predate any CLI coverage. The one shape to keep in mind:
-# `PUT .../parameters` REPLACES the whole `channel_parameters` section, so
-# per-key editing is a read-modify-write in the caller (see
-# `channel_config.merge_parameters`) — not something this layer hides.
+# The one shape to keep in mind: `PUT .../parameters` REPLACES the whole
+# `channel_parameters` section, and `PATCH .../parameters` edits individual
+# keys. A per-key edit must go through the PATCH — built on the PUT, it is a
+# client-side read-modify-write, and two concurrent edits each write back the
+# same snapshot and the later one drops the earlier one's keys.
 
 
 def inspect_channel_config(client: APIClient, conversation: str) -> dict[str, Any]:
@@ -1556,6 +1671,30 @@ def replace_channel_parameters(
     return client.put(
         "/api/customer-flows/channel-config/parameters",
         {"parameters": parameters},
+        {"conversation_id": conv_id},
+    )
+
+
+def patch_channel_parameters(
+    client: APIClient,
+    conversation: str,
+    set_: dict[str, Any] | None = None,
+    unset: list[str] | None = None,
+) -> dict[str, Any]:
+    """Set and unset individual `channel_parameters` keys, keeping the rest.
+
+    The server merges the edit into the stored section under a row lock, so
+    no read is needed first. `unset` of a key that is not set is not an
+    error — the response reports the section as written, not what changed.
+
+    No `If-Match`: that header is for a caller whose patch was computed from
+    a read. `params set tone=crisp` is self-contained, and the server-side
+    merge already protects every key the patch does not name.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.patch(
+        "/api/customer-flows/channel-config/parameters",
+        {"set": set_ or {}, "unset": unset or []},
         {"conversation_id": conv_id},
     )
 
