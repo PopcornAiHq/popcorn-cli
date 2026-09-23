@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import hashlib
 import json
 import re
 import sys
@@ -65,6 +66,49 @@ def _files_response(files: dict[str, str], **over):
     }
     payload.update(over)
     return payload
+
+
+def _tree_from(files_response: dict, *, hashes: bool = True) -> dict:
+    """The `/apps/tree?ref=head` response matching a `/apps/files` one.
+
+    Hashed straight off the served bytes with hashlib, not through the code
+    under test, so a wrong local hash cannot agree with itself.
+    """
+    tree = {k: v for k, v in files_response.items() if k not in ("files", "fork_name")}
+    items = files_response.get("files") or []
+    tree["paths"] = sorted(i["path"] for i in items)
+    if hashes:
+        tree["sha256"] = {
+            i["path"]: hashlib.sha256(i["content"].encode("utf-8")).hexdigest() for i in items
+        }
+    return tree
+
+
+@contextlib.contextmanager
+def _serve(files_response: dict, *, tree: dict | None = None, hashes: bool = True):
+    """Both base reads, recorded: `/apps/tree` and the full `/apps/files`.
+
+    The tree defaults to one derived from `files_response` — a current
+    server, with hashes — so a test that says nothing about the server gets
+    the path every current install takes. The yielded dict records the `ref`
+    of every call to each endpoint.
+    """
+    calls: dict[str, list[str]] = {"tree": [], "files": []}
+    served_tree = tree if tree is not None else _tree_from(files_response, hashes=hashes)
+
+    def _tree(client, conversation, ref="bound"):
+        calls["tree"].append(ref)
+        return served_tree
+
+    def _files(client, conversation, ref="head"):
+        calls["files"].append(ref)
+        return files_response
+
+    with (
+        patch.object(operations, "get_channel_app_tree", _tree),
+        patch.object(operations, "get_channel_app_files", _files),
+    ):
+        yield calls
 
 
 def _checkout(directory: Path, files: dict[str, str], **over) -> Baseline:
@@ -629,7 +673,7 @@ def _run_publish(tmp_path, files_response, recorder, args):
     with (
         patch("popcorn_cli.cli._get_client", return_value=object()),
         patch("popcorn_cli.cli._output"),
-        patch.object(operations, "get_channel_app_files", return_value=files_response),
+        _serve(files_response),
         patch.object(operations, "publish_channel_app", recorder),
     ):
         mod._app_publish(args)
@@ -769,7 +813,7 @@ class TestPublishCommand:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", rec),
         ):
             mod._app_publish(_args(directory=str(tmp_path)))
@@ -793,7 +837,7 @@ class TestPublishCommand:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(rendered=rendered),
             ),
-            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", rec),
         ):
             mod._app_publish(_args(directory=str(tmp_path)))
@@ -873,26 +917,22 @@ class TestPublishCommand:
         assert len(rec.calls) == 1
         assert rec.calls[0][1]["base_version_id"] == 7
 
-    def test_fetches_the_head_not_the_bound_version(self, tmp_path):
+    @pytest.mark.parametrize("hashes", [True, False], ids=["current-api", "older-api"])
+    def test_fetches_the_head_not_the_bound_version(self, tmp_path, hashes):
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
         from popcorn_cli.commands import app as mod
 
-        seen: dict = {}
-
-        def _files(client, conversation, ref="head"):
-            seen["ref"] = ref
-            return _files_response(base)
-
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output"),
-            patch.object(operations, "get_channel_app_files", _files),
+            _serve(_files_response(base), hashes=hashes) as calls,
             patch.object(operations, "publish_channel_app", _Recorder()),
         ):
             mod._app_publish(_args(directory=str(tmp_path)))
-        assert seen["ref"] == "head"
+        assert calls["tree"] == ["head"]
+        assert calls["files"] == ([] if hashes else ["head"])
 
     def test_the_servers_stale_base_refusal_is_shown_verbatim(self, tmp_path):
         """The server owns the base check; its 409 already says what to do."""
@@ -952,7 +992,7 @@ def _run_publish_captured(tmp_path, recorder):
             "popcorn_cli.cli._output",
             lambda a, data, rendered: captured.update(data=data, rendered=rendered),
         ),
-        patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+        _serve(_files_response(base)),
         patch.object(operations, "publish_channel_app", recorder),
     ):
         mod._app_publish(_args(directory=str(tmp_path)))
@@ -1025,7 +1065,7 @@ class TestStatusCommand:
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output", _capture),
-            patch.object(operations, "get_channel_app_files", return_value=files_response),
+            _serve(files_response),
             _no_declared_schedules(),
         ):
             mod._app_status(args)
@@ -1104,6 +1144,160 @@ class TestStatusCommand:
         out = self._run(tmp_path, _files_response(base), _args(directory=str(tmp_path)))
         assert out["data"]["ignored"] == ["notes.txt"]
         assert "notes.txt" in out["rendered"]
+
+
+class TestBaseReadByHash:
+    """publish and status diff against the head's HASHES, not its content.
+
+    Nothing either command does needs the base tree's content: a publish
+    sends the working copy's, and deletions and preserved paths are decided
+    on paths. So a current server is asked for `/apps/tree` alone, and the
+    full `/apps/files` read survives only as the fallback for a server that
+    predates the hashes.
+    """
+
+    def _publish(self, tmp_path, files_response, **serve):
+        from popcorn_cli.commands import app as mod
+
+        rec = _Recorder()
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch("popcorn_cli.cli._output"),
+            _serve(files_response, **serve) as calls,
+            patch.object(operations, "publish_channel_app", rec),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path)))
+        return calls, rec.calls[0][1]
+
+    def _status(self, tmp_path, files_response, **serve):
+        from popcorn_cli.commands import app as mod
+
+        captured: dict = {}
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            _serve(files_response, **serve) as calls,
+            _no_declared_schedules(),
+        ):
+            mod._app_status(_args(directory=str(tmp_path)))
+        return calls, captured
+
+    def test_an_untouched_checkout_fetches_no_content(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0"), "alert.yaml": "name: alert\n"}
+        _checkout(tmp_path, base)
+        calls, out = self._status(tmp_path, _files_response(base))
+        assert calls == {"tree": ["head"], "files": []}
+        assert (out["data"]["added"], out["data"]["changed"], out["data"]["deleted"]) == (
+            [],
+            [],
+            [],
+        )
+        assert "Working copy matches the fork line's head." in out["rendered"]
+
+    def test_publish_of_an_untouched_checkout_still_refuses_without_content(self, tmp_path):
+        from popcorn_cli.commands import app as mod
+
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            _serve(_files_response(base)) as calls,
+            pytest.raises(PopcornError, match="nothing to publish"),
+        ):
+            mod._app_publish(_args(directory=str(tmp_path)))
+        assert calls["files"] == []
+
+    def test_a_changed_file_ships_from_the_working_copy_without_reading_the_base(self, tmp_path):
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "alert.yaml": "name: alert\n",
+            "other.yaml": "name: other\n",
+        }
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "alert.yaml").write_text("name: alert\nenabled: true\n")
+        calls, payload = self._publish(tmp_path, _files_response(base))
+        assert calls["files"] == [], "a changed file needs no base content to publish"
+        assert payload["files"] == {
+            "alert.yaml": "name: alert\nenabled: true\n",
+            "manifest.yaml": _manifest("0.2.1"),
+        }
+        assert payload["deletes"] == []
+
+    def test_a_path_only_the_server_has_is_a_deletion(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0"), "old.yaml": "name: old\n"}
+        _checkout(tmp_path, base)
+        (tmp_path / "old.yaml").unlink()
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        calls, payload = self._publish(tmp_path, _files_response(base))
+        assert calls["files"] == []
+        assert payload["deletes"] == ["old.yaml"]
+        assert list(payload["files"]) == ["manifest.yaml"]
+
+    def test_crlf_and_non_ascii_files_hash_equal_to_the_served_copy(self, tmp_path):
+        """The local hash must be over the bytes the server stored. Windows
+        line endings, non-ASCII text and a missing final newline are where a
+        text-mode read or a re-encode would drift and mark every file changed."""
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "prompts/brief.md.j2": "Résumé — naïve\r\nline two",
+        }
+        _checkout(tmp_path, base)
+        (tmp_path / "prompts" / "brief.md.j2").write_bytes(
+            base["prompts/brief.md.j2"].encode("utf-8")
+        )
+        calls, out = self._status(tmp_path, _files_response(base))
+        assert calls["files"] == []
+        assert out["data"]["changed"] == []
+
+    def test_status_reads_the_versions_off_the_tree(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        calls, out = self._status(
+            tmp_path, _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0")
+        )
+        assert calls["files"] == []
+        assert out["data"]["channel_behind"] is True
+        assert (out["data"]["channel_version_id"], out["data"]["head_version_id"]) == (5, 7)
+
+    def test_an_older_api_without_hashes_falls_back_to_the_full_tree(self, tmp_path):
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "alert.yaml": "name: alert\n",
+            "old.yaml": "name: old\n",
+        }
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "old.yaml").unlink()
+        calls, payload = self._publish(tmp_path, _files_response(base), hashes=False)
+        assert calls == {"tree": ["head"], "files": ["head"]}
+        assert payload["files"] == {"manifest.yaml": _manifest("0.2.1")}
+        assert payload["deletes"] == ["old.yaml"]
+
+    def test_the_fallback_takes_its_version_from_the_full_read(self, tmp_path):
+        """On the fallback the tree response is discarded, not mixed in: the
+        version the base check compares must be the one the diffed content
+        came from."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        files = _files_response(base)
+        tree = _tree_from(_files_response(base, version_id=99, semver="0.9.0"), hashes=False)
+        calls, payload = self._publish(tmp_path, files, tree=tree)
+        assert calls["files"] == ["head"]
+        assert payload["base_version_id"] == 7
+
+    def test_a_hash_map_that_does_not_cover_the_tree_falls_back(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0"), "alert.yaml": "name: alert\n"}
+        _checkout(tmp_path, base)
+        tree = _tree_from(_files_response(base))
+        del tree["sha256"]["alert.yaml"]
+        calls, out = self._status(tmp_path, _files_response(base), tree=tree)
+        assert calls["files"] == ["head"]
+        assert out["data"]["added"] == [], "a missing hash must not read as a new file"
 
 
 class TestForkAndApplyCommands:
@@ -1444,7 +1638,7 @@ class TestPublishMessage:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", _Recorder()),
         ):
             mod._app_publish(_args(directory=str(tmp_path), message="dedupe by fingerprint"))
@@ -1678,7 +1872,7 @@ class TestChannelScopedStatus:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "get_channel_app_files", return_value=_files_response(base)),
+            _serve(_files_response(base)),
             _no_declared_schedules(),
         ):
             mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
