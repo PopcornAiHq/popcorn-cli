@@ -32,7 +32,7 @@ repos:
         always_run: true
         pass_filenames: false
 
-      # The squash merge publishes branch commit messages on main verbatim.
+      # Merging publishes branch commit messages on main verbatim.
       - id: check-public-repo-message
         name: check commit message for internal-only references
         entry: scripts/check-public-repo.sh --message

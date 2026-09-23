@@ -27,10 +27,12 @@ have zero false positives here. It catches an id or a path; it cannot catch a
 paragraph that describes internal architecture, so the judgement above is still
 yours.
 
-**Commit messages count.** `main` squash-merges with the branch's commit
-messages as the body, so an id in a feature-branch commit is published on
-`main` for good. The same script checks each message as a `commit-msg` hook
-and, in CI, every commit in the pull request plus its title. A clone set up
+**Commit messages count.** Every merge method `main` allows — squash, merge
+commit, rebase — publishes the branch's commit messages, the pull request's
+title, or both, so an id in a feature-branch commit is published on `main` for
+good. The same script checks each message as a `commit-msg` hook and, in CI
+(`.github/workflows/public-guard.yml`, which re-runs when the pull request is
+retitled), every commit in the pull request plus its title. A clone set up
 before the hook existed needs `make install` again to get it. The PR
 description is not scanned — it never reaches `main`, but it is public, so
 keep it to the same rule.

@@ -16,14 +16,15 @@
 # staged paths is deliberate: a hook that sees a single file cannot tell you the
 # tree already contains a violation.
 #
-# Commit messages are scanned too, because they are published as-is: `main`
-# squash-merges with the branch's commit messages as the body, so an id in a
-# feature-branch commit lands on `main` permanently. `--message` is the
-# commit-msg hook; `--commits` is the CI pass over a pull request's commits.
+# Commit messages are scanned too, because they are published as-is: every
+# merge method `main` allows publishes the branch's commit messages, the pull
+# request's title, or both, so an id in a feature-branch commit lands on `main`
+# permanently. `--message` is the commit-msg hook; `--commits` is the CI pass
+# over a pull request's commits.
 #
-# Usage: scripts/check-public-repo.sh                    tracked files (index)
-#        scripts/check-public-repo.sh --message <file>   one commit message
-#        scripts/check-public-repo.sh --commits <range>  every message in a range
+# Usage: scripts/check-public-repo.sh                         tracked files (index)
+#        scripts/check-public-repo.sh --message <file>        one commit message
+#        scripts/check-public-repo.sh --commits <base>..<head> every message in a range
 
 set -eu
 
@@ -35,12 +36,12 @@ target=
 case "${1:-}" in
     "") ;;
     --message|--commits)
-        [ $# -eq 2 ] || { echo "usage: $0 [--message <file> | --commits <range>]" >&2; exit 2; }
+        [ $# -eq 2 ] || { echo "usage: $0 [--message <file> | --commits <base>..<head>]" >&2; exit 2; }
         mode=${1#--}
         target=$2
         ;;
     *)
-        echo "usage: $0 [--message <file> | --commits <range>]" >&2
+        echo "usage: $0 [--message <file> | --commits <base>..<head>]" >&2
         exit 2
         ;;
 esac
@@ -50,9 +51,26 @@ if [ "$mode" = message ] && [ ! -r "$target" ]; then
     exit 2
 fi
 
+# The comment character git strips from a message. `auto` picks one per commit
+# from the message's own content, which this cannot reproduce, so it falls back
+# to the default like an unset value does.
+cc=$(git config --get core.commentChar 2>/dev/null || true)
+case "$cc" in
+    ""|auto) cc='#' ;;
+esac
+
 # Resolved once, up front: inside `search` a bad range would fail in a command
 # substitution nobody checks, and a scan of zero commits reports clean.
 if [ "$mode" = commits ]; then
+    # A single ref is valid rev-list syntax meaning "all of its history", which
+    # would scan every commit ever made rather than the pull request's own.
+    case "$target" in
+        *..*) ;;
+        *)
+            echo "✖  --commits needs a range (<base>..<head>), got: $target" >&2
+            exit 2
+            ;;
+    esac
     commits=$(git rev-list "$target") || {
         echo "✖  cannot resolve commit range: $target" >&2
         exit 2
@@ -67,8 +85,18 @@ search() {
             git grep --cached -nIE -e "$1" -- "$self"
             ;;
         message)
-            # Lines git itself strips (its "#" help text) are never published.
-            grep -v '^#' "$target" | grep -nE -e "$1"
+            # Only what git keeps is published. `git commit -v` appends the
+            # diff below a scissors line WITHOUT comment prefixes, and the hook
+            # sees that unstripped file — so a commit that removes an id would
+            # be blocked by its own diff. Cut at the scissors, then drop comment
+            # lines. awk compares strings, so no comment character needs regex
+            # escaping.
+            awk -v cc="$cc" '
+                BEGIN { scissors = cc " ------------------------ >8 ------------------------" }
+                $0 == scissors { exit }
+                substr($0, 1, length(cc)) == cc { next }
+                { print }
+            ' "$target" | grep -nE -e "$1"
             ;;
         commits)
             out=
@@ -136,8 +164,9 @@ MSG
         cat <<'MSG'
 
    A commit message on a branch becomes part of main's history when the pull
-   request is squash-merged. Reword it before pushing: `git commit --amend` for
-   the last commit, an interactive rebase for an earlier one.
+   request is merged, whichever merge method is used. Reword it before
+   pushing: `git commit --amend` for the last commit, an interactive rebase for
+   an earlier one.
 MSG
     fi
     exit 1
