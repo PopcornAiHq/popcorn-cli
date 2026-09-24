@@ -108,7 +108,6 @@ platform rather than this CLI, which is why it does not live here. Its §2 is th
 needs a server-side registration plus a deploy, neither of which the CLI can
 do, but **editing** one is a pure CLI loop (`app fork` → `checkout` →
 `publish`) with no deploy in it.
-`popcorn flow import` is gone and neither path replaces it.
 
 Two bundles back the guide's §6 contrast. **They are checker fixtures, not
 reference templates** — they live under `tests/fixtures/bundles/` and are not
