@@ -1,4 +1,4 @@
-"""`flow run --wait` polling: terminal detection, failure exit, timeout."""
+"""`flow run --wait` polling: branches on the served `outcome`, never on `status`."""
 
 from __future__ import annotations
 
@@ -7,146 +7,81 @@ import pytest
 from popcorn_cli.commands.flow import _poll_until_closed
 from popcorn_core.errors import EXIT_TIMEOUT, EXIT_VALIDATION, PopcornError
 
+_MISSING = object()
+
 
 class _Runs:
-    def __init__(self, statuses):
-        self.statuses = list(statuses)
+    """Scripted `get_flow_run`: each entry is `(status, outcome)`.
+
+    An outcome of `_MISSING` leaves the field out, as an API older than it does.
+    """
+
+    def __init__(self, script):
+        self.script = list(script)
         self.calls = 0
+        self.run_ids = []
 
     def __call__(self, client, channel, workflow_id, run_id=None, include_errors=False):
         self.calls += 1
-        # Keep returning the last status once the script is exhausted, so a
+        self.run_ids.append(run_id)
+        # Keep returning the last entry once the script is exhausted, so a
         # timeout test can poll indefinitely without an IndexError.
-        if len(self.statuses) > 1:
-            status = self.statuses.pop(0)
-        else:
-            status = self.statuses[0]
-        return {"run": {"status": status, "workflow_id": workflow_id}}
+        status, outcome = self.script.pop(0) if len(self.script) > 1 else self.script[0]
+        run = {"status": status, "workflow_id": workflow_id}
+        if outcome is not _MISSING:
+            run["outcome"] = outcome
+        return {"run": run}
 
 
-def _script(monkeypatch, statuses):
+def _script(monkeypatch, script):
     from popcorn_cli.commands import flow as mod
 
-    runs = _Runs(statuses)
+    runs = _Runs(script)
     monkeypatch.setattr(mod.operations, "get_flow_run", runs, raising=False)
     monkeypatch.setattr(mod.time, "sleep", lambda s: None)
     return runs
 
 
-def test_polls_until_completed(monkeypatch):
-    runs = _script(monkeypatch, ["RUNNING", "RUNNING", "COMPLETED"])
-
-    run = _poll_until_closed(None, "#ops", "wid-1", timeout=30)
-    assert run["status"] == "COMPLETED"
-    assert runs.calls == 3
-
-
-def test_returns_immediately_when_already_terminal(monkeypatch):
-    runs = _script(monkeypatch, ["COMPLETED"])
-
-    _poll_until_closed(None, "#ops", "wid-1", timeout=30)
-    assert runs.calls == 1
-
-
-def test_lowercase_status_is_still_terminal(monkeypatch):
-    """Status casing is not something to bet the poll loop on."""
-    _script(monkeypatch, ["completed"])
-
-    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "completed"
-
-
-@pytest.mark.parametrize("bad", ["FAILED", "TIMED_OUT", "CANCELED", "TERMINATED"])
-def test_raises_on_every_bad_terminal_status(monkeypatch, bad):
-    _script(monkeypatch, ["RUNNING", bad])
-
-    with pytest.raises(PopcornError) as exc:
-        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
-    assert bad in str(exc.value)
-    # Non-zero exit so a shell/agent sees the failure.
-    assert exc.value.exit_code == EXIT_VALIDATION
-
-
-# Every execution status the flow run API can put in `run.status`, and how the
-# poll loop must treat it.
-#
-# TRANSCRIPTION. The server maps Temporal's execution-status enum to these
-# canonical strings and returns them verbatim; the mapping lives in a private
-# repo this CLI cannot import, so the vocabulary is copied here by hand and
-# this test is the only thing holding the two in step.
-#
-# When this fails, a status was added or respelled server-side. Do NOT delete
-# the offending entry or relax the assertion: decide what `--wait` should do
-# with the new status, put it in the matching set in
-# `popcorn_cli.commands.flow`, and add it here. Leaving it out of both is the
-# failure this pin exists to prevent — an unmatched status is not "unknown, be
-# careful", it is "poll until the deadline and then claim the run may still be
-# going".
-_SERVER_STATUSES = {
-    "Running": "in_flight",
-    "Completed": "ok",
-    "Failed": "bad",
-    "Canceled": "bad",
-    "Terminated": "bad",
-    "ContinuedAsNew": "in_flight",
-    "TimedOut": "bad",
-}
-
-
-def test_terminal_sets_classify_every_status_the_server_can_emit():
+def _freeze_then_expire(monkeypatch):
+    """A clock that reads 0 until the fourth look, then is far past any deadline."""
     from popcorn_cli.commands import flow as mod
 
-    by_bucket = {
-        "ok": mod._TERMINAL_OK,
-        "bad": mod._TERMINAL_BAD,
-        "in_flight": mod._IN_FLIGHT,
-    }
-    for status, bucket in _SERVER_STATUSES.items():
-        assert status in by_bucket[bucket], f"{status} missing from {bucket}"
-
-    # And nothing else: a set carrying a status the server never sends is a
-    # spelling the CLI invented, which is how `TIMED_OUT` survived unnoticed.
-    classified = set().union(*by_bucket.values())
-    assert classified == set(_SERVER_STATUSES)
+    clock = iter([0, 1, 2, 99])
+    monkeypatch.setattr(mod.time, "monotonic", lambda: next(clock))
 
 
-@pytest.mark.parametrize("status", [s for s, b in _SERVER_STATUSES.items() if b == "bad"])
-def test_server_spelled_failure_ends_the_wait(monkeypatch, status):
-    """The spellings as the API actually sends them, not upper-cased guesses."""
-    runs = _script(monkeypatch, ["Running", status])
+# --- each outcome pinned to its result ---------------------------------------
+
+
+def test_succeeded_returns_the_run(monkeypatch):
+    runs = _script(monkeypatch, [("Running", "still_running"), ("Completed", "succeeded")])
+
+    run = _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert run["outcome"] == "succeeded"
+    # The raw status is still carried for display.
+    assert run["status"] == "Completed"
+    assert runs.calls == 2
+
+
+def test_failed_raises_a_non_retryable_validation_exit(monkeypatch):
+    runs = _script(monkeypatch, [("Running", "still_running"), ("TimedOut", "failed")])
 
     with pytest.raises(PopcornError) as exc:
         _poll_until_closed(None, "#ops", "wid-1", timeout=30)
-    # Stopped on the status, rather than polling out the deadline.
+    # Stopped on the outcome, rather than polling out the deadline.
     assert runs.calls == 2
-    assert status in str(exc.value)
+    # The message names the server's status so the caller can tell a timeout
+    # from a cancel.
+    assert "TimedOut" in str(exc.value)
     assert exc.value.error_code == "validation"
     assert exc.value.exit_code == EXIT_VALIDATION
     # A dead run is not something to come back and wait for again.
     assert exc.value.to_dict()["retryable"] is False
 
 
-def test_server_spelled_completion_ends_the_wait(monkeypatch):
-    runs = _script(monkeypatch, ["Running", "Completed"])
-
-    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "Completed"
-    assert runs.calls == 2
-
-
-def test_continued_as_new_keeps_polling(monkeypatch):
-    """A run that continued-as-new handed its work to a successor run — the
-    flow is still going, so waiting on it is the point, not a missed match."""
-    runs = _script(monkeypatch, ["ContinuedAsNew", "ContinuedAsNew", "Completed"])
-
-    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "Completed"
-    assert runs.calls == 3
-
-
-def test_raises_on_timeout(monkeypatch):
-    from popcorn_cli.commands import flow as mod
-
-    _script(monkeypatch, ["RUNNING"] * 50)
-    clock = iter([0, 1, 2, 99])
-    monkeypatch.setattr(mod.time, "monotonic", lambda: next(clock))
+def test_still_running_polls_until_the_deadline(monkeypatch):
+    _script(monkeypatch, [("Running", "still_running")])
+    _freeze_then_expire(monkeypatch)
 
     with pytest.raises(PopcornError) as exc:
         _poll_until_closed(None, "#ops", "wid-1", timeout=30)
@@ -160,6 +95,109 @@ def test_raises_on_timeout(monkeypatch):
     # Same correction in the JSON envelope: an agent reading retryable:false
     # would give up on a run that is very likely still going.
     assert exc.value.to_dict()["retryable"] is True
+
+
+def test_returns_immediately_when_already_succeeded(monkeypatch):
+    runs = _script(monkeypatch, [("Completed", "succeeded")])
+
+    _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert runs.calls == 1
+
+
+# --- the status no longer decides anything ------------------------------------
+#
+# Every status paired with an outcome it would never normally carry. If the
+# poll still read `status`, one of these would land on the status's verdict
+# instead of the outcome's.
+
+_STATUSES = [
+    "Running",
+    "Completed",
+    "Failed",
+    "Canceled",
+    "Terminated",
+    "ContinuedAsNew",
+    "TimedOut",
+    "",
+    "SomethingNew",
+]
+
+
+@pytest.mark.parametrize("status", _STATUSES)
+def test_succeeded_ends_the_wait_whatever_the_status(monkeypatch, status):
+    runs = _script(monkeypatch, [(status, "succeeded")])
+
+    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["outcome"] == "succeeded"
+    assert runs.calls == 1
+
+
+@pytest.mark.parametrize("status", _STATUSES)
+def test_failed_ends_the_wait_whatever_the_status(monkeypatch, status):
+    runs = _script(monkeypatch, [(status, "failed")])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert runs.calls == 1
+    assert exc.value.exit_code == EXIT_VALIDATION
+
+
+@pytest.mark.parametrize("status", _STATUSES)
+def test_still_running_keeps_polling_whatever_the_status(monkeypatch, status):
+    runs = _script(monkeypatch, [(status, "still_running"), (status, "succeeded")])
+
+    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["outcome"] == "succeeded"
+    assert runs.calls == 2
+
+
+# --- continued-as-new ----------------------------------------------------------
+
+
+def test_continued_as_new_follows_the_workflow_not_the_run(monkeypatch):
+    """The server answers `still_running` for a run that continued-as-new, and
+    the poll asks for the workflow's latest run each time — never a pinned run
+    id — so it reaches the successor's real ending instead of re-reading the
+    closed first link until the deadline."""
+    runs = _script(
+        monkeypatch,
+        [
+            ("ContinuedAsNew", "still_running"),
+            ("Running", "still_running"),
+            ("Completed", "succeeded"),
+        ],
+    )
+
+    assert _poll_until_closed(None, "#ops", "wid-1", timeout=30)["status"] == "Completed"
+    assert runs.calls == 3
+    assert runs.run_ids == [None, None, None]
+
+
+# --- a response without a usable outcome ------------------------------------
+
+
+@pytest.mark.parametrize("status", ["Completed", "Failed", "Running"])
+def test_missing_outcome_fails_loud_on_the_first_poll(monkeypatch, status):
+    """An API older than the field is refused, not second-guessed from
+    `status` — even a status that plainly reads as finished."""
+    runs = _script(monkeypatch, [(status, _MISSING)])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert runs.calls == 1
+    assert "predates" in str(exc.value)
+    assert status in str(exc.value)
+    assert exc.value.error_code == "validation"
+    assert exc.value.to_dict()["retryable"] is False
+    assert "flow runs get" in (exc.value.hint or "")
+
+
+@pytest.mark.parametrize("outcome", [None, "", "cancelled", "SUCCEEDED", {"v": 1}, ["failed"], 1])
+def test_unrecognised_outcome_fails_loud(monkeypatch, outcome):
+    runs = _script(monkeypatch, [("Completed", outcome)])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert runs.calls == 1
+    assert exc.value.error_code == "validation"
 
 
 def test_timeout_error_code_is_in_the_stable_enum():
