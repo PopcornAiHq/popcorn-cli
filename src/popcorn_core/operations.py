@@ -358,28 +358,6 @@ def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.post("/api/conversations/join", data={"conversation": conv_id})
 
 
-# ---------------------------------------------------------------------------
-# VM (workspace VM agent execution)
-# ---------------------------------------------------------------------------
-
-
-def _normalize_item_id(item_id: str) -> str:
-    """Strip queue prefix from item_id (e.g. 'project-foo/slug' → 'slug')."""
-    return item_id.split("/")[-1] if "/" in item_id else item_id
-
-
-def vm_trace_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
-    """Fetch the trace for the currently active item in a queue, or None."""
-    from popcorn_core.errors import APIError
-
-    try:
-        return client.get(f"/api/appchannels/trace/{queue_id}/current", {})
-    except APIError as e:
-        if e.status_code == 404:
-            return None
-        raise
-
-
 def leave_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Leave a conversation."""
     conv_id = resolve_conversation(client, conversation)
