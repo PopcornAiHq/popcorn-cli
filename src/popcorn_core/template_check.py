@@ -912,6 +912,13 @@ class _Checker:
                 for path, value in _walk_strings(step["args"], "args"):
                     self._check_value(value, f"{where}.{path}", inner)
 
+            # A `call_flow:` step hands its child `inputs` by reference, which
+            # resolve in the parent exactly as `args` do, foreach alias included.
+            # Unwalked, a typo there checks clean and fails the run instead.
+            if "call_flow" in step:
+                for path, value in _walk_strings(step["call_flow"], "call_flow"):
+                    self._check_value(value, f"{where}.{path}", inner)
+
             block = step.get("steps")
             published: set[str] | None = None
             if isinstance(block, list):

@@ -942,6 +942,44 @@ def test_the_other_actionless_step_shapes_are_legal(tmp_path, step):
     assert check_bundle(root).findings == []
 
 
+def _call_flow_flow(ref: str) -> dict[str, Any]:
+    return {
+        "name": "parent",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}, "cases": {"type": "array"}},
+        "steps": [
+            {
+                "id": "fan",
+                "foreach": "$inputs.cases",
+                "as": "case",
+                "call_flow": {
+                    "flow": "parent",
+                    "mode": "wait",
+                    "inputs": {"conversation_id": "$inputs.conversation_id", "case": ref},
+                },
+            }
+        ],
+    }
+
+
+def test_refs_in_call_flow_inputs_are_checked(tmp_path):
+    """A child's inputs are refs resolved in the parent, so a broken one is a
+    run failure the checker can see before it happens."""
+    root = write_bundle(
+        tmp_path / "b",
+        flows={"parent": _call_flow_flow("$steps.nope.output")},
+        manifest=bare_manifest(),
+    )
+    assert "unknown-step-reference" in codes(root)
+
+
+def test_call_flow_inputs_see_the_foreach_alias(tmp_path):
+    root = write_bundle(
+        tmp_path / "b", flows={"parent": _call_flow_flow("$case")}, manifest=bare_manifest()
+    )
+    assert check_bundle(root).findings == []
+
+
 def test_a_step_with_no_action_at_all_is_still_an_error(tmp_path):
     flow = {
         "name": "empty",
