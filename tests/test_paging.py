@@ -199,6 +199,21 @@ class TestResolvePaging:
         with pytest.raises(PopcornError, match="Channel not found"):
             resolve_conversation(mock_client, "#nope")
 
+    def test_case_variants_are_compared_across_every_fallback_page(self, mock_client):
+        """The fallback cannot stop at its first hit: a second spelling on a
+        later page is what makes the name ambiguous."""
+
+        def _list(_path, params):
+            if "name" in params:
+                return _page("conversations", [])
+            if params.get("cursor"):
+                return _page("conversations", _named("conv", "GENERAL"))
+            return _page("conversations", _named("conv", "General"), next_cursor="1")
+
+        mock_client.get.side_effect = _list
+        with pytest.raises(PopcornError, match="matches more than one channel"):
+            resolve_conversation(mock_client, "#general")
+
     def test_a_user_on_a_later_page_resolves(self, mock_client):
         mock_client.get.side_effect = [
             _page("users", [{"id": "u1", "username": "ada"}], next_cursor="1"),
