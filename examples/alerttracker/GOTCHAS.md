@@ -325,9 +325,11 @@ it resolves through the channel's app binding, which only covers flows
 installed as a bound bundle. A bundle installed ad-hoc by `flow import` was an
 unbound, UUID-addressed flow, so its own name never matched.
 
-Fixed client-side: `run_flow` now maps a non-UUID ref through `flow list`
-before calling the API, and passes an unmatched name through untouched so the
-server's channel_app resolution still works.
+The first fix was client-side: `run_flow` mapped a non-UUID ref through
+`flow list` before calling the API. That lookup has since been removed. With
+`flow import` gone, every flow on a channel is a bound bundle flow, and
+`flow list` reports such a flow's name as its `id`. So the name `flow run` is
+given is already what the server resolves.
 
 Separately, `flow run` did not supply `conversation_id`, so a flow declaring
 it started fine and then died at runtime with
