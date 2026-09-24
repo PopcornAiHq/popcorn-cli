@@ -580,6 +580,8 @@ class TestFlows:
             },
             params={"conversation_id": "conv-1"},
         )
+        # A flow's name is its id on the wire, so a run needs no lookup first.
+        mock_client.get.assert_not_called()
 
     def test_run_flow_with_inputs(self, mock_client):
         mock_client.post.return_value = {"workflow_id": "wf-1"}
