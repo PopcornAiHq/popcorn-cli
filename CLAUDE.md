@@ -147,10 +147,11 @@ schemas, which are the server's to own and would rot here exactly as the guide
 says.
 
 The line is *catalog vs grammar*. It must know the DSL's shape — a step is one
-of `activity`/`sleep_seconds`/`await_approval`/`steps`, a block's inner ids are
-private, `$trigger` is a closed key set, `collect:` publishes a second name —
-because without that it cannot tell a reference from a typo. It must not know
-what `foundation.store.upsert_rows` takes.
+of the served `STEP_ACTIONS`, a block's inner ids are private, `$trigger` is a
+closed key set, `collect:` publishes a second name — because without that it
+cannot tell a reference from a typo. It must not know what
+`foundation.store.upsert_rows` takes; which of its args carry column names is
+served, in `flow_rules.ACTIVITY_ROLES`, and read from there.
 
 **The shape is generated, not authored.** `src/popcorn_core/flow_rules.py` is a
 snapshot of `GET /customer-flows/schema`, written by
@@ -192,6 +193,20 @@ block to carry. The rule also makes a `.yaml` under a block block source rather
 than a lost flow.
 The two findings it adds — `code-file-outside-block` and
 `code-block-name-invalid` — are paths `app publish` refuses outright.
+
+**Agents are a fourth** (`agents/<name>/agent.yaml`, `prompt.md`,
+`schemas/*.json`). The checker only stops misreading them — as flows with no
+steps, nested flows, and basename collisions between every pair of agents. It
+adds no finding of its own for them; `app publish` does not yet send `agents/`,
+which `path-not-published` reports truthfully.
+
+**Activity roles are served too** (`ACTIVITY_ROLES`, `STEP_ERROR_PROPERTIES`).
+The column checks key off each activity's served `column_args` and the
+output-schema check off its `output_schema_arg`. The hand-written lists these
+replaced named activities the platform never had, so their checks never fired,
+and missed an activity taking its schema under `schema`. The generator refuses
+a role vocabulary (`holds`, `side`) it does not list, because a new value would
+otherwise match nothing and read as clean.
 
 A hidden entry below a block (`code/calc/.env`) gets the tree refused too, but
 `_collect_files` drops every dotted path before the check runs, and

@@ -18,12 +18,13 @@ were live failures while the alerttracker bundle was written; see
 `examples/alerttracker/GOTCHAS.md`.
 
 To answer any of that it has to model the DSL's SHAPE — which is not the same as
-modelling its catalog. It knows that a step is exactly one of `activity`,
-`sleep_seconds`, `await_approval` or a nested `steps:` block; that a block's
+modelling its catalog. It knows that a step is exactly one of the served step
+actions (`activity`, a nested `steps:` block, …); that a block's
 inner ids are private and only its `outputs:` keys escape; that `collect:`
 publishes a second readable name beside `output`; that a numeric path segment is
 an array index; that `$trigger` carries a closed set of keys. It does not know
-what any activity takes or returns, which is the server's to own.
+what any activity takes or returns, which is the server's to own — only the
+served role tags saying which args carry column names or a result schema.
 
 Every one of those rules it READS rather than restates. They come from
 `popcorn_core.flow_rules`, a snapshot of `GET /customer-flows/schema`
@@ -96,14 +97,7 @@ _REF_RE = re.compile(flow_rules.REFERENCE_PATTERN)
 # `$steps.<id>.error` and null when the step did not fail. Every step carries
 # it, so unlike `output` and a `collect:` name there is nothing per-step to
 # consult. Both properties are strings, so nothing is reachable below them.
-# Mirrors the shape the server's DSL validator accepts here.
-#
-# Hand-authored, which is the bug this was added for: the served schema carries
-# the reference grammar but not the per-step head rule, so `make check-rules`
-# cannot see a head the server adds. Moving the head list into the served
-# payload would close that gap; until it does, this list is maintained by hand.
-_STEP_ERROR_PROPERTIES = ("message", "type")
-
+_STEP_ERROR_PROPERTIES = flow_rules.STEP_ERROR_PROPERTIES
 
 # `$channel` keys the interpreter seeds itself, so the manifest never declares
 # them: the connected-integrations map and the same integrations as a list to
@@ -119,28 +113,29 @@ _QUOTED_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
 _EMBEDDED_REF_RE = re.compile(r"\$[A-Za-z_][A-Za-z0-9_.]*")
 
 
-# Activities whose args name a table and carry column names as keys.
-_WRITE_ACTIVITIES = {
-    "foundation.store.upsert_rows": "rows",
-    "foundation.store.insert_rows": "rows",
-    "foundation.store.patch_row": "patch",
-}
-_READ_ACTIVITIES = frozenset(
-    {
-        "foundation.store.list_rows",
-        "foundation.store.get_row",
-        "foundation.store.delete_row",
-    }
-)
+# The served role vocabulary. `scripts/sync_flow_rules.py` refuses a payload
+# carrying any other `holds` or `side`, so these are every value that can reach
+# the checker, not a guess at them.
+_COLUMN_KEYS = "column_keys"  # a mapping keyed by column, or a list of them
+_WRITE = "write"  # the column lands in the table; `read` only selects
 
-# Activities that declare their result shape at the call site, making
-# `$steps.<id>.output.<prop>` statically checkable.
-_SCHEMA_ACTIVITIES = frozenset(
-    {
-        "foundation.agent.transform",
-        "foundation.fields.extract",
-    }
-)
+# Activity -> the args carrying its table's column names, as served. A step's
+# column references are checked only through these: the store accepts an
+# undeclared column silently, so nothing downstream would ever report one.
+_COLUMN_ARGS: dict[str, tuple[dict[str, str], ...]] = {
+    name: tuple(role["column_args"])
+    for name, role in flow_rules.ACTIVITY_ROLES.items()
+    if role["column_args"]
+}
+
+# Activity -> the arg its result shape is declared in at the call site, which
+# is what makes `$steps.<id>.output.<prop>` statically checkable. The arg name
+# is served rather than assumed: one activity takes it as `schema`.
+_OUTPUT_SCHEMA_ARGS: dict[str, str] = {
+    name: role["output_schema_arg"]
+    for name, role in flow_rules.ACTIVITY_ROLES.items()
+    if role["output_schema_arg"]
+}
 
 
 @dataclass(frozen=True)
@@ -171,6 +166,15 @@ class Flow:
 
 
 @dataclass(frozen=True)
+class _OutputSchema:
+    """A step's call-site result schema: the arg it came in, and its keys."""
+
+    arg: str
+    properties: set[str]
+    required: set[str]
+
+
+@dataclass(frozen=True)
 class _StepInfo:
     """What a completed step publishes, from the reader's point of view.
 
@@ -180,7 +184,7 @@ class _StepInfo:
     """
 
     collect: str | None = None
-    schema: dict[str, set[str]] | None = None
+    schema: _OutputSchema | None = None
     published: set[str] | None = None
 
 
@@ -330,7 +334,7 @@ class _Checker:
         runner's convention requires each of them to carry `main.py`.
         """
         rel = path.relative_to(self.dir)
-        if _under_code_dir(rel):
+        if _under_code_dir(rel) or _is_agent_file(rel):
             return str(rel)
         if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
             return f"{rel.parts[0]}/{path.name}"
@@ -401,6 +405,9 @@ class _Checker:
             # A `.yaml` under a code block is block source — a fixture the
             # block reads — not a flow the registry failed to find.
             if _under_code_dir(rel):
+                continue
+            # Likewise an agent's own definition: never read as a flow.
+            if _is_agent_file(rel):
                 continue
             self.warn(
                 "nested-flow-file",
@@ -777,8 +784,9 @@ class _Checker:
             rel = path.relative_to(self.dir)
             if path.name in RESERVED_FILENAMES:
                 continue
-            # Same reason as in `_check_nesting`: block source, not a flow.
-            if _under_code_dir(rel):
+            # Same reason as in `_check_nesting`: block source or an agent
+            # definition, not a flow.
+            if _under_code_dir(rel) or _is_agent_file(rel):
                 continue
             if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
                 continue
@@ -904,6 +912,13 @@ class _Checker:
                 for path, value in _walk_strings(step["args"], "args"):
                     self._check_value(value, f"{where}.{path}", inner)
 
+            # A `call_flow:` step hands its child `inputs` by reference, which
+            # resolve in the parent exactly as `args` do, foreach alias included.
+            # Unwalked, a typo there checks clean and fails the run instead.
+            if "call_flow" in step:
+                for path, value in _walk_strings(step["call_flow"], "call_flow"):
+                    self._check_value(value, f"{where}.{path}", inner)
+
             block = step.get("steps")
             published: set[str] | None = None
             if isinstance(block, list):
@@ -968,26 +983,27 @@ class _Checker:
             self._check_value(value, f"{where}.{path}", after)
         return set(outputs)
 
-    def _step_schema(self, step: dict[str, Any]) -> dict[str, set[str]] | None:
-        """`{"properties": {...}, "required": {...}}` for a call-site schema.
+    def _step_schema(self, step: dict[str, Any]) -> _OutputSchema | None:
+        """The call-site result schema, for an activity that takes one.
 
-        Only activities that declare `output_schema` in their args produce a
+        Only the activities served with an `output_schema_arg` produce a
         statically knowable shape; everything else stays unchecked.
         """
-        if step.get("activity") not in _SCHEMA_ACTIVITIES:
-            return None
+        activity = step.get("activity")
+        arg = _OUTPUT_SCHEMA_ARGS.get(activity) if isinstance(activity, str) else None
         args = step.get("args")
-        if not isinstance(args, dict):
+        if arg is None or not isinstance(args, dict):
             return None
-        schema = args.get("output_schema")
+        schema = args.get(arg)
         if not isinstance(schema, dict):
             return None
         props = schema.get("properties")
         required = schema.get("required")
-        return {
-            "properties": set(props) if isinstance(props, dict) else set(),
-            "required": set(required) if isinstance(required, list) else set(),
-        }
+        return _OutputSchema(
+            arg=arg,
+            properties=set(props) if isinstance(props, dict) else set(),
+            required=set(required) if isinstance(required, list) else set(),
+        )
 
     # ── references ────────────────────────────────────────────────────
 
@@ -1134,20 +1150,20 @@ class _Checker:
             # it against.
             return
         prop = rest[0]
-        if prop not in info.schema["properties"]:
+        if prop not in info.schema.properties:
             self.err(
                 "unknown-output-property",
                 where,
                 f"'{value}' reads '{prop}', which step '{step_id}' does not declare in its "
-                f"output_schema.properties. Declared: "
-                f"{', '.join(sorted(info.schema['properties'])) or '(none)'}.",
+                f"{info.schema.arg}.properties. Declared: "
+                f"{', '.join(sorted(info.schema.properties)) or '(none)'}.",
             )
-        elif prop not in info.schema["required"]:
+        elif prop not in info.schema.required:
             self.err(
                 "output-property-not-required",
                 where,
                 f"'{value}' reads '{prop}', which is declared but NOT in "
-                f"output_schema.required. A declared-but-optional property is genuinely optional, "
+                f"{info.schema.arg}.required. A declared-but-optional property is genuinely optional, "
                 "and a missing key is a hard ReferenceError that fails the run — `on_error` "
                 "cannot rescue it, because resolution precedes invocation. Add it to `required`.",
             )
@@ -1264,7 +1280,8 @@ class _Checker:
         The store accepts undeclared columns silently, producing a column no
         reference can reach, so a write to an unknown column is an error. Reads
         are warnings: a filter may legitimately target a column some other flow
-        created at runtime.
+        created at runtime. Which args carry column names, and on which side of
+        the table, is served (`flow_rules.ACTIVITY_ROLES`) rather than known here.
         """
         activity = step.get("activity")
         args = step.get("args")
@@ -1277,33 +1294,47 @@ class _Checker:
         if columns is None:
             return
 
-        def report(names: Any, level: str, code: str, kind: str) -> None:
+        for column_arg in _COLUMN_ARGS.get(activity, ()):
+            arg, write = column_arg["arg"], column_arg["side"] == _WRITE
+            value = args.get(arg)
+            if column_arg["holds"] == _COLUMN_KEYS:
+                mappings = value if isinstance(value, list) else [value]
+                names = [key for row in mappings if isinstance(row, dict) for key in row]
+            else:
+                names = value if isinstance(value, list) else []
             for name in names:
                 if not isinstance(name, str) or name.startswith("_") or name in columns:
                     continue
-                message = f"{kind} column '{name}' is not declared on table '{table_name}'. " + (
-                    "The store accepts undeclared columns silently, producing a column no "
-                    "$ref can reach."
-                    if level == ERROR
-                    else "A filter on a column that does not exist matches nothing, silently."
-                )
-                getattr(self, "err" if level == ERROR else "warn")(code, where, message)
-
-        write_key = _WRITE_ACTIVITIES.get(activity)
-        if write_key:
-            payload = args.get(write_key)
-            rows = payload if isinstance(payload, list) else [payload]
-            for row in rows:
-                if isinstance(row, dict):
-                    report(row.keys(), ERROR, "undeclared-column", "Written")
-
-        if activity in _READ_ACTIVITIES or write_key:
-            filters = args.get("filter")
-            if isinstance(filters, dict):
-                report(filters.keys(), WARNING, "unknown-filter-column", "Filtered")
-            dropped = args.get("drop_columns")
-            if isinstance(dropped, list):
-                report(dropped, WARNING, "unknown-drop-column", "Dropped")
+                if write and column_arg["holds"] == _COLUMN_KEYS:
+                    self.err(
+                        "undeclared-column",
+                        where,
+                        f"Written column '{name}' is not declared on table '{table_name}'. "
+                        "The store accepts undeclared columns silently, producing a column "
+                        "no $ref can reach.",
+                    )
+                elif write:
+                    self.err(
+                        "undeclared-column",
+                        where,
+                        f"`{arg}` names column '{name}', which table '{table_name}' does not "
+                        "declare. No stored row carries a column the table never declared, "
+                        "so matching on it never finds one: every write adds a row instead "
+                        "of updating the one it was meant to.",
+                    )
+                else:
+                    self.warn(
+                        # Keyed by what the arg holds, which is what the two
+                        # codes have always meant: a filter's keys, a list of
+                        # columns to leave out.
+                        "unknown-filter-column"
+                        if column_arg["holds"] == _COLUMN_KEYS
+                        else "unknown-drop-column",
+                        where,
+                        f"`{arg}` names column '{name}', which is not declared on table "
+                        f"'{table_name}'. A read on a column that does not exist matches "
+                        "nothing, silently.",
+                    )
 
 
 def _ref_parts(match: re.Match[str]) -> list[str]:
@@ -1351,6 +1382,32 @@ def _code_block(rel: Path) -> str | None:
     if not all(re.match(flow_rules.CODE_PATH_SEGMENT_PATTERN, p) for p in parts[2:]):
         return None
     return parts[1]
+
+
+def _is_agent_file(rel: Path) -> bool:
+    """Whether a bundle-relative path is a file the tree reader reads as an agent's.
+
+    `agents/<name>/<one of AGENT_FILENAMES>`, or a schema one level further
+    down under AGENT_SCHEMAS_SUBDIR, with the agent's name held to the same slug
+    rule as a code block's. Each agent carries the same filenames, so without
+    this every bundle with two agents reported a basename collision between
+    their `agent.yaml`s, and each `agent.yaml` as a flow with no steps.
+
+    A path under the agents directory that fails the rule is left to the
+    ordinary checks, which is where it would land in the tree reader too.
+    """
+    parts = rel.parts
+    if len(parts) < 3 or parts[0] != flow_rules.AGENTS_SUBDIR:
+        return False
+    if not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, parts[1]):
+        return False
+    if len(parts) == 3:
+        return parts[2] in flow_rules.AGENT_FILENAMES
+    return (
+        len(parts) == 4
+        and parts[2] == flow_rules.AGENT_SCHEMAS_SUBDIR
+        and parts[3].endswith(flow_rules.AGENT_SCHEMA_SUFFIX)
+    )
 
 
 def _file_key(filename: str) -> str:
