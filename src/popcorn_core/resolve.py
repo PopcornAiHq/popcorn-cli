@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 _channel_cache: dict[str, tuple[str, float]] = {}
 _user_cache: dict[str, tuple[str, float]] = {}
 CHANNEL_CACHE_TTL = 300  # seconds
+# The server rejects a longer `name=`/`query=` outright, and stores no channel
+# name longer than this, so a longer ref is a miss rather than a request.
+_MAX_CHANNEL_NAME = 255
 USER_CACHE_TTL = 300  # seconds
 
 
@@ -95,7 +98,7 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
     # Case-preserved, so the cache cannot answer "#Ops" with a cached "#ops".
     # The server's exact match is case-sensitive too, so the two agree.
     name = ref.lstrip("#")
-    if not name:
+    if not name or len(name) > _MAX_CHANNEL_NAME:
         raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
 
     cached = _cached(_channel_cache, name, CHANNEL_CACHE_TTL)

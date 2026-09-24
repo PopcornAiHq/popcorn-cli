@@ -285,6 +285,14 @@ class TestResolveByName:
             resolve_conversation(mock_client, "#")
         mock_client.get.assert_not_called()
 
+    def test_an_overlong_name_is_not_found_without_asking(self, mock_client):
+        """The server answers an over-long `name=` with a 422, which would turn
+        a miss into a validation error naming a query parameter."""
+        with pytest.raises(PopcornError, match="Channel not found") as excinfo:
+            resolve_conversation(mock_client, "#" + "a" * 256)
+        assert excinfo.value.error_code == "not_found"
+        mock_client.get.assert_not_called()
+
     def test_a_case_variant_is_cached_under_the_spelling_asked(self, mock_client):
         mock_client.get.side_effect = self._server({"id": "conv-001", "name": "General"})
         resolve_conversation(mock_client, "#general")
