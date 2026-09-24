@@ -87,17 +87,6 @@ DEFAULT_ENV: dict[str, str] = {
 }
 
 
-def resolve_env() -> dict[str, str]:
-    """Return environment config, with env var overrides."""
-    return {
-        "api_url": os.environ.get("POPCORN_API_URL", DEFAULT_ENV["api_url"]),
-        "clerk_issuer": os.environ.get("POPCORN_CLERK_ISSUER", DEFAULT_ENV["clerk_issuer"]),
-        "clerk_client_id": os.environ.get(
-            "POPCORN_CLERK_CLIENT_ID", DEFAULT_ENV["clerk_client_id"]
-        ),
-    }
-
-
 def resolve_auth_env(profile: Profile) -> dict[str, str]:
     """Resolve OAuth config for a login with priority: env var > profile > default.
 

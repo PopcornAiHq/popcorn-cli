@@ -32,7 +32,6 @@ _AUTH_ENV_VARS = (
     "POPCORN_CLERK_ISSUER",
     "POPCORN_CLERK_CLIENT_ID",
     "POPCORN_ASSUME_YES",
-    "POPCORN_PROXY_MODE",
 )
 
 
@@ -113,7 +112,6 @@ def test_no_raise_for_empty_token():
 
 
 def test_client_token_rejects_cross_env_token(monkeypatch):
-    monkeypatch.delenv("POPCORN_PROXY_MODE", raising=False)
     profile = Profile(
         api_url="https://api.dev.popcorn.ai",
         clerk_issuer=DEV_ISS,
@@ -126,7 +124,6 @@ def test_client_token_rejects_cross_env_token(monkeypatch):
 
 
 def test_client_token_ok_when_issuer_matches(monkeypatch):
-    monkeypatch.delenv("POPCORN_PROXY_MODE", raising=False)
     tok = _jwt(DEV_ISS)
     profile = Profile(
         api_url="https://api.dev.popcorn.ai",
@@ -200,7 +197,6 @@ def test_login_with_token_rejects_cross_env_token(monkeypatch):
     monkeypatch.setenv("POPCORN_CLERK_ISSUER", DEV_ISS)
     monkeypatch.setenv("POPCORN_CLERK_CLIENT_ID", "dev-client")
     monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
-    monkeypatch.delenv("POPCORN_PROXY_MODE", raising=False)
     args = _login_args(env="dev", with_token=True)
     with (
         patch("popcorn_cli.cli.load_config", return_value=Config()),

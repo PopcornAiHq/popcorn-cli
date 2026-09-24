@@ -894,7 +894,6 @@ class TestChannelParameterRequests:
         patch computed from an earlier read."""
         from popcorn_core.client import APIClient
 
-        monkeypatch.delenv("POPCORN_PROXY_MODE", raising=False)
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:

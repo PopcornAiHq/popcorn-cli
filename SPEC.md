@@ -273,17 +273,6 @@ echo "$POPCORN_TOKEN" | popcorn auth login --with-token
 
 Token is provided via stdin to avoid shell-history exposure. Refresh is automatic on `401`; the CLI uses the stored refresh token without re-prompting.
 
-### Proxy mode (VM sidecar)
-
-```bash
-export POPCORN_PROXY_MODE=1
-export POPCORN_API_URL=http://sidecar:8091/popcorn
-export POPCORN_WORKSPACE_ID=<ws-id>
-export POPCORN_USER_ID=<user-id>
-```
-
-Skips auth entirely — no browser login, no token refresh. Sends `X-Actor-User-ID` and `X-Workspace-ID` instead of `Authorization`.
-
 ### Environment safety (issuer gate)
 
 Environments are profiles selected with `-e/--env`. To prevent a token minted for one environment from being used against another (e.g. a **prod** token silently running `-e dev` commands against production), the CLI enforces two guards:
