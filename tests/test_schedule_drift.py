@@ -150,6 +150,10 @@ class TestClassify:
 
         Served as spreading on a declaration that is `periodic`, and as
         `periodic` on one that spreads; neither may change the verdict.
+
+        The second half is also the accepted blind spot in the module
+        docstring: a spreading declaration over a schedule judged `periodic`
+        accepts whatever minute is armed as the de-peak.
         """
         periodic = classify(
             [{"slug": "daily", "cron": "0 8 * * *"}],

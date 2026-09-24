@@ -33,11 +33,18 @@ read: it is the class the schedule was created with, and a manifest that
 re-declares `class:` over a live schedule does not refresh it, so it says
 nothing about what the manifest declares today.
 
-What this cannot see: a schedule whose manifest re-declared it from `periodic`
-onto a spreading class. The platform keeps judging it by its create-time class,
-so it is armed unspread, its intent agrees, and so does its declared cron —
-nothing on this surface separates it from a schedule whose derived minute
-happens to be the declared one.
+A known blind spot, accepted rather than worked around: the served intent is
+derived under the class a schedule was created with, and under `periodic` it
+is the armed cron verbatim. So when the manifest declares a spreading class
+over a schedule the platform judges `periodic`, this module has only the armed
+cron to go on. Armed at the declared minute reads as clean, and armed at any
+other minute in the declared hour reads as a de-peak, whichever minute it is.
+Two kinds of schedule are in that position: one the manifest re-declared from
+`periodic` onto a spreading class, and one created before schedule classes
+existed, which carries no class and is judged `periodic`. Catching either
+would take deriving the spread minute here, which is the second
+implementation this module exists not to have. The fix belongs on the
+platform, which would have to serve an intent that follows the declared class.
 """
 
 from __future__ import annotations
