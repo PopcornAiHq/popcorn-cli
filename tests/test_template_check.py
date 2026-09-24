@@ -500,6 +500,40 @@ def test_permissive_activity_output_is_not_checked(tmp_path):
     assert check_bundle(root).findings == []
 
 
+def test_an_activity_taking_its_schema_as_schema_is_checked(tmp_path):
+    """`feature.email.extract` declares its result shape under `schema`, not
+    `output_schema`. The arg name is served, so its output references are
+    checked like any other call-site schema — and the finding names the arg
+    the author actually wrote."""
+    flow = json.loads(json.dumps(CLEAN_INTAKE))
+    flow["steps"].insert(
+        1,
+        {
+            "id": "mail",
+            "activity": "feature.email.extract",
+            "args": {
+                "email": "$inputs.payload",
+                "schema": {
+                    "type": "object",
+                    "required": ["subject"],
+                    "properties": {"subject": {"type": "string"}},
+                },
+            },
+        },
+    )
+    flow = mutate(
+        flow,
+        "post",
+        args={"channel_id": "$inputs.conversation_id", "text": "$steps.mail.output.sender"},
+    )
+    report = check_bundle(
+        write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    )
+    [finding] = [f for f in report.findings if f.code == "unknown-output-property"]
+    assert "schema.properties" in finding.message
+    assert "output_schema" not in finding.message
+
+
 # ── when: grammar ─────────────────────────────────────────────────────
 
 
@@ -583,6 +617,33 @@ def test_filter_on_undeclared_column_warns(tmp_path):
     root = write_bundle(tmp_path / "b", flows={"intake": CLEAN_INTAKE, "sweep": flow})
     report = check_bundle(root)
     assert [f.code for f in report.warnings] == ["unknown-filter-column"]
+    assert report.ok
+
+
+def test_merge_on_an_undeclared_column_is_an_error(tmp_path):
+    """A merge key the table does not declare can never match an existing
+    row, so every upsert adds a row instead of merging into one."""
+    flow = json.loads(json.dumps(CLEAN_INTAKE))
+    for step in flow["steps"]:
+        if step["id"] == "upsert":
+            step["args"]["merge_on"] = ["Fingerprnt"]
+    report = check_bundle(
+        write_bundle(tmp_path / "b", flows={"intake": flow, "sweep": CLEAN_SWEEP})
+    )
+    [finding] = [f for f in report.findings if f.code == "undeclared-column"]
+    assert "`merge_on`" in finding.message and "Fingerprnt" in finding.message
+    assert finding.level == "error"
+
+
+def test_drop_columns_on_undeclared_column_warns(tmp_path):
+    flow = json.loads(json.dumps(CLEAN_SWEEP))
+    for step in flow["steps"]:
+        if step["id"] == "stale":
+            step["args"]["drop_columns"] = ["Title", "Nope"]
+    report = check_bundle(
+        write_bundle(tmp_path / "b", flows={"intake": CLEAN_INTAKE, "sweep": flow})
+    )
+    assert [f.code for f in report.warnings] == ["unknown-drop-column"]
     assert report.ok
 
 
@@ -759,8 +820,8 @@ def test_report_serializes_for_json_output(tmp_path):
 
 # ── blocks, and the other step shapes ─────────────────────────────────
 #
-# A step is exactly one of `activity`, `sleep_seconds`, `await_approval` or a
-# nested `steps:` block. Demanding `activity:` made 22 steps across the shipped
+# A step is exactly one of `activity`, `sleep_seconds`, `await_approval`,
+# `call_flow` or a nested `steps:` block. Demanding `activity:` made 22 steps across the shipped
 # backend templates false errors — and, worse, meant nothing inside a block was
 # ever checked at all.
 
@@ -866,7 +927,9 @@ def test_every_over_deep_block_is_reported_not_just_the_first(tmp_path):
     [
         {"id": "wait", "sleep_seconds": 30},
         {"id": "ask", "await_approval": {"prompt": "ok?", "contact_id": "$inputs.conversation_id"}},
+        {"id": "child", "call_flow": {"flow": "waity", "mode": "wait"}},
     ],
+    ids=["sleep_seconds", "await_approval", "call_flow"],
 )
 def test_the_other_actionless_step_shapes_are_legal(tmp_path, step):
     flow = {
@@ -876,6 +939,44 @@ def test_the_other_actionless_step_shapes_are_legal(tmp_path, step):
         "steps": [step],
     }
     root = write_bundle(tmp_path / "b", flows={"waity": flow}, manifest=bare_manifest())
+    assert check_bundle(root).findings == []
+
+
+def _call_flow_flow(ref: str) -> dict[str, Any]:
+    return {
+        "name": "parent",
+        "version": 1,
+        "inputs": {"conversation_id": {"type": "string"}, "cases": {"type": "array"}},
+        "steps": [
+            {
+                "id": "fan",
+                "foreach": "$inputs.cases",
+                "as": "case",
+                "call_flow": {
+                    "flow": "parent",
+                    "mode": "wait",
+                    "inputs": {"conversation_id": "$inputs.conversation_id", "case": ref},
+                },
+            }
+        ],
+    }
+
+
+def test_refs_in_call_flow_inputs_are_checked(tmp_path):
+    """A child's inputs are refs resolved in the parent, so a broken one is a
+    run failure the checker can see before it happens."""
+    root = write_bundle(
+        tmp_path / "b",
+        flows={"parent": _call_flow_flow("$steps.nope.output")},
+        manifest=bare_manifest(),
+    )
+    assert "unknown-step-reference" in codes(root)
+
+
+def test_call_flow_inputs_see_the_foreach_alias(tmp_path):
+    root = write_bundle(
+        tmp_path / "b", flows={"parent": _call_flow_flow("$case")}, manifest=bare_manifest()
+    )
     assert check_bundle(root).findings == []
 
 
@@ -1284,6 +1385,36 @@ def test_a_real_collision_inside_one_block_is_still_reported(tmp_path):
     write_code(root, {"code/calc/main.py": "print(1)\n"})
     (root / "main.py").write_text("print(3)\n")
     assert "basename-collision" not in codes(root)
+
+
+# ── agents ────────────────────────────────────────────────────────────
+
+
+def test_agent_definitions_are_not_flows_and_do_not_collide(tmp_path):
+    """Every agent directory holds the same filenames. Read as flows, each
+    `agent.yaml` was a flow with no steps, a nested flow file, and — with two
+    agents — a basename collision; none of those is what the platform does
+    with them."""
+    root = write_bundle(tmp_path / "b")
+    for name in ("reader", "writer"):
+        agent = root / "agents" / name
+        (agent / "schemas").mkdir(parents=True)
+        (agent / "agent.yaml").write_text(yaml.safe_dump({"model": "default"}))
+        (agent / "prompt.md").write_text("You read.\n")
+        (agent / "schemas" / "result.json").write_text("{}")
+    report = check_bundle(root)
+    flagged = {f.code for f in report.findings if f.where != "agents/"}
+    assert flagged == set(), [str(f) for f in report.findings]
+    assert {f.name for f in report.flows} == {"intake", "sweep"}
+
+
+def test_a_yaml_outside_the_agent_layout_is_still_checked(tmp_path):
+    """Only the served layout is exempt; a stray file under `agents/` keeps
+    the ordinary findings, since the tree reader does not read it either."""
+    root = write_bundle(tmp_path / "b")
+    (root / "agents" / "reader").mkdir(parents=True)
+    (root / "agents" / "reader" / "notes.yaml").write_text(yaml.safe_dump({"a": 1}))
+    assert "yaml-is-not-a-flow" in codes(root)
 
 
 # ── the checkout baseline ─────────────────────────────────────────────

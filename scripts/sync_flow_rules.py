@@ -75,6 +75,12 @@ class _Field:
     name: str
     source: tuple[str, ...]
     comment: str
+    # Rendered before `=`. Only a nested value needs one: mypy infers a mixed
+    # dict literal as `dict[str, object]`, which no consumer can index.
+    annotation: str = ""
+    # Validates a structured value beyond the list-of-strings rule every flat
+    # field gets. Raises ValueError naming what it cannot read.
+    check: Callable[[Any], None] | None = None
 
 
 _FIELDS: tuple[_Field, ...] = (
@@ -90,8 +96,8 @@ _FIELDS: tuple[_Field, ...] = (
         ("step_actions",),
         "The mutually exclusive actions a step may carry. Exclusivity lives in a model\n"
         "validator, so `flow_schema` cannot express it — a client reading only the JSON\n"
-        "Schema would conclude a step may set all four. Order is the order the server's\n"
-        "own error message lists them in.",
+        "Schema would conclude a step may set every one of them. Order is the order the\n"
+        "server's own error message lists them in.",
     ),
     _Field(
         "REFERENCE_PATTERN",
@@ -114,6 +120,27 @@ _FIELDS: tuple[_Field, ...] = (
         "it is checkable — unlike `$channel`, whose keys come from a per-channel config\n"
         "the bundle cannot see. Every key is always present; one that does not apply to\n"
         "a run's trigger kind carries null.",
+    ),
+    _Field(
+        "STEP_ERROR_PROPERTIES",
+        ("step_error_properties",),
+        "What `$steps.<id>.error` carries. Every step has the key, null unless the step\n"
+        "failed and `on_error: {policy: skip}` absorbed the failure. Each property is a\n"
+        "string, so nothing is reachable below one.",
+    ),
+    _Field(
+        "ACTIVITY_ROLES",
+        ("activity_roles",),
+        "Wire name -> what the activity does to its table's rows and to its own output.\n"
+        "`column_args` lists each arg whose literal value names the table's columns:\n"
+        "`holds` is `column_keys` for a mapping keyed by column (or a list of such\n"
+        "mappings) and `column_names` for a list of columns; `side` is `write` when the\n"
+        "column lands in the table and `read` when it only selects. `output_schema_arg`\n"
+        "names the arg carrying an inline JSON Schema for the step's output, or is None\n"
+        "when the output shape is fixed. An activity absent here declares no role, which\n"
+        "is not a claim that it touches no rows.",
+        annotation="dict[str, dict[str, Any]]",
+        check=lambda value: _check_roles(value),
     ),
     # ── the importer's file rules ────────────────────────────────────
     _Field(
@@ -197,6 +224,29 @@ _FIELDS: tuple[_Field, ...] = (
         "rather than block source, and publish refuses the tree carrying it.",
     ),
     _Field(
+        "AGENTS_SUBDIR",
+        ("bundle", "agents_subdir"),
+        "Directory holding the app's agents, one directory per agent, named by the same\n"
+        "slug rule as a code block (CODE_BLOCK_NAME_PATTERN). A FOURTH classification:\n"
+        "its files are agent definitions, never flows, and keep their whole path.",
+    ),
+    _Field(
+        "AGENT_FILENAMES",
+        ("bundle", "agent_filenames"),
+        "The files an agent directory may hold directly: `agents/<name>/<one of these>`.",
+    ),
+    _Field(
+        "AGENT_SCHEMAS_SUBDIR",
+        ("bundle", "agent_schemas_subdir"),
+        "The one directory inside an agent's directory, holding its JSON schemas:\n"
+        "`agents/<name>/<this>/<file><AGENT_SCHEMA_SUFFIX>`.",
+    ),
+    _Field(
+        "AGENT_SCHEMA_SUFFIX",
+        ("bundle", "agent_schema_suffix"),
+        "The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.",
+    ),
+    _Field(
         "MAX_ENTRY_BYTES",
         ("bundle", "max_entry_bytes"),
         "The zip reader's per-entry cap. The one value here that is not about\n"
@@ -223,10 +273,12 @@ The endpoint's `flow_schema` is deliberately absent. See the script.
 """
 
 from __future__ import annotations
+
+from typing import Any
 '''
 
 
-def _lit(value: Any) -> str:
+def _lit(value: Any, depth: int = 0) -> str:
     """A Python literal for one payload value, formatted as ruff would.
 
     Strings go through `json.dumps` for the double quotes and correct
@@ -234,11 +286,16 @@ def _lit(value: Any) -> str:
     `repr` would emit single quotes the formatter then rewrites, so
     `ruff format --check` would fail on a freshly generated file.
 
-    A list becomes a tuple, always exploded with a trailing comma. The
-    trailing comma is load-bearing: ruff keeps a magic-trailing-comma
-    collection expanded, so the rendered form is stable under the formatter
-    regardless of how long the values are.
+    A list becomes a tuple and a dict stays a dict, both always exploded with
+    a trailing comma, nested at four spaces per `depth`. The trailing comma is
+    load-bearing: ruff keeps a magic-trailing-comma collection expanded, so
+    the rendered form is stable under the formatter regardless of how long
+    the values are. An empty list renders `()`, which ruff leaves alone.
+    Dict order is the payload's, which keeps the render a pure function of it.
     """
+    pad, close = "    " * (depth + 1), "    " * depth
+    if value is None:
+        return "None"
     if isinstance(value, bool):
         return "True" if value else "False"
     if isinstance(value, int):
@@ -246,9 +303,61 @@ def _lit(value: Any) -> str:
     if isinstance(value, str):
         return json.dumps(value)
     if isinstance(value, list):
-        items = "".join(f"    {json.dumps(item)},\n" for item in value)
-        return f"(\n{items})"
+        if not value:
+            return "()"
+        items = "".join(f"{pad}{_lit(item, depth + 1)},\n" for item in value)
+        return f"(\n{items}{close})"
+    if isinstance(value, dict):
+        if not value:
+            return "{}"
+        items = "".join(
+            f"{pad}{json.dumps(key)}: {_lit(item, depth + 1)},\n" for key, item in value.items()
+        )
+        return f"{{\n{items}{close}}}"
     raise TypeError(f"no literal for {type(value).__name__}")
+
+
+# The role vocabulary `template check` knows how to apply. Anything else is a
+# refusal, not a pass-through: a new `holds` or `side` would otherwise reach the
+# checker as a value it silently matches against nothing.
+ROLE_KEYS = frozenset({"writes_rows", "reads_rows", "column_args", "output_schema_arg"})
+COLUMN_ARG_KEYS = frozenset({"arg", "holds", "side"})
+HOLDS = frozenset({"column_keys", "column_names"})
+SIDES = frozenset({"write", "read"})
+
+
+def _check_roles(roles: Any) -> None:
+    """Refuse an `activity_roles` value the checker could not read exactly."""
+    if not isinstance(roles, dict):
+        raise ValueError("activity_roles is not a mapping")
+    for name, role in roles.items():
+        if not isinstance(role, dict) or set(role) != ROLE_KEYS:
+            got = sorted(role) if isinstance(role, dict) else type(role).__name__
+            raise ValueError(
+                f"activity_roles.{name} carries {got}, not {sorted(ROLE_KEYS)}. Decide "
+                "whether `template check` consumes the change, then teach this script it."
+            )
+        if not isinstance(role["writes_rows"], bool) or not isinstance(role["reads_rows"], bool):
+            raise ValueError(f"activity_roles.{name}: writes_rows/reads_rows are not booleans")
+        if role["output_schema_arg"] is not None and not isinstance(role["output_schema_arg"], str):
+            raise ValueError(f"activity_roles.{name}.output_schema_arg is not a string or null")
+        if not isinstance(role["column_args"], list):
+            raise ValueError(f"activity_roles.{name}.column_args is not a list")
+        for column_arg in role["column_args"]:
+            if not isinstance(column_arg, dict) or set(column_arg) != COLUMN_ARG_KEYS:
+                raise ValueError(
+                    f"activity_roles.{name}.column_args holds {column_arg!r}, not an entry "
+                    f"with exactly {sorted(COLUMN_ARG_KEYS)}"
+                )
+            if not isinstance(column_arg["arg"], str):
+                raise ValueError(f"activity_roles.{name}.column_args has a non-string arg")
+            if column_arg["holds"] not in HOLDS or column_arg["side"] not in SIDES:
+                raise ValueError(
+                    f"activity_roles.{name}.column_args.{column_arg['arg']} is "
+                    f"holds={column_arg['holds']!r}, side={column_arg['side']!r}; "
+                    f"`template check` reads holds in {sorted(HOLDS)} and side in "
+                    f"{sorted(SIDES)} only."
+                )
 
 
 def _resolve(payload: dict[str, Any], source: tuple[str, ...]) -> Any:
@@ -293,7 +402,9 @@ def _check_shape(payload: dict[str, Any]) -> None:
                 f"the endpoint no longer serves {exc.args[0]}, which `template check` "
                 f"reads as {field.name}"
             ) from exc
-        if isinstance(value, list) and not all(isinstance(item, str) for item in value):
+        if field.check is not None:
+            field.check(value)
+        elif isinstance(value, list) and not all(isinstance(item, str) for item in value):
             raise ValueError(f"{'.'.join(field.source)} is not a list of strings")
 
 
@@ -309,7 +420,8 @@ def render(payload: dict[str, Any]) -> str:
     parts = [_HEADER]
     for field in _FIELDS:
         comment = "\n".join(f"# {line}" for line in field.comment.split("\n"))
-        parts.append(f"{comment}\n{field.name} = {_lit(_resolve(payload, field.source))}\n")
+        target = f"{field.name}: {field.annotation}" if field.annotation else field.name
+        parts.append(f"{comment}\n{target} = {_lit(_resolve(payload, field.source))}\n")
     return "\n".join(parts)
 
 
