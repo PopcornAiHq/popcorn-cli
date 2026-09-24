@@ -1403,9 +1403,27 @@ def test_agent_definitions_are_not_flows_and_do_not_collide(tmp_path):
         (agent / "prompt.md").write_text("You read.\n")
         (agent / "schemas" / "result.json").write_text("{}")
     report = check_bundle(root)
-    flagged = {f.code for f in report.findings if f.where != "agents/"}
-    assert flagged == set(), [str(f) for f in report.findings]
+    # No carve-out for `agents/` any more: `app publish` sends these files,
+    # so `path-not-published` warning about them would be false.
+    assert report.findings == [], [str(f) for f in report.findings]
     assert {f.name for f in report.flows} == {"intake", "sweep"}
+
+
+def test_a_path_outside_the_agent_layout_is_not_published(tmp_path):
+    """`app publish` leaves anything else under `agents/` behind, so the
+    checker still says so — once per path, naming the layout it expected."""
+    root = write_bundle(tmp_path / "b")
+    agent = root / "agents" / "reader"
+    agent.mkdir(parents=True)
+    (agent / "prompt.md").write_text("You read.\n")
+    (agent / "notes.md").write_text("scratch\n")
+    (root / "agents" / "Bad Name").mkdir()
+    (root / "agents" / "Bad Name" / "prompt.md").write_text("x\n")
+    unpublished = {
+        f.where: f.message for f in check_bundle(root).findings if f.code == "path-not-published"
+    }
+    assert set(unpublished) == {"agents/reader/notes.md", "agents/Bad Name/"}
+    assert "agents/<name>/ holding agent.yaml, prompt.md" in unpublished["agents/reader/notes.md"]
 
 
 def test_a_yaml_outside_the_agent_layout_is_still_checked(tmp_path):

@@ -817,7 +817,7 @@ class TestFlowValidate:
     ):
         (tmp_path / "a.yaml").write_text("name: flow_a\n")
         (tmp_path / "b.yml").write_text("name: flow_b\n")
-        # Reserved: a manifest is not a flow. flow import --dry-run checks it.
+        # Reserved: a manifest is not a flow; `template check` owns it.
         (tmp_path / "manifest.yaml").write_text("name: manifest_should_be_skipped\n")
         (tmp_path / "config.yaml").write_text("name: config_should_be_skipped\n")
         (tmp_path / "strings.yaml").write_text("name: strings_should_be_skipped\n")
@@ -868,63 +868,6 @@ class TestFlowValidate:
         assert payload["ok"] is True
         assert payload["data"]["invalid"] == 0
         assert payload["data"]["results"][0]["file"] == str(f)
-
-
-class TestFlowImportIsFenced:
-    """`flow import` is removed, and the removal has to be a *message*.
-
-    The endpoint it posted to is gone server-side, so the honest
-    outcomes were a 404 carrying no explanation, or — had the subcommand been
-    deleted — an argparse "invalid choice". Neither tells an author where
-    installs moved to. So the subcommand stays registered and fails with the
-    real path.
-    """
-
-    def test_the_subcommand_still_parses(self, parser):
-        """Someone with the old command in a script must reach the message,
-        not an argparse error about `import` not existing."""
-        args = parser.parse_args(["flow", "import", "./bundle", "--channel", "#ops", "--dry-run"])
-        assert args.flow_command == "import"
-        assert args.directory == "./bundle"
-
-    def _err(self, monkeypatch, capsys, argv_extra=()):
-        with pytest.raises(SystemExit) as exc:
-            TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "import", "./bundle", "--channel", "#ops", *argv_extra]
-            )
-        return exc.value.code, capsys.readouterr()
-
-    def test_it_exits_non_zero(self, monkeypatch, capsys):
-        code, _ = self._err(monkeypatch, capsys)
-        assert code != 0
-
-    def test_the_message_names_where_installs_actually_happen(self, monkeypatch, capsys):
-        """The whole point of the fence. A bare failure is what the 404 already
-        gave us — the message has to carry the replacement path."""
-        _, out = self._err(monkeypatch, capsys)
-        text = out.out + out.err
-        assert "bundle registry" in text, "no pointer to the server-side registry"
-        assert "channel create" in text, "no pointer to how installs happen now"
-        assert "template check" in text, "no pointer to what still works offline"
-
-    def test_dry_run_is_fenced_too(self, monkeypatch, capsys):
-        """--dry-run was the *recommended* first step, so it is the spelling an
-        author is most likely to have in muscle memory."""
-        code, out = self._err(monkeypatch, capsys, ("--dry-run",))
-        assert code != 0
-        assert "channel create" in (out.out + out.err)
-
-    def test_it_never_builds_a_client(self, monkeypatch, capsys):
-        """The endpoint is gone for everyone, so needing a login to be told so
-        would be its own dead end."""
-        from popcorn_cli import cli
-
-        def boom(*a, **k):  # pragma: no cover - must not be reached
-            raise AssertionError("built an API client for a removed command")
-
-        monkeypatch.setattr(cli, "_get_client", boom)
-        code, _ = self._err(monkeypatch, capsys)
-        assert code != 0
 
 
 class TestArgumentAliases:

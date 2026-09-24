@@ -14,9 +14,9 @@ query filters on `Status: firing`.
 ## Install
 
 **Not installable as it stands.** These bundles are reference material, not
-registry entries — `popcorn flow import` is gone and nothing installs a local
-directory (see `docs/TEMPLATE_AUTHORING.md` §2). Installable templates are a
-fixed set published to the server's bundle registry, so running this one means
+registry entries — nothing installs a local directory (see
+`docs/TEMPLATE_AUTHORING.md` §2). Installable templates are a fixed set
+published to the server's bundle registry, so running this one means
 getting it into that registry first. Once it is published:
 
 ```bash

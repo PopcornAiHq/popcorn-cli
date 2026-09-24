@@ -57,7 +57,7 @@ from typing import Any
 
 from popcorn_core import flow_rules
 from popcorn_core.app_checkout import changelog_of, read_baseline, semver_key
-from popcorn_core.app_publish import ignored_paths
+from popcorn_core.app_publish import AGENT_LAYOUT, ignored_paths, is_agent_path
 
 ERROR = "error"
 WARNING = "warning"
@@ -731,7 +731,8 @@ class _Checker:
                 "leaves it behind — it stays in your working copy and never reaches the "
                 "channel. Flows are root-level <name>.yaml; prompts and templates go "
                 "exactly one level under prompts/ or templates/; block source goes under "
-                "code/<block>/. Anything else belongs outside the bundle directory.",
+                f"{flow_rules.CODE_SUBDIR}/<block>/; an agent is {AGENT_LAYOUT}. "
+                "Anything else belongs outside the bundle directory.",
             )
 
     def _check_scalar_collisions(self) -> None:
@@ -1387,27 +1388,16 @@ def _code_block(rel: Path) -> str | None:
 def _is_agent_file(rel: Path) -> bool:
     """Whether a bundle-relative path is a file the tree reader reads as an agent's.
 
-    `agents/<name>/<one of AGENT_FILENAMES>`, or a schema one level further
-    down under AGENT_SCHEMAS_SUBDIR, with the agent's name held to the same slug
-    rule as a code block's. Each agent carries the same filenames, so without
-    this every bundle with two agents reported a basename collision between
-    their `agent.yaml`s, and each `agent.yaml` as a flow with no steps.
+    Each agent carries the same filenames, so without this every bundle with
+    two agents reported a basename collision between their `agent.yaml`s, and
+    each `agent.yaml` as a flow with no steps. The rule itself is
+    `app_publish.is_agent_path`, so the checker and the publisher cannot
+    disagree about which files are an agent's.
 
     A path under the agents directory that fails the rule is left to the
     ordinary checks, which is where it would land in the tree reader too.
     """
-    parts = rel.parts
-    if len(parts) < 3 or parts[0] != flow_rules.AGENTS_SUBDIR:
-        return False
-    if not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, parts[1]):
-        return False
-    if len(parts) == 3:
-        return parts[2] in flow_rules.AGENT_FILENAMES
-    return (
-        len(parts) == 4
-        and parts[2] == flow_rules.AGENT_SCHEMAS_SUBDIR
-        and parts[3].endswith(flow_rules.AGENT_SCHEMA_SUFFIX)
-    )
+    return is_agent_path(rel.parts)
 
 
 def _file_key(filename: str) -> str:

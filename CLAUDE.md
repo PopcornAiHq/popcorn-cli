@@ -108,7 +108,6 @@ platform rather than this CLI, which is why it does not live here. Its §2 is th
 needs a server-side registration plus a deploy, neither of which the CLI can
 do, but **editing** one is a pure CLI loop (`app fork` → `checkout` →
 `publish`) with no deploy in it.
-`popcorn flow import` is gone and neither path replaces it.
 
 Two bundles back the guide's §6 contrast. **They are checker fixtures, not
 reference templates** — they live under `tests/fixtures/bundles/` and are not
@@ -197,8 +196,13 @@ The two findings it adds — `code-file-outside-block` and
 **Agents are a fourth** (`agents/<name>/agent.yaml`, `prompt.md`,
 `schemas/*.json`). The checker only stops misreading them — as flows with no
 steps, nested flows, and basename collisions between every pair of agents. It
-adds no finding of its own for them; `app publish` does not yet send `agents/`,
-which `path-not-published` reports truthfully.
+adds no finding of its own for them. `app publish` sends exactly the served
+layout (`app_publish.is_agent_path`, which the checker also calls), and
+anything else under `agents/` is filtered and reported as ignored, which
+`path-not-published` repeats. Filtered rather than collected-for-refusal the
+way `code/` is, because a half-formed agent cannot slip through: the server
+parses every agent directory at publish and refuses one missing its required
+files.
 
 **Activity roles are served too** (`ACTIVITY_ROLES`, `STEP_ERROR_PROPERTIES`).
 The column checks key off each activity's served `column_args` and the
@@ -394,6 +398,7 @@ This CLI is designed to be consumed by LLM agents as well as humans. Treat the f
 - **Schema discovery:** `popcorn commands --json` emits the full schema including `exit_codes`, `error_codes`, `envelope`, `agent_mode`, `global_flags`, and every command's arg types. Update this when adding agent-facing surface (`cmd_commands` in `cli.py`).
 - **Confirmation prompts:** interactive confirmations go through `_confirm(args, prompt)` in `cli.py`. It honors `--yes`/`-y` and `POPCORN_ASSUME_YES=1`, and **fails loudly** (raises `PopcornError`) in non-TTY mode otherwise — never silently no-op or hang. When adding a destructive op that needs confirmation, use `_confirm`, not `input()`.
   - `_confirm_force(args, prompt)` is the same rule keyed on `--force` instead, for an op that destroys work the caller may be the only holder of (`app checkout` over a non-empty directory). `-y` deliberately does **not** answer it: agents and scripts pass it by reflex and cannot notice what was lost. A prompt is one or the other, never both.
+  - `app publish` confirms through `_confirm`, plus one rule of its own: in agent mode (`POPCORN_AGENT`) it is refused without `--yes` even on a TTY, and that refusal — like the non-TTY one — happens before any request. A publish reaches every channel on the fork line, and no server guard asks whether that was meant.
 - **`api --data` body sources:** `_resolve_data_arg` accepts literal JSON, `@-` (stdin), or `@path` (file), matching `curl` and `gh api`. Agents piping large payloads should use `@-`.
 - **Streaming (`--watch`):** goes through `_json_line` (not `_json_ok`) — one NDJSON envelope per line, no pretty-printing, flushed every write. Same `_strip_leaked_ok` applies. `_json_ok` / `_json_line` are the two allowed JSON-output paths; don't hand-roll envelopes.
 - **Pagination:** paginated commands include `data.pagination.next` — a dict of CLI flag→value pairs the agent feeds back to the same command for the next page, or `null` when no more. Use `_attach_pagination(data, next_flags)` to emit the field. Applied to `message list` (cursor-based, `has_more`), `message search` (offset-based, `has_more`), `message threads` and `workspace inbox` (offset-based, heuristic `len == limit` — worst case the agent fetches one empty page). `webhook deliveries` is deferred until the API exposes a reliable cursor.

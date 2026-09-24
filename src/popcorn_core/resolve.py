@@ -39,14 +39,57 @@ def _cached(cache: dict[str, tuple[str, float]], key: str, ttl: float) -> str | 
     return value if time.time() - cached_at < ttl else None
 
 
-def _ambiguous(ref: str, matches: dict[str, dict[str, Any]]) -> PopcornError:
-    spellings = sorted(
-        f"#{conv.get('name') or '?'} ({conv_id})" for conv_id, conv in matches.items()
-    )
+def _describe(conv_id: str, conv: dict[str, Any], profile: Any) -> str:
+    """One candidate, with whatever tells it apart from a same-named one.
+
+    The workspace is the usual difference — a shared-in channel keeps its
+    home workspace's id — but only the caller's own workspace has a name the
+    CLI knows, so any other is shown by id.
+    """
+    details: list[str] = []
+    ws_id = conv.get("workspace_id")
+    if ws_id:
+        current = getattr(profile, "workspace_id", None)
+        if current and str(ws_id) == str(current):
+            ws_name = getattr(profile, "workspace_name", "") or ""
+            details.append(f"this workspace ({ws_name})" if ws_name else "this workspace")
+        else:
+            details.append(f"workspace {ws_id}")
+    if conv.get("type"):
+        details.append(str(conv["type"]))
+    if conv.get("is_archived"):
+        details.append("archived")
+    suffix = f" — {', '.join(details)}" if details else ""
+    return f"#{conv.get('name') or '?'} ({conv_id}){suffix}"
+
+
+def _ambiguous(client: APIClient, ref: str, matches: dict[str, dict[str, Any]]) -> PopcornError:
+    """The error for a name that answers to several channels, with a way out.
+
+    The id is the hint that always works: it is unique and never changes.
+    The exact name only helps when the candidates differ in case. Switching
+    `--workspace` is deliberately not suggested — the listing is every
+    channel the caller is a member of in any workspace, so it would return
+    the same candidates.
+    """
+    profile = getattr(client, "profile", None)
+    candidates = sorted(_describe(conv_id, conv, profile) for conv_id, conv in matches.items())
+    names = [conv.get("name") or "" for conv in matches.values()]
+    if len(set(names)) == len(names):
+        hint = (
+            "channel names are case-sensitive: pass the exact name, or one of the ids "
+            "above in its place (an id is unique and never changes)"
+        )
+    else:
+        hint = (
+            "pass one of the ids above in place of the name (an id is unique and never "
+            "changes); --workspace will not narrow it, since the lookup covers every "
+            "channel you are a member of in any workspace"
+        )
     return PopcornError(
-        f"'{ref}' matches more than one channel: {', '.join(spellings)}.\n"
-        "   Channel names are case-sensitive — pass the exact name or the id instead.",
+        f"'{ref}' matches more than one channel:\n" + "\n".join(f"   {c}" for c in candidates),
         error_code=ERROR_CODE_VALIDATION,
+        hint=hint,
     )
 
 
@@ -115,7 +158,7 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
         client, {**visibility, "name": name}, lambda n: n == name, stop_on_match=True
     )
     if len(matches) > 1:
-        raise _ambiguous(ref, matches)
+        raise _ambiguous(client, ref, matches)
 
     if not matches:
         # A case variant is only decidable over every match, so this one reads
@@ -130,7 +173,7 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
         if not matches:
             raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
         if len(matches) > 1:
-            raise _ambiguous(ref, matches)
+            raise _ambiguous(client, ref, matches)
 
     matched_id = next(iter(matches))
     _channel_cache[name] = (matched_id, time.time())
