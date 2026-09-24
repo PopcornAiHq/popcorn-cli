@@ -259,7 +259,7 @@ class TestResolveByName:
             resolve_conversation(mock_client, "#ops")
 
     def test_two_channels_with_the_identical_name_raise(self, mock_client):
-        """A channel shared in from another workspace can carry a local name."""
+        """A channel shared in from another workspace can carry a name a local one already has."""
         mock_client.get.side_effect = self._server(
             {"id": "conv-local", "name": "ops"}, {"id": "conv-shared", "name": "ops"}
         )
