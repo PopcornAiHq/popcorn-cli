@@ -622,14 +622,16 @@ class TestFlowRunWait:
         monkeypatch.setattr(
             operations,
             "get_flow_run",
-            lambda *a, **kw: {"run": {"status": "COMPLETED", "workflow_id": "wid-1"}},
+            lambda *a, **kw: {
+                "run": {"status": "Completed", "outcome": "succeeded", "workflow_id": "wid-1"}
+            },
         )
         TestDispatchIsWired()._run(
             monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait", "--json"]
         )
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
-        assert payload["data"]["run"]["status"] == "COMPLETED"
+        assert payload["data"]["run"]["status"] == "Completed"
 
     def test_wait_on_a_failed_run_exits_non_zero(self, monkeypatch, capsys):
         from popcorn_cli.commands import flow as mod
@@ -639,14 +641,19 @@ class TestFlowRunWait:
         monkeypatch.setattr(operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1"})
         monkeypatch.setattr(mod.time, "sleep", lambda s: None)
         monkeypatch.setattr(
-            operations, "get_flow_run", lambda *a, **kw: {"run": {"status": "FAILED"}}
+            operations,
+            "get_flow_run",
+            lambda *a, **kw: {"run": {"status": "Failed", "outcome": "failed"}},
         )
         with pytest.raises(SystemExit) as exc:
             TestDispatchIsWired()._run(
                 monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
             )
         assert exc.value.code == EXIT_VALIDATION
-        assert "FAILED" in capsys.readouterr().err
+        err = capsys.readouterr().err
+        assert "ended Failed" in err
+        # The run's own failure, not the refusal of a response without an outcome.
+        assert "predates" not in err
 
     def test_wait_fails_loudly_when_the_run_returns_no_workflow_id(self, monkeypatch, capsys):
         from popcorn_core import operations
