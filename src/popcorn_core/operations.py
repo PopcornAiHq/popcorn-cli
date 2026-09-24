@@ -336,6 +336,7 @@ def create_conversation(
     conv_type: str = "public_channel",
     member_ids: list[str] | None = None,
     template: str | None = None,
+    if_not_exists: bool = False,
 ) -> dict[str, Any]:
     """Create a new conversation (channel or DM), optionally from a template.
 
@@ -343,12 +344,20 @@ def create_conversation(
     is the ONLY way to install one -- the install runs server-side, in the
     worker, after the channel exists. An unknown name is rejected up front with
     a 400 rather than creating a channel whose install silently no-ops.
+
+    `if_not_exists` asks the server to return a channel that already holds the
+    name, with `already_existed: true`, instead of failing on the duplicate.
+    The server decides what counts as the same name, so nothing here has to
+    reproduce its normalisation. It resolves only to a channel the caller is
+    an active member of; any other holder of the name is still a duplicate.
     """
     body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
     if member_ids:
         body["member_ids"] = member_ids
     if template:
         body["template"] = template
+    if if_not_exists:
+        body["if_not_exists"] = True
     return client.post("/api/conversations/create", data=body)
 
 
