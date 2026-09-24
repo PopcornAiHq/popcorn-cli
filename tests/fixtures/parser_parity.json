@@ -2125,31 +2125,6 @@
   {
     "argv": [
       "flow",
-      "import",
-      "x",
-      "--channel",
-      "x",
-      "--dry-run"
-    ],
-    "namespace": {
-      "channel": "x",
-      "command": "flow",
-      "debug": false,
-      "directory": "x",
-      "dry_run": true,
-      "env": null,
-      "flow_command": "import",
-      "json": false,
-      "no_color": false,
-      "quiet": false,
-      "timeout": null,
-      "workspace": null,
-      "yes": false
-    }
-  },
-  {
-    "argv": [
-      "flow",
       "validate",
       "x"
     ],
@@ -2263,6 +2238,32 @@
       "no_triggers": true,
       "quiet": false,
       "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "flow",
+      "run",
+      "x",
+      "--channel",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "flow",
+      "debug": false,
+      "env": null,
+      "flow_command": "run",
+      "flow_id": "x",
+      "inputs": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "timeout_run": null,
+      "wait": false,
       "workspace": null,
       "yes": false
     }

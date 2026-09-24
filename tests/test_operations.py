@@ -843,66 +843,6 @@ class TestFlowValidation:
         assert len(resp["issues"]) == 1
 
 
-class TestTemplateImportIsFenced:
-    """`import_template` raises before it touches the network.
-
-    Ordering is the whole point. The old body zipped the directory, uploaded
-    the zip to the target channel, and only then posted the file key to a route
-    that now 404s — so every failed attempt left a stray zip behind in the
-    channel. The fence has to come first.
-    """
-
-    def _bundle(self, tmp_path):
-        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
-        return str(tmp_path)
-
-    def test_it_raises(self, mock_client, tmp_path):
-        with pytest.raises(PopcornError):
-            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
-
-    def test_it_uploads_nothing_and_posts_nothing(self, mock_client, monkeypatch, tmp_path):
-        uploaded = []
-        monkeypatch.setattr(
-            operations,
-            "upload_file",
-            lambda c, conv, path: uploaded.append(path) or {"url": "k"},
-        )
-        with pytest.raises(PopcornError):
-            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
-        assert uploaded == [], "a fenced install still uploaded a zip"
-        mock_client.post.assert_not_called()
-
-    def test_it_does_not_even_resolve_the_channel(self, mock_client, tmp_path):
-        """Resolution is a GET against the workspace. Nothing about a removed
-        command should need the network — or a valid channel."""
-        with pytest.raises(PopcornError):
-            operations.import_template(mock_client, "#no-such-channel", self._bundle(tmp_path))
-        mock_client.get.assert_not_called()
-
-    def test_dry_run_is_fenced_too(self, mock_client, tmp_path):
-        with pytest.raises(PopcornError):
-            operations.import_template(
-                mock_client, "conv-uuid", self._bundle(tmp_path), dry_run=True
-            )
-
-    def test_it_raises_for_a_bundle_that_would_not_even_pack(self, mock_client, tmp_path):
-        """The fence outranks the packing checks: "this endpoint is gone" is
-        more useful than "your bundle has no manifest" when neither bundle can
-        be installed."""
-        (tmp_path / "no_manifest.yaml").write_text("name: x\n")
-        with pytest.raises(PopcornError) as exc:
-            operations.import_template(mock_client, "conv-uuid", str(tmp_path))
-        assert "bundle registry" in str(exc.value)
-
-    def test_the_message_carries_the_replacement_path(self, mock_client, tmp_path):
-        with pytest.raises(PopcornError) as exc:
-            operations.import_template(mock_client, "conv-uuid", self._bundle(tmp_path))
-        msg = str(exc.value)
-        assert "bundle registry" in msg
-        assert "channel create" in msg
-        assert "template check" in msg
-
-
 class TestChannelParameterRequests:
     """Pin the request each channel-parameter edit sends.
 

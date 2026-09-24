@@ -122,21 +122,6 @@ def _poll_until_closed(
 _NOT_A_FLOW = {*flow_rules.MANIFEST_FILENAMES, flow_rules.STRINGS_FILENAME}
 
 
-def _flow_import(args: argparse.Namespace) -> None:
-    """Fenced: always raises with the real publish path.
-
-    Registered so `flow import` explains itself rather than dying as an unknown
-    subcommand, and so `--channel`/`--dry-run` still parse -- an author who
-    typed the old command gets the message, not an argparse error about it.
-
-    No client is built and no auth is required: the endpoint is gone for
-    everyone, so needing a login to be told so would be its own dead end.
-    """
-    from popcorn_core.errors import PopcornError
-
-    raise PopcornError(operations.TEMPLATE_INSTALL_REMOVED, error_code="validation")
-
-
 def _validate_channel(args: argparse.Namespace, target: Path) -> str:
     """The channel to validate against: the flag, else the checkout's baseline.
 
@@ -660,20 +645,6 @@ register(
                         choices=["release", "beta", "alpha", "deprecated"],
                     ),
                     Argument("category", "Filter by category (store, channel, …)", type=str),
-                ],
-            ),
-            Subcommand(
-                "import",
-                "Removed — prints where bundles install from now",
-                _flow_import,
-                [
-                    Argument("directory", "Template bundle directory", positional=True),
-                    _CHANNEL,
-                    Argument(
-                        "dry-run",
-                        "Accepted and ignored; the command is removed",
-                        action="store_true",
-                    ),
                 ],
             ),
             Subcommand(
