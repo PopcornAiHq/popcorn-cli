@@ -5,9 +5,10 @@ CLI for the Popcorn API, installing the `popcorn` command. **Not published to Py
 ## This repository is public
 
 `PopcornAiHq/popcorn-cli` is public; the backend repo it talks to is private.
-Internal-only references must not be written here: issue-tracker ids, private
-repo PR numbers, backend source paths, real infrastructure identifiers,
-employee email addresses, and production record ids.
+Internal-only references must not be written here: private repo PR numbers,
+backend source paths, real infrastructure identifiers, employee email
+addresses, and production record ids. Issue-tracker ids are the one exception,
+and only outside tracked files — see "Ticket ids" below.
 
 **Cite behaviour, never the thing that proves it.** "The server rejects a
 webhook update that changes its trigger flow" belongs here; the ticket number
@@ -18,8 +19,8 @@ Fixture identifiers are synthetic, never copied from a live system:
 `example-*` names and `00000000-0000-4000-8000-0000000000NN` uuids.
 
 This cuts directly against the private repo's own conventions, which encourage
-citing `KEW-NNNN`, PR numbers and `lib/<domain>/…` paths as durable references.
-That is correct there. Do not carry it across a `cd`.
+citing PR numbers and `lib/<domain>/…` paths as durable references. That is
+correct there. Do not carry it across a `cd`.
 
 `scripts/check-public-repo.sh` enforces the mechanical part of this, as a
 pre-commit hook and as its own CI job — it scans the index for the patterns that
@@ -29,13 +30,29 @@ yours.
 
 **Commit messages count.** Every merge method `main` allows — squash, merge
 commit, rebase — publishes the branch's commit messages, the pull request's
-title, or both, so an id in a feature-branch commit is published on `main` for
-good. The same script checks each message as a `commit-msg` hook and, in CI
-(`.github/workflows/public-guard.yml`, which re-runs when the pull request is
-retitled), every commit in the pull request plus its title. A clone set up
-before the hook existed needs `make install` again to get it. The PR
+title, or both, so a private path in a feature-branch commit is published on
+`main` for good. The same script checks each message as a `commit-msg` hook
+and, in CI (`.github/workflows/public-guard.yml`, which re-runs when the pull
+request is retitled), every commit in the pull request plus its title. A clone
+set up before the hook existed needs `make install` again to get it. The PR
 description is not scanned — it never reaches `main`, but it is public, so
 keep it to the same rule.
+
+**Ticket ids.** A Linear id (`KEW-NNNN`) may go in a commit message, a pull
+request title or description, and a branch name — that is what Linear's GitHub
+integration reads to link and close the issue, and a bare id discloses nothing
+the change itself does not. It still never goes in a tracked file: code,
+tests, comments, docs. To close the issue when the pull request merges, put a
+closing magic word and the id in the **PR description**:
+
+    Fixes KEW-NNNN
+
+(`closes`, `resolves`, `completes` and `implements` work too.) Use
+`Part of KEW-NNNN` or `Refs KEW-NNNN` to link without closing — for one step of
+a larger ticket. A bare id in the PR title or a branch named from Linear's
+"Copy git branch name" also links it, and merging such a PR moves the issue
+on per the team's workflow settings. The guard allows ids in messages and
+titles and still refuses them in the index scan.
 
 **Audit with `git ls-files`, not `ls`, `grep -r`, `find` or `wc`.** Those walk
 gitignored scratch directories and over-report, in the direction that
