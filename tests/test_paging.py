@@ -250,26 +250,3 @@ class TestCommandWiring:
         ):
             cli.cmd_channel_list(args)
         assert search.call_args.kwargs == {"include_archived": True, "include_hidden": True}
-
-    def test_create_if_not_exists_looks_past_archived_and_hidden(self):
-        """The server's name-uniqueness check ignores both, so a channel the CLI
-        cannot see still takes the name — and `--if-not-exists` would report the
-        duplicate as an error instead of returning the existing channel."""
-        from unittest.mock import patch
-
-        from popcorn_cli import cli
-
-        args = argparse.Namespace(name="general", if_not_exists=True, json=False)
-        with (
-            patch.object(cli, "_get_client", return_value=object()),
-            patch.object(cli, "_output"),
-            patch.object(
-                operations,
-                "search_channels",
-                return_value={"conversations": [{"id": "conv-1", "name": "general"}]},
-            ) as search,
-            patch.object(operations, "create_conversation") as create,
-        ):
-            cli.cmd_create_channel(args)
-        assert search.call_args.kwargs == {"include_archived": True, "include_hidden": True}
-        assert create.call_count == 0

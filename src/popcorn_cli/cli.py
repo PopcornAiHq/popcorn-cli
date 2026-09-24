@@ -1282,70 +1282,49 @@ def cmd_download(args: argparse.Namespace) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _stored_channel_name(name: str) -> str:
-    """The name the server will store, and check for uniqueness, for `name`.
+def _is_duplicate_name(err: APIError) -> bool:
+    """Whether `err` is the create route's duplicate-name rejection.
 
-    The server rewrites a channel name before it looks for a collision: a space
-    becomes a hyphen. So `--if-not-exists "my channel"` has to be matched
-    against the listing as `my-channel`, or the pre-check finds nothing and the
-    create it then attempts fails on the very duplicate the flag exists to
-    return.
-
-    This is a copy of a rule the server owns, so it can drift from it — and
-    quietly, since drift shows up as the flag going back to failing on a
-    duplicate rather than as an error. The durable fix is an idempotent create
-    on the server, which already normalises the name and runs the uniqueness
-    check a few lines later; every rule mirrored here is one it applies
-    authoritatively anyway.
-    """
-    return name.replace(" ", "-")
-
-
-def _error_slug(err: APIError) -> str | None:
-    """The machine-readable error slug in an API error body, if it carries one.
-
-    Status codes are not a reliable key for a specific failure: the create
-    route answers a duplicate channel name with a 400, while the app's general
-    mapping for that same condition is a 409. The slug is `already_exists`
-    either way, so branching on it survives the status being corrected.
+    Keyed on the `already_exists` slug rather than the status, which that
+    route shares with every other invalid request (an unknown template, a bad
+    type) that must keep failing as itself.
     """
     try:
         body = json.loads(err.body or "")
     except (TypeError, ValueError):
-        return None
-    if not isinstance(body, dict):
-        return None
-    # The slug sits under `detail` when the route raises it itself, and at the
-    # top level in the flatter shapes other endpoints use.
-    for holder in (body.get("detail"), body):
-        if isinstance(holder, dict) and isinstance(holder.get("error"), str):
-            return str(holder["error"])
-    return None
+        return False
+    detail = body.get("detail") if isinstance(body, dict) else None
+    return isinstance(detail, dict) and detail.get("error") == "already_exists"
+
+
+def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> list[str]:
+    """What the caller asked for that the existing channel returned does not have.
+
+    The server's idempotent create matches on name alone, and returns the
+    channel as it stands: archived or not, of whatever type, and without
+    installing a template or adding members. Each of those is a request that
+    succeeded without being carried out, so say so rather than let it pass.
+    """
+    name = conv.get("name", "")
+    notes: list[str] = []
+    wanted_type = getattr(args, "type", None) or "public_channel"
+    actual_type = conv.get("type")
+    if actual_type and actual_type != wanted_type:
+        notes.append(f"#{name} is a {actual_type}, not the {wanted_type} requested")
+    if conv.get("is_archived"):
+        notes.append(
+            f"#{name} is archived (unarchive: popcorn channel archive {conv.get('id', name)} --undo)"
+        )
+    if getattr(args, "template", None):
+        notes.append(f"template {args.template} was not installed into the existing channel")
+    if getattr(args, "members", None):
+        notes.append("--members were not added to the existing channel")
+    return notes
 
 
 def cmd_create_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    if_not_exists = getattr(args, "if_not_exists", False)
-    stored_name = _stored_channel_name(args.name)
-
-    # --if-not-exists: search for existing channel first. Archived and hidden
-    # channels still own their name server-side, so a lookup that skipped them
-    # would report "not found", attempt the create, and fail on the duplicate
-    # it was meant to return.
-    if if_not_exists:
-        existing = operations.search_channels(
-            client, stored_name, include_archived=True, include_hidden=True
-        )
-        for conv in existing.get("conversations", []):
-            if (conv.get("name") or "").lower() == stored_name.lower():
-                resp = {"conversation": conv, "already_existed": True}
-                _output(
-                    args,
-                    resp,
-                    f"Already exists: {conv.get('name', '')} (id: {conv.get('id', '?')})",
-                )
-                return
-
+    if_not_exists = bool(getattr(args, "if_not_exists", False))
     member_ids = args.members.split(",") if getattr(args, "members", None) else None
     try:
         resp = operations.create_conversation(
@@ -1354,25 +1333,26 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
             conv_type=getattr(args, "type", "public_channel") or "public_channel",
             member_ids=member_ids,
             template=getattr(args, "template", None),
+            if_not_exists=if_not_exists,
         )
     except APIError as e:
-        # Handle race: channel created between our search and create (--if-not-exists)
-        if if_not_exists and _error_slug(e) == "already_exists":
-            existing = operations.search_channels(
-                client, stored_name, include_archived=True, include_hidden=True
+        # The server resolves a taken name only to a channel the caller is a
+        # member of. Any other holder is still a duplicate, which reads as the
+        # flag not working unless it says why.
+        if if_not_exists and _is_duplicate_name(e):
+            e.hint = (
+                "the name is held by a channel you are not a member of; "
+                "pick another name, or ask a member to invite you"
             )
-            for conv in existing.get("conversations", []):
-                if (conv.get("name") or "").lower() == stored_name.lower():
-                    resp = {"conversation": conv, "already_existed": True}
-                    _output(
-                        args,
-                        resp,
-                        f"Already exists: {conv.get('name', '')} (id: {conv.get('id', '?')})",
-                    )
-                    return
         raise
     conv = resp.get("conversation", resp)
-    _output(args, resp, f"Created: {conv.get('name', '')} (id: {conv.get('id', '?')})")
+    label = f"{conv.get('name', '')} (id: {conv.get('id', '?')})"
+    if resp.get("already_existed"):
+        for note in _existing_channel_notes(conv, args):
+            print(f"Note: {note}", file=sys.stderr)
+        _output(args, resp, f"Already exists: {label}")
+        return
+    _output(args, resp, f"Created: {label}")
 
 
 def cmd_join_channel(args: argparse.Namespace) -> None:
