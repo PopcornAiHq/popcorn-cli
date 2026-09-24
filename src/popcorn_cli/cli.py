@@ -118,7 +118,6 @@ from popcorn_core.config import (
     OAUTH_CALLBACK_PORT,
     Profile,
     resolve_auth_env,
-    resolve_env,
 )
 from popcorn_core.errors import (
     ERROR_CODES,
@@ -167,27 +166,7 @@ def _status(msg: str) -> None:
 
 
 def _get_client(args: argparse.Namespace) -> APIClient:
-    """Build an APIClient from stored config or proxy env vars."""
-    # Proxy mode: skip profile validation, build client from env vars
-    if os.environ.get("POPCORN_PROXY_MODE") == "1":
-        preset = resolve_env()
-        workspace_id = os.environ.get("POPCORN_WORKSPACE_ID", "")
-        profile = Profile(
-            api_url=preset["api_url"],
-            workspace_id=workspace_id,
-        )
-        if getattr(args, "workspace", None):
-            profile.workspace_id = args.workspace
-        timeout = getattr(args, "timeout", None)
-        debug = getattr(args, "debug", False)
-        kwargs: dict[str, Any] = {}
-        if timeout:
-            kwargs["timeout"] = timeout
-        if debug:
-            kwargs["debug"] = True
-        return APIClient(profile, **kwargs)
-
-    # Normal mode: load config and validate auth
+    """Build an APIClient from stored config."""
     cfg = load_config()
     if getattr(args, "env", None):
         cfg.default_profile = args.env
@@ -725,9 +704,6 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         "POPCORN_API_URL",
         "POPCORN_CLERK_ISSUER",
         "POPCORN_CLERK_CLIENT_ID",
-        "POPCORN_PROXY_MODE",
-        "POPCORN_WORKSPACE_ID",
-        "POPCORN_USER_ID",
         "POPCORN_NO_UPDATE_CHECK",
         "POPCORN_ASSUME_YES",
         "NO_COLOR",

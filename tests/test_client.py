@@ -160,3 +160,34 @@ class TestNullFieldsInTheErrorEnvelope:
         with pytest.raises(APIError) as exc:
             client.get("/api/conversations/info")
         assert str(exc.value) == "not_found"
+
+
+_SIDECAR_ENV = {
+    "POPCORN_PROXY_MODE": "1",
+    "POPCORN_USER_ID": "00000000-0000-4000-8000-000000000001",
+    "POPCORN_WORKSPACE_ID": "00000000-0000-4000-8000-000000000002",
+    "POPCORN_TASK_TOKEN": "example-task-token",
+}
+
+
+class TestSidecarEnvVarsAreIgnored:
+    """The environment variables that once switched the client into an
+    unauthenticated sidecar mode no longer change what is sent: every request
+    carries the profile's bearer token and nothing self-asserted."""
+
+    def test_headers_are_bearer_only(self, monkeypatch, client):
+        for k, v in _SIDECAR_ENV.items():
+            monkeypatch.setenv(k, v)
+        assert client._headers() == {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {client.profile.id_token}",
+        }
+
+    def test_401_still_refreshes(self, monkeypatch, client):
+        monkeypatch.setenv("POPCORN_PROXY_MODE", "1")
+        responses = iter([httpx.Response(401), httpx.Response(200, json={"ok": True})])
+        monkeypatch.setattr(client, "_do_request", lambda *a, **kw: next(responses))
+        refreshed: list[bool] = []
+        monkeypatch.setattr(client, "_refresh_token", lambda: refreshed.append(True))
+        assert client.get("/api/anything") == {"ok": True}
+        assert refreshed == [True]

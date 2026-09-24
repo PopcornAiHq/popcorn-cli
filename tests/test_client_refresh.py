@@ -49,7 +49,6 @@ def two_profiles(tmp_path, monkeypatch):
         "POPCORN_API_URL",
         "POPCORN_CLERK_ISSUER",
         "POPCORN_CLERK_CLIENT_ID",
-        "POPCORN_PROXY_MODE",
     ):
         monkeypatch.delenv(var, raising=False)
 
