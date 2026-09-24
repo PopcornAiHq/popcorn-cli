@@ -222,11 +222,11 @@ def _render_lines(lines_data: list[dict]) -> str:
 def _app_lines(args: argparse.Namespace) -> None:
     """This workspace's fork lines, across apps — not this channel's.
 
-    `app list` answers a per-channel question (what does THIS channel run, and
-    what could it run) and buries the line inventory in it, one row per line
-    mixed with product entries and each row's flow list. Six throwaway lines
-    in one workspace is a routine afternoon and nothing listed them on their
-    own.
+    `app list` answers what the workspace could install (and, with
+    `--channel`, what that channel runs) and buries the line inventory in it,
+    one row per line mixed with product entries and each row's flow list. Six
+    throwaway lines in one workspace is a routine afternoon and nothing listed
+    them on their own.
 
     No channel is sent: the inventory is workspace-scoped and the API serves
     it without one. `--channel` is still accepted so scripts written when the
