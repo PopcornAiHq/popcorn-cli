@@ -115,7 +115,7 @@ Stable enum. All values are lowercase `snake_case`. The set is frozen at 1.0.0; 
 | `unauthorized` | Not logged in or token expired | 401, expired JWT |
 | `forbidden` | Authenticated but lacks permission | 403 |
 | `not_found` | Resource does not exist | 404, unknown channel name |
-| `conflict` | Conflicts with current state | 409, already-exists |
+| `conflict` | Conflicts with current state | 409, already-exists; 412 `stale_rev` (a failed `If-Match` — re-read and retry) |
 | `rate_limited` | Rate limited — honor `retry_after` | 429 |
 | `client_error` | Other 4xx | |
 | `server_error` | 5xx — retryable with backoff | |

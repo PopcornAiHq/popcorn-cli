@@ -39,7 +39,9 @@ ERROR_CODES: list[dict[str, str]] = [
     {"code": ERROR_CODE_NOT_FOUND, "description": "Resource does not exist"},
     {
         "code": ERROR_CODE_CONFLICT,
-        "description": "Conflicts with current state (e.g. already exists)",
+        "description": (
+            "Conflicts with current state (e.g. already exists, or a stale `If-Match` revision)"
+        ),
     },
     {"code": ERROR_CODE_RATE_LIMITED, "description": "Rate limited — honor retry_after field"},
     {"code": ERROR_CODE_CLIENT, "description": "Other 4xx error — request is wrong"},
@@ -70,7 +72,10 @@ def _api_status_to_error_code(status_code: int) -> str:
         return ERROR_CODE_FORBIDDEN
     if status_code == 404:
         return ERROR_CODE_NOT_FOUND
-    if status_code == 409:
+    # 412 is a failed `If-Match` precondition: the resource moved on since the
+    # caller's read. An agent recovers from it the way it recovers from a 409
+    # (re-read, then retry), so both are one machine class.
+    if status_code in (409, 412):
         return ERROR_CODE_CONFLICT
     if status_code == 422:
         return ERROR_CODE_VALIDATION

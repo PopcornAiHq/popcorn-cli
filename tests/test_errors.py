@@ -183,6 +183,13 @@ class TestErrorCode:
     def test_api_error_409(self):
         assert APIError("x", status_code=409).error_code == "conflict"
 
+    def test_api_error_412_is_a_conflict(self):
+        """A failed `If-Match` is the same machine class as a 409."""
+        err = APIError("x", status_code=412, body='{"error": "stale_rev", "rev": 7}')
+        assert err.error_code == "conflict"
+        assert err.exit_code == 3
+        assert err.retryable is False
+
     def test_api_error_422(self):
         assert APIError("x", status_code=422).error_code == "validation"
 
