@@ -55,6 +55,8 @@ Setting `POPCORN_AGENT=1` implies the following defaults on every invocation, un
 
 Agent mode does **not** imply `--yes`. Destructive confirmations must be opted into explicitly via `--yes` / `-y` or `POPCORN_ASSUME_YES=1`. Without them, the CLI fails loudly in non-TTY contexts instead of hanging.
 
+`app publish` confirms too, because a publish changes every channel on the checkout's fork line, not only the one it was run from. In agent mode it needs `--yes` / `POPCORN_ASSUME_YES=1` **even on a TTY**, and without it is refused before any request is sent (`error_code: validation`, exit `1`). An interactive human gets a `[y/N]` prompt naming the line; the prompt cannot give a channel count, since nothing before a publish serves one — the count arrives in the publish response (`other_channels_converging`).
+
 Accepts `1`, `true`, or `yes` (case-insensitive) as the enabling value.
 
 ---

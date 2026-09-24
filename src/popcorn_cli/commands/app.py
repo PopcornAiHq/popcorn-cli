@@ -785,12 +785,71 @@ def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
     )
 
 
+def _line_label(baseline: Baseline) -> str:
+    """How a prompt names the fork line: by name when the baseline has one."""
+    return f"fork line '{baseline.fork_name}'" if baseline.fork_name else "its fork line"
+
+
+def _refuse_unconfirmable_publish(args: argparse.Namespace, baseline: Baseline) -> None:
+    """Refuse a publish nobody can confirm, before any request is sent.
+
+    Every server-side guard on a publish is about validity — admin, a
+    non-empty payload, a current base, a tree that installs — and none asks
+    whether the author meant to change every channel on the fork line. So a
+    publish confirms, and a caller that cannot answer a prompt must say so
+    up front with ``--yes`` (or ``POPCORN_ASSUME_YES=1``), exactly as
+    `_confirm` asks of every other destructive command.
+
+    Agent mode (``POPCORN_AGENT``) counts as unable to answer even on a TTY:
+    an agent running under a pseudo-terminal would otherwise sit at a prompt
+    its harness never shows anyone. Checked here, ahead of the reads, rather
+    than left to `_confirm` at the prompt: the refusal needs no server state,
+    and a caller told to re-run should not have spent round trips first.
+    """
+    from ..cli import _agent_mode_enabled, _assume_yes
+
+    if _assume_yes(args):
+        return
+    agent = _agent_mode_enabled()
+    if not agent and sys.stdin.isatty():
+        return
+    who = "in agent mode (POPCORN_AGENT)" if agent else "in non-interactive mode"
+    raise PopcornError(
+        f"refusing to publish {who} without --yes — a publish changes every "
+        f"channel on {_line_label(baseline)}, not only this one",
+        error_code="validation",
+        hint="re-run with --yes (or set POPCORN_ASSUME_YES=1) once that reach is intended",
+    )
+
+
+def _confirm_publish(args: argparse.Namespace, baseline: Baseline, version: str) -> None:
+    """Ask before a publish, naming who it reaches. Raises on "no".
+
+    The count of channels on the line is not asked for, because nothing
+    before a publish serves it — `/apps/list` returns lineage heads only
+    (see `_NO_CHANNEL_COUNT`) and the server reports the count only in the
+    publish response. The prompt names the line instead of guessing a number.
+    """
+    from ..cli import _confirm
+
+    line = _line_label(baseline)
+    if not _confirm(
+        args,
+        f"Publish {baseline.app} {version} to {line}? Every channel on that "
+        "line converges on it within a day, not only this one — how many is "
+        "reported only after the publish.",
+    ):
+        raise PopcornError(
+            "publish cancelled — nothing was sent",
+            error_code="validation",
+        )
+
+
 def _app_publish(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     directory = _directory(args)
     baseline = _require_baseline(directory)
-    client = _get_client(args)
     conversation = _channel_of(args, baseline)
 
     # A product checkout is refused here rather than by the 409, because the
@@ -823,6 +882,10 @@ def _app_publish(args: argparse.Namespace) -> None:
         _refuse_bump_over_a_hand_edit(version, baseline.semver, bump)
     message = _publish_message(args, local.files)
 
+    # After the local refusals, so a publish that is wrong anyway says why
+    # rather than asking for a --yes that would not have helped.
+    _refuse_unconfirmable_publish(args, baseline)
+    client = _get_client(args)
     _, base_hashes = _fetch_base(client, conversation, baseline)
     # The emptiness check runs against the tree AS EDITED, before any bump is
     # applied. Otherwise `--bump patch` on an untouched checkout would write a
@@ -840,6 +903,9 @@ def _app_publish(args: argparse.Namespace) -> None:
     diff = diff_tree_hashes(base_hashes, local.files)
     require_bump(version, baseline.semver)
 
+    # Asked last, once every refusal has had its chance: a prompt answered
+    # "yes" and then refused locally is a question wasted.
+    _confirm_publish(args, baseline, version)
     payload = publish_payload(baseline.base_version_id, diff, message)
     result = operations.publish_channel_app(client, conversation, payload)
 
@@ -1345,7 +1411,9 @@ register(
             ),
             Subcommand(
                 "publish",
-                "Publish a checkout's edits as the next version on its fork line",
+                "Publish a checkout's edits as the next version on its fork "
+                "line. Every channel on the line picks it up, so it confirms "
+                "first; --yes skips that, and agent mode requires it",
                 _app_publish,
                 [
                     _DIRECTORY,

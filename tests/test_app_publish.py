@@ -21,6 +21,7 @@ import re
 import sys
 from contextlib import ExitStack
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -768,7 +769,14 @@ class _Recorder:
 
 
 def _run_publish(tmp_path, files_response, recorder, args):
+    """Publish with the confirmation answered, unless the test set `yes` itself.
+
+    These tests are about what a publish sends and says; whether it asks
+    first is `TestPublishConfirmation`'s business.
+    """
     from popcorn_cli.commands import app as mod
+
+    vars(args).setdefault("yes", True)
 
     with (
         patch("popcorn_cli.cli._get_client", return_value=object()),
@@ -945,7 +953,7 @@ class TestPublishCommand:
             _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", rec),
         ):
-            mod._app_publish(_args(directory=str(tmp_path)))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path)))
 
         assert "6 other channels on this fork line" in captured["rendered"]
         # The raw count rides through to --json for an agent to branch on.
@@ -969,7 +977,7 @@ class TestPublishCommand:
             _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", rec),
         ):
-            mod._app_publish(_args(directory=str(tmp_path)))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path)))
 
         assert "fork line" not in captured["rendered"]
 
@@ -1059,7 +1067,7 @@ class TestPublishCommand:
             _serve(_files_response(base), hashes=hashes) as calls,
             patch.object(operations, "publish_channel_app", _Recorder()),
         ):
-            mod._app_publish(_args(directory=str(tmp_path)))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path)))
         assert calls["tree"] == ["head"]
         assert calls["files"] == ([] if hashes else ["head"])
 
@@ -1124,8 +1132,193 @@ def _run_publish_captured(tmp_path, recorder):
         _serve(_files_response(base)),
         patch.object(operations, "publish_channel_app", recorder),
     ):
-        mod._app_publish(_args(directory=str(tmp_path)))
+        mod._app_publish(_args(yes=True, directory=str(tmp_path)))
     return captured
+
+
+class TestPublishConfirmation:
+    """A publish reaches every channel on the fork line, so it asks first.
+
+    No server guard asks whether that reach was meant, so the CLI does: a
+    human at a terminal is prompted, and a caller that cannot answer — agent
+    mode, or no TTY — must pass `--yes` and is refused before any request
+    otherwise.
+    """
+
+    _BASE: ClassVar[dict[str, str]] = {
+        "manifest.yaml": _manifest("0.2.0"),
+        "alert.yaml": "name: alert\n",
+    }
+
+    def _edited(self, tmp_path, **over):
+        _checkout(tmp_path, self._BASE, **over)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+
+    @contextlib.contextmanager
+    def _no_requests(self):
+        """Fails the test if anything reaches for the server."""
+
+        def _boom(*a, **k):
+            raise AssertionError("a request was attempted")
+
+        with (
+            patch("popcorn_cli.cli._get_client", _boom),
+            patch.object(operations, "get_channel_app_tree", _boom),
+            patch.object(operations, "get_channel_app_files", _boom),
+            patch.object(operations, "publish_channel_app", _boom),
+        ):
+            yield
+
+    def test_agent_mode_without_yes_refuses_before_any_request(self, tmp_path, monkeypatch, tty):
+        """Even on a TTY: an agent under a pty would sit at a prompt nobody
+        sees, so agent mode never prompts."""
+        from popcorn_cli.commands import app as mod
+
+        self._edited(tmp_path, fork_name="example-line")
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        prompts = tty("y")
+        with self._no_requests(), pytest.raises(PopcornError) as exc:
+            mod._app_publish(_args(directory=str(tmp_path)))
+
+        assert prompts == []
+        assert exc.value.error_code == "validation"
+        assert "agent mode" in str(exc.value)
+        assert "--yes" in str(exc.value)
+        assert "example-line" in str(exc.value)
+        # The working copy is untouched: nothing moved the baseline.
+        assert read_baseline(tmp_path).base_version_id == 7
+
+    def test_agent_mode_refusal_exits_with_the_validation_code(self, tmp_path, monkeypatch, capsys):
+        """Through `main`, as an agent sees it: the JSON error envelope and
+        exit 1, the same as every other `_confirm` refusal."""
+        from popcorn_cli import cli
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        self._edited(tmp_path)
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        monkeypatch.setattr(sys, "argv", ["popcorn", "app", "publish", str(tmp_path)])
+        monkeypatch.setattr(cli, "_check_and_update", lambda: None)
+        # `main` sets this module global from --quiet, which agent mode
+        # injects; restored so later tests' stderr is not silenced.
+        monkeypatch.setattr(cli, "_quiet", cli._quiet)
+        # Agent mode also sets this in the real environment; set it through
+        # monkeypatch so teardown removes it again.
+        monkeypatch.setenv("POPCORN_NO_UPDATE_CHECK", "1")
+        with self._no_requests(), pytest.raises(SystemExit) as exc:
+            cli.main()
+
+        assert exc.value.code == EXIT_VALIDATION
+        envelope = json.loads(capsys.readouterr().err)
+        assert envelope["ok"] is False
+        assert envelope["error_code"] == "validation"
+
+    @pytest.mark.parametrize("opt_in", ["flag", "env"])
+    def test_agent_mode_with_yes_publishes_without_prompting(
+        self, tmp_path, monkeypatch, tty, opt_in
+    ):
+        self._edited(tmp_path)
+        monkeypatch.setenv("POPCORN_AGENT", "1")
+        if opt_in == "env":
+            monkeypatch.setenv("POPCORN_ASSUME_YES", "1")
+        else:
+            monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        prompts = tty("n")
+        rec = _Recorder()
+        args = _args(directory=str(tmp_path), yes=opt_in == "flag")
+        _run_publish(tmp_path, _files_response(self._BASE), rec, args)
+
+        assert prompts == []
+        assert len(rec.calls) == 1
+
+    def test_non_interactive_without_yes_refuses_before_any_request(self, tmp_path, monkeypatch):
+        """pytest's stdin is not a TTY, which is the case this covers."""
+        from popcorn_cli.commands import app as mod
+
+        self._edited(tmp_path)
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        with self._no_requests(), pytest.raises(PopcornError) as exc:
+            mod._app_publish(_args(directory=str(tmp_path)))
+
+        assert exc.value.error_code == "validation"
+        assert "--yes" in str(exc.value)
+
+    def test_interactive_yes_publishes_and_the_prompt_names_the_reach(
+        self, tmp_path, monkeypatch, tty
+    ):
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        self._edited(tmp_path, fork_name="example-line")
+        prompts = tty("y")
+        rec = _Recorder()
+        _run_publish(
+            tmp_path, _files_response(self._BASE), rec, _args(directory=str(tmp_path), yes=False)
+        )
+
+        assert len(rec.calls) == 1
+        (prompt,) = prompts
+        assert "alerttracker 0.2.1" in prompt
+        assert "fork line 'example-line'" in prompt
+        assert "Every channel on that line" in prompt
+        # No count is served before a publish, so none may be stated.
+        assert not re.search(r"\b\d+ (other )?channels?\b", prompt)
+        assert prompt.endswith("[y/N] ")
+
+    def test_an_unnamed_line_is_not_given_a_guessed_name(self, tmp_path, monkeypatch, tty):
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        self._edited(tmp_path)
+        prompts = tty("y")
+        _run_publish(
+            tmp_path,
+            _files_response(self._BASE),
+            _Recorder(),
+            _args(directory=str(tmp_path), yes=False),
+        )
+        assert "its fork line" in prompts[0]
+        assert "'default'" not in prompts[0]
+
+    @pytest.mark.parametrize("reply", ["n", ""])
+    def test_interactive_no_or_blank_sends_nothing(self, tmp_path, monkeypatch, tty, reply):
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        # A content edit under --bump, so a "no" also has a manifest write to skip.
+        _checkout(tmp_path, self._BASE)
+        (tmp_path / "alert.yaml").write_text("name: alert\nnew: yes\n")
+        tty(reply)
+        rec = _Recorder()
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path,
+                _files_response(self._BASE),
+                rec,
+                _args(directory=str(tmp_path), yes=False, bump="patch"),
+            )
+
+        assert "cancelled" in str(exc.value)
+        assert exc.value.error_code == "validation"
+        assert rec.calls == []
+        # Neither the baseline nor a --bump's manifest write happened.
+        assert read_baseline(tmp_path).base_version_id == 7
+        assert (tmp_path / "manifest.yaml").read_text() == _manifest("0.2.0")
+
+    def test_a_publish_refused_locally_never_prompts(self, tmp_path, monkeypatch, tty):
+        """An untouched checkout says "nothing to publish", not "are you sure"."""
+        monkeypatch.delenv("POPCORN_AGENT", raising=False)
+        monkeypatch.delenv("POPCORN_ASSUME_YES", raising=False)
+        _checkout(tmp_path, self._BASE)
+        prompts = tty("y")
+        with pytest.raises(PopcornError) as exc:
+            _run_publish(
+                tmp_path,
+                _files_response(self._BASE),
+                _Recorder(),
+                _args(directory=str(tmp_path), yes=False),
+            )
+        assert "nothing to publish" in str(exc.value)
+        assert prompts == []
 
 
 class TestPublishInstallStatus:
@@ -1296,7 +1489,7 @@ class TestBaseReadByHash:
             _serve(files_response, **serve) as calls,
             patch.object(operations, "publish_channel_app", rec),
         ):
-            mod._app_publish(_args(directory=str(tmp_path)))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path)))
         return calls, rec.calls[0][1]
 
     def _status(self, tmp_path, files_response, **serve):
@@ -1358,7 +1551,7 @@ class TestBaseReadByHash:
             _serve(_files_response(base)) as calls,
             pytest.raises(PopcornError, match="nothing to publish"),
         ):
-            mod._app_publish(_args(directory=str(tmp_path)))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path)))
         assert calls["files"] == []
 
     def test_a_changed_file_ships_from_the_working_copy_without_reading_the_base(self, tmp_path):
@@ -1456,7 +1649,7 @@ class TestBaseReadByHash:
             _serve(_files_response(base), tree=tree) as calls,
             pytest.raises(PopcornError, match="nothing to publish"),
         ):
-            mod._app_publish(_args(directory=str(tmp_path), bump="patch"))
+            mod._app_publish(_args(yes=True, directory=str(tmp_path), bump="patch"))
         assert calls["files"] == ["head"]
 
     def test_a_hash_map_that_does_not_cover_the_tree_falls_back(self, tmp_path):
@@ -1810,7 +2003,9 @@ class TestPublishMessage:
             _serve(_files_response(base)),
             patch.object(operations, "publish_channel_app", _Recorder()),
         ):
-            mod._app_publish(_args(directory=str(tmp_path), message="dedupe by fingerprint"))
+            mod._app_publish(
+                _args(yes=True, directory=str(tmp_path), message="dedupe by fingerprint")
+            )
 
         assert "Message: dedupe by fingerprint" in captured["rendered"]
         # And for an agent, which cannot read the rendered text.
