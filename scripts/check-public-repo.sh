@@ -18,9 +18,15 @@
 #
 # Commit messages are scanned too, because they are published as-is: every
 # merge method `main` allows publishes the branch's commit messages, the pull
-# request's title, or both, so an id in a feature-branch commit lands on `main`
-# permanently. `--message` is the commit-msg hook; `--commits` is the CI pass
-# over a pull request's commits.
+# request's title, or both, so a private path in a feature-branch commit lands
+# on `main` permanently. `--message` is the commit-msg hook; `--commits` is the
+# CI pass over a pull request's commits.
+#
+# Issue-tracker ids are the one category a message MAY carry. The tracker's
+# GitHub integration links and closes issues from the id in a PR title, PR
+# description or commit message, and an id alone discloses no more than the
+# behaviour the commit already describes. They stay banned from tracked files,
+# where they would be read as documentation by people who cannot open them.
 #
 # Usage: scripts/check-public-repo.sh                         tracked files (index)
 #        scripts/check-public-repo.sh --message <file>        one commit message
@@ -112,8 +118,11 @@ search() {
     esac
 }
 
-# Each line is "<what it is>|<extended regex>". Deliberately narrow — a pattern
-# that cries wolf gets switched off, which is worse than one that misses.
+# Each line is "<what it is>|<scope>|<extended regex>". Only the first two "|"
+# separate fields, so a regex may contain alternations. <scope> is `all` (every
+# mode) or `files` (the index scan only — commit messages and PR titles may
+# carry it). Deliberately narrow — a pattern that cries wolf gets switched off,
+# which is worse than one that misses.
 #
 # A bare "#<number>" is unusable as a private-repo PR reference: it collides
 # with this repo's own PR numbers, which are legitimate here.
@@ -124,8 +133,9 @@ search() {
 # "backend: lib/<domain>/services/<name>.py" still is.
 found=0
 
-while IFS='|' read -r label regex; do
+while IFS='|' read -r label scope regex; do
     [ -n "$label" ] || continue
+    [ "$scope" = all ] || [ "$mode" = index ] || continue
 
     set +e
     hits=$(search "$regex")
@@ -146,17 +156,18 @@ while IFS='|' read -r label regex; do
             ;;
     esac
 done <<'PATTERNS'
-issue-tracker id|KEW-[0-9]+
-private-repo PR reference|popcorn-backend#[0-9]+
-backend source path|(^|[^/[:alnum:]_.-])(lib|services)/[a-z_]+/[a-z_/]*\.py
+issue-tracker id|files|KEW-[0-9]+
+private-repo PR reference|all|popcorn-backend#[0-9]+
+backend source path|all|(^|[^/[:alnum:]_.-])(lib|services)/[a-z_]+/[a-z_/]*\.py
 PATTERNS
 
 if [ "$found" -eq 1 ]; then
     cat <<'MSG'
 
    This repository is public. Cite behaviour ("the server refuses X"), never the
-   ticket or private source file that proves it. Fixture identifiers are
-   synthetic: example-* and 00000000-0000-4000-8000-0000000000NN.
+   private source file or pull request that proves it. Fixture identifiers are
+   synthetic: example-* and 00000000-0000-4000-8000-0000000000NN. A ticket id
+   belongs in a commit message or pull request, not in a tracked file.
 
    See CLAUDE.md — "This repository is public".
 MSG
