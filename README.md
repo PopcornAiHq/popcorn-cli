@@ -90,7 +90,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms] [--include-archived] [--include-hidden]` | List channels or DMs, following the server's cursor to the last page. Archived and hidden conversations are excluded unless asked for |
-| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel; `--template` installs a registry template into it (the only way to install one) |
+| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel; `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |
 | `popcorn channel leave <conv>` | Leave a channel |
@@ -105,7 +105,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv> [--no-triggers]` | Get a flow definition and what starts it on the channel (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
-| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls to a terminal status; non-zero exit if it does not complete) |
+| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded) |
 | `popcorn flow runs list --channel <conv> [--status S] [--flow <name>] [--limit N] [--page-token T]` | List flow runs, each with its flow name; `--flow` narrows to one flow (pass it again with `--page-token`); older runs may be stamped with the flow's id instead of its name, and passing that id lists them |
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on) |
 | `popcorn flow runs cancel <workflow_id> --channel <conv> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |

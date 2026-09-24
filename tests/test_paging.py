@@ -111,16 +111,22 @@ class TestSearchPaging:
         got = operations.search_channels(mock_client)["conversations"]
         assert [c["name"] for c in got] == ["alpha", "beta", "gamma"]
 
-    def test_the_name_filter_sees_every_page(self, mock_client):
-        """Filtering per page would have dropped the match sitting on page two —
-        the endpoints take no name query, so the filter has to run over the
-        whole accumulated list."""
+    def test_a_filtered_listing_spans_pages(self, mock_client):
+        """A query narrows each page, it does not cap the walk at one."""
         mock_client.get.side_effect = [
-            _page("conversations", _named("conv", "alpha"), next_cursor="1"),
-            _page("conversations", _named("conv", "release-notes", "beta")),
+            _page("conversations", _named("conv", "release-a"), next_cursor="1"),
+            _page("conversations", _named("conv", "release-b")),
         ]
         got = operations.search_channels(mock_client, "release")["conversations"]
-        assert [c["name"] for c in got] == ["release-notes"]
+        assert [c["name"] for c in got] == ["release-a", "release-b"]
+        assert all(call[0][1]["query"] == "release" for call in mock_client.get.call_args_list)
+
+    def test_a_short_filtered_page_is_the_last_one(self, mock_client):
+        """Filtered results are usually far below the page limit; the empty
+        cursor ends the walk, and a short page must not be read as "more"."""
+        mock_client.get.return_value = _page("conversations", _named("conv", "release-a"))
+        operations.search_channels(mock_client, "release")
+        assert mock_client.get.call_count == 1
 
     def test_dm_listing_spans_pages(self, mock_client):
         mock_client.get.side_effect = [
@@ -183,12 +189,30 @@ class TestResolvePaging:
         assert mock_client.get.call_count == 1
 
     def test_a_missing_channel_is_still_not_found(self, mock_client):
-        mock_client.get.side_effect = [
-            _page("conversations", _named("conv", "alpha"), next_cursor="1"),
-            _page("conversations", _named("conv", "beta")),
-        ]
+        # Keyed on the cursor, not a fixed sequence: a miss reads the listing
+        # once by name and once by the case-insensitive fallback.
+        mock_client.get.side_effect = lambda _path, params: (
+            _page("conversations", _named("conv", "beta"))
+            if params.get("cursor")
+            else _page("conversations", _named("conv", "alpha"), next_cursor="1")
+        )
         with pytest.raises(PopcornError, match="Channel not found"):
             resolve_conversation(mock_client, "#nope")
+
+    def test_case_variants_are_compared_across_every_fallback_page(self, mock_client):
+        """The fallback cannot stop at its first hit: a second spelling on a
+        later page is what makes the name ambiguous."""
+
+        def _list(_path, params):
+            if "name" in params:
+                return _page("conversations", [])
+            if params.get("cursor"):
+                return _page("conversations", _named("conv", "GENERAL"))
+            return _page("conversations", _named("conv", "General"), next_cursor="1")
+
+        mock_client.get.side_effect = _list
+        with pytest.raises(PopcornError, match="matches more than one channel"):
+            resolve_conversation(mock_client, "#general")
 
     def test_a_user_on_a_later_page_resolves(self, mock_client):
         mock_client.get.side_effect = [
@@ -226,26 +250,3 @@ class TestCommandWiring:
         ):
             cli.cmd_channel_list(args)
         assert search.call_args.kwargs == {"include_archived": True, "include_hidden": True}
-
-    def test_create_if_not_exists_looks_past_archived_and_hidden(self):
-        """The server's name-uniqueness check ignores both, so a channel the CLI
-        cannot see still takes the name — and `--if-not-exists` would report the
-        duplicate as an error instead of returning the existing channel."""
-        from unittest.mock import patch
-
-        from popcorn_cli import cli
-
-        args = argparse.Namespace(name="general", if_not_exists=True, json=False)
-        with (
-            patch.object(cli, "_get_client", return_value=object()),
-            patch.object(cli, "_output"),
-            patch.object(
-                operations,
-                "search_channels",
-                return_value={"conversations": [{"id": "conv-1", "name": "general"}]},
-            ) as search,
-            patch.object(operations, "create_conversation") as create,
-        ):
-            cli.cmd_create_channel(args)
-        assert search.call_args.kwargs == {"include_archived": True, "include_hidden": True}
-        assert create.call_count == 0

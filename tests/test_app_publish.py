@@ -2029,10 +2029,20 @@ class TestScheduleDriftInStatus:
             "slug": "tick",
             "cron_expr": None,
             "interval_seconds": 900,
+            "offset_seconds": 51,
             "paused": False,
             "note": None,
         }
         item.update(over)
+        item.setdefault(
+            "intended",
+            {
+                "create_time_schedule_class": "periodic",
+                "cron_expr": item["cron_expr"],
+                "interval_seconds": item["interval_seconds"],
+                "offset_seconds": item["offset_seconds"],
+            },
+        )
         return item
 
     def test_a_matching_schedule_exits_zero(self):
@@ -2096,6 +2106,29 @@ class TestScheduleDriftInStatus:
         ):
             mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
         assert seen["path"] == "manifest.yaml"
+
+    def test_a_server_without_intended_cadence_is_reported_not_raised(self):
+        """An older API omits `intended`, and nothing here can compute it.
+
+        Classifying anyway would read the absent intent as a disagreeing one
+        and cry drift at a healthy channel; failing the command would take
+        down its version report. Neither — say the check was not made.
+        """
+        tick = self._tick()
+        del tick["intended"]
+        out = self._run([tick])
+        assert out["error"] is None
+        assert out["data"]["schedule_drift"] is None
+        assert "intended cadence" in out["data"]["schedule_drift_error"]
+        assert "Schedules: not checked" in out["rendered"]
+
+    def test_a_wrong_interval_phase_exits_non_zero(self):
+        tick = self._tick()
+        tick["offset_seconds"] = 12  # armed off the served intent's 51
+        out = self._run([tick])
+        assert out["error"] is not None
+        assert out["data"]["schedule_drift"]["alarming"] == 1
+        assert out["data"]["schedule_drift"]["findings"][0]["drift_class"] == 4
 
     def test_an_unreadable_schedule_list_is_reported_not_raised(self):
         """A Temporal outage must not take down the version reporting that is

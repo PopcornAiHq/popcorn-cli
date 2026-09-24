@@ -56,19 +56,18 @@ def search_channels(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search channels, optionally filtering by name.
+    """Search channels, optionally by a case-insensitive substring of the name.
 
-    The name filter is applied here because neither listing endpoint takes a
-    query — the server can only be asked for the whole list.
+    The server applies the filter, so a query costs the matches rather than
+    the whole listing.
     """
     params = {
         "types": _CHANNEL_TYPES,
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),
     }
-    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
-        q = query.lower()
-        convs = [c for c in convs if q in (c.get("name") or "").lower()]
+        params["query"] = query
+    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     return {"conversations": convs}
 
 
@@ -79,7 +78,11 @@ def search_dms(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search DMs, optionally filtering by participant name."""
+    """Search DMs, optionally filtering by participant name.
+
+    Filtered here, not by the server: its `query=` matches a conversation's
+    name, and a DM is known by who is in it.
+    """
     params = {
         "types": "dm,group_dm",
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),
@@ -336,6 +339,7 @@ def create_conversation(
     conv_type: str = "public_channel",
     member_ids: list[str] | None = None,
     template: str | None = None,
+    if_not_exists: bool = False,
 ) -> dict[str, Any]:
     """Create a new conversation (channel or DM), optionally from a template.
 
@@ -343,12 +347,20 @@ def create_conversation(
     is the ONLY way to install one -- the install runs server-side, in the
     worker, after the channel exists. An unknown name is rejected up front with
     a 400 rather than creating a channel whose install silently no-ops.
+
+    `if_not_exists` asks the server to return a channel that already holds the
+    name, with `already_existed: true`, instead of failing on the duplicate.
+    The server decides what counts as the same name, so nothing here has to
+    reproduce its normalisation. It resolves only to a channel the caller is
+    an active member of; any other holder of the name is still a duplicate.
     """
     body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
     if member_ids:
         body["member_ids"] = member_ids
     if template:
         body["template"] = template
+    if if_not_exists:
+        body["if_not_exists"] = True
     return client.post("/api/conversations/create", data=body)
 
 
