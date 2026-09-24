@@ -259,6 +259,44 @@ class TestClassify:
         assert finding.drift_class == CLASS_DRIFT
         assert finding.alarming
 
+    def test_resume_note_on_a_prod_channel_with_matching_cadence_is_clean(self) -> None:
+        """The ordinary state of a channel switched off prod and back again.
+
+        Restoring prod writes the same resume note that retuning for test
+        does, so the note alone says nothing about the mode. Only a cadence
+        the mode would not produce can contradict it — and this one is
+        exactly what the manifest declares.
+        """
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", note="auto-resumed: set_app_mode")],
+            app_mode="prod",
+        )
+        finding = report.findings[0]
+        assert finding.drift_class is None
+        assert not report.alarming
+
+    def test_resume_note_on_a_prod_channel_with_matching_cron_is_clean(self) -> None:
+        report = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
+            [_cron("daily", "17 8 * * *", note="auto-resumed: set_app_mode")],
+            app_mode="prod",
+        )
+        assert report.findings[0].drift_class == CLASS_DEPEAK
+
+    def test_a_resume_note_does_not_explain_a_pause(self) -> None:
+        """A schedule the platform last resumed, now paused, was paused by
+        something that left no note — the resume note is evidence against
+        the platform having done it, not for."""
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", paused=True, note="auto-resumed: set_app_mode")],
+            app_mode="test",
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_PAUSED
+        assert finding.alarming
+
     def test_unreadable_app_mode_still_takes_the_marker(self) -> None:
         report = classify(
             [{"slug": "tick", "interval": 900}],

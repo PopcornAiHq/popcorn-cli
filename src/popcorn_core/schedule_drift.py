@@ -80,14 +80,21 @@ class _PauseMarker:
     """One recognised platform note and what it means for the reader.
 
     `mode_dependent` is the escalation switch: True for a note that only
-    makes sense off prod, so a channel reporting prod contradicts it. False
-    for the lifecycle and switch notes, which are independent of app mode and
-    are therefore taken at face value whatever the mode says.
+    makes sense off prod, so a channel reporting prod contradicts a cadence
+    retuned under it. False for the lifecycle and switch notes, which are
+    independent of app mode and are therefore taken at face value whatever
+    the mode says.
+
+    `resumes` marks a note written when the platform un-paused the schedule.
+    It can account for a retuned cadence but never for a pause: a schedule
+    whose last platform note is a resume, and which is paused anyway, was
+    paused by something that left no note of its own.
     """
 
     literal: str
     mode_dependent: bool
     pause_summary: str
+    resumes: bool = False
 
 
 _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
@@ -142,13 +149,21 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
         mode_dependent=True,
         pause_summary=("paused because this schedule only runs in prod, and the channel is not"),
     ),
-    # Last: the generic marker every set_app_mode note carries, pause and
-    # resume alike, so a schedule retuned rather than paused is still
-    # accounted for. Anything more specific must match before it.
+    # Last, so every more specific note matches first. `set_app_mode` writes
+    # its resume note on every mode it leaves running — retuned for test and
+    # restored for prod alike — so the note alone does not say which mode
+    # the schedule is in; only a cadence that disagrees with the manifest
+    # can. That is why the mode escalation waits for the cadence comparison.
     _PauseMarker(
-        literal="set_app_mode",
+        literal="auto-paused: set_app_mode",
         mode_dependent=True,
         pause_summary="paused by set_app_mode",
+    ),
+    _PauseMarker(
+        literal="auto-resumed: set_app_mode",
+        mode_dependent=True,
+        pause_summary="resumed by set_app_mode",
+        resumes=True,
     ),
 )
 
@@ -315,52 +330,11 @@ def classify(
 
         live_cadence = _cadence(item.get("interval_seconds"), item.get("cron_expr"))
         marker = _platform_note(item.get("note"))
-        explained = _app_mode_verdict(marker, app_mode)
-        # A marker the mode contradicts taints everything about this
-        # schedule, pause and cadence alike, so it is said once up front.
-        if marker is not None and explained is False:
-            report.findings.append(
-                Finding(
-                    slug=slug,
-                    drift_class=CLASS_DRIFT,
-                    summary=(
-                        f"note says {marker.literal!r}, but this channel's "
-                        f"popcorn.app_mode is {app_mode!r} — the schedule was "
-                        "retuned for a mode the channel is no longer in, so "
-                        "nothing has restored it"
-                    ),
-                    declared=declared_cadence,
-                    live=live_cadence + (", paused" if item.get("paused") else ""),
-                )
-            )
-            continue
 
         if item.get("paused"):
-            if marker is not None:
-                report.findings.append(
-                    Finding(
-                        slug=slug,
-                        drift_class=CLASS_APP_MODE,
-                        summary=_explained_pause(marker, app_mode),
-                        declared=declared_cadence,
-                        live=live_cadence + ", paused",
-                    )
-                )
-            else:
-                report.findings.append(
-                    Finding(
-                        slug=slug,
-                        drift_class=CLASS_PAUSED,
-                        summary=(
-                            "paused, and nothing says why — the manifest "
-                            "declares it should run. Un-pausing is a manual "
-                            "step that lives in no repo, so this stays paused "
-                            "until someone does it"
-                        ),
-                        declared=declared_cadence,
-                        live=live_cadence + ", paused",
-                    )
-                )
+            report.findings.append(
+                _classify_pause(slug, marker, app_mode, declared_cadence, live_cadence)
+            )
             continue
 
         finding = _classify_cadence(
@@ -375,6 +349,61 @@ def classify(
         report.findings.append(finding)
 
     return report
+
+
+def _classify_pause(
+    slug: str,
+    marker: _PauseMarker | None,
+    app_mode: str | None,
+    declared_cadence: str,
+    live_cadence: str,
+) -> Finding:
+    """A paused schedule, which the manifest always declares running."""
+    live = live_cadence + ", paused"
+    if marker is None or marker.resumes:
+        return Finding(
+            slug=slug,
+            drift_class=CLASS_PAUSED,
+            summary=(
+                "paused, and nothing says why — the manifest "
+                "declares it should run. Un-pausing is a manual "
+                "step that lives in no repo, so this stays paused "
+                "until someone does it"
+            ),
+            declared=declared_cadence,
+            live=live,
+        )
+    if _app_mode_verdict(marker, app_mode) is False:
+        return _contradicted_by_mode(slug, marker, app_mode, declared_cadence, live)
+    return Finding(
+        slug=slug,
+        drift_class=CLASS_APP_MODE,
+        summary=_explained_pause(marker, app_mode),
+        declared=declared_cadence,
+        live=live,
+    )
+
+
+def _contradicted_by_mode(
+    slug: str,
+    marker: _PauseMarker,
+    app_mode: str | None,
+    declared_cadence: str,
+    live: str,
+) -> Finding:
+    """A mode-dependent note on a channel whose mode says otherwise."""
+    return Finding(
+        slug=slug,
+        drift_class=CLASS_DRIFT,
+        summary=(
+            f"note says {marker.literal!r}, but this channel's "
+            f"popcorn.app_mode is {app_mode!r} — the schedule was "
+            "retuned for a mode the channel is no longer in, so "
+            "nothing has restored it"
+        ),
+        declared=declared_cadence,
+        live=live,
+    )
 
 
 def _explained_pause(marker: _PauseMarker, app_mode: str | None) -> str:
@@ -510,7 +539,15 @@ def _cadence_difference(
     marker: _PauseMarker | None,
     app_mode: str | None,
 ) -> Finding:
-    """A cadence that differs for a reason the platform's intent does not explain."""
+    """A cadence that differs for a reason the platform's intent does not explain.
+
+    This is where a mode-dependent note meets the mode: a cadence retuned
+    under one, on a channel reporting prod, is the state nothing restored.
+    Only here and on a pause — a note beside a cadence that already matches
+    the manifest contradicts nothing, whatever the mode.
+    """
+    if marker is not None and _app_mode_verdict(marker, app_mode) is False:
+        return _contradicted_by_mode(slug, marker, app_mode, declared_cadence, live_cadence)
     if marker is not None:
         mode = f" (app_mode {app_mode!r})" if app_mode else ""
         return Finding(
