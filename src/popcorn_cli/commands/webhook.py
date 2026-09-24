@@ -73,9 +73,8 @@ def _hook_lines(hook: dict[str, Any], *, show_url: bool = False) -> list[str]:
 def _webhook_create(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    flow_id = getattr(args, "trigger_flow_id", None)
     flow_name = getattr(args, "trigger_flow_name", None)
-    if getattr(args, "action_mode", None) == "trigger_workflow" and not (flow_id or flow_name):
+    if getattr(args, "action_mode", None) == "trigger_workflow" and not flow_name:
         e = PopcornError("--action-mode=trigger_workflow needs the flow to start")
         e.hint = "pass --trigger-flow-name <name> (see `popcorn flow list`)"
         raise e
@@ -87,7 +86,6 @@ def _webhook_create(args: argparse.Namespace) -> None:
         description=getattr(args, "description", None),
         avatar_url=getattr(args, "avatar_url", None),
         action_mode=getattr(args, "action_mode", None),
-        trigger_flow_id=flow_id,
         trigger_flow_name=flow_name,
     )
     _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
@@ -320,22 +318,12 @@ register(
                         type=str,
                         choices=_ACTION_MODES,
                     ),
-                    # One flow, two ways to name it, never both. `popcorn flow
-                    # list` reports a flow's NAME in its `id` field, so for a
-                    # bundle flow the id you are handed ("alert_webhook") is
-                    # not a UUID and --trigger-flow-id would 422 on it.
-                    Argument(
-                        "trigger-flow-id",
-                        "Flow UUID to start (with --action-mode=trigger_workflow)",
-                        type=str,
-                        exclusive_group="trigger_flow",
-                    ),
+                    # Flows are bound by name; the server refuses any id.
                     Argument(
                         "trigger-flow-name",
                         "Flow NAME to start, as shown by `popcorn flow list` "
                         "(with --action-mode=trigger_workflow)",
                         type=str,
-                        exclusive_group="trigger_flow",
                     ),
                 ],
             ),

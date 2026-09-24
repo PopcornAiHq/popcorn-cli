@@ -385,16 +385,10 @@ class TestWebhookCreate:
             "conv-1",
             "flow hook",
             action_mode="trigger_workflow",
-            trigger_flow_id="flow-abc",
+            trigger_flow_name="alert_webhook",
         )
         body = mock_client.post.call_args.kwargs["data"]
         assert body["action_mode"] == "trigger_workflow"
-        assert body["trigger_flow_id"] == "flow-abc"
-
-    def test_trigger_flow_id_omitted_when_none(self, mock_client):
-        mock_client.post.return_value = {"id": "wh-1"}
-        operations.create_webhook(mock_client, "conv-1", "hook")
-        assert "trigger_flow_id" not in mock_client.post.call_args.kwargs["data"]
 
     def test_trigger_flow_name(self, mock_client):
         """Bundle flows are named, not UUID'd — the name form must reach the API."""
