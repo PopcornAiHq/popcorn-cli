@@ -1,11 +1,11 @@
 """Declared-vs-live schedule drift classification.
 
-The offset vectors below are the load-bearing tests. `stable_offset_seconds`
-is a port of the backend's function, and a port that has silently drifted from
-its original would not fail anywhere else: every classification would still be
-self-consistent, and every de-peaked schedule would be reported as class-4
-drift that a reader then has to disprove by hand. Pinning offsets computed
-with the backend's own implementation is what makes the port falsifiable.
+The platform serves, per schedule, the cadence it intends beside the one that
+is armed, so none of these tests computes a de-peaked minute or an interval
+phase. Where a spread value appears it is an arbitrary number standing in for
+what a server reported — the tests that matter pick one no local derivation
+would produce, so a classifier that quietly went back to deriving would fail
+them rather than agree with itself.
 """
 
 from __future__ import annotations
@@ -19,125 +19,39 @@ from popcorn_core.schedule_drift import (
     CLASS_DRIFT,
     CLASS_PAUSED,
     classify,
-    expected_cron,
-    parse_daily_cron,
-    stable_offset_seconds,
 )
-
-# Three synthetic schedule ids. They name no real channel — the derivation
-# only reads the id as bytes, so a made-up id exercises it exactly as a live
-# one would. What makes these vectors worth anything is where the expected
-# values come from: each was computed by running the backend's own
-# `stable_offset_seconds` against these exact ids, so the port is pinned
-# against its original rather than merely against itself. Change an id and the
-# expected value has to be recomputed the same way, never read back off this
-# port.
-#
-# `_CLEANUP_ID` deriving 1 is the useful edge of the set: 1 is the bottom of
-# the `[1, modulus)` range, so that vector also pins the fact that the
-# derivation never returns 0.
-_CHANNEL = "channel:00000000-0000-4000-8000-000000000001"
-_BRIEFING_ID = f"{_CHANNEL}:flow:daily_briefing:daily-briefing"
-_TICK_ID = f"{_CHANNEL}:flow:sweep_tick:sweep-tick"
-_CLEANUP_ID = f"{_CHANNEL}:flow:nightly_cleanup:nightly-cleanup"
 
 
 def _live(slug: str, **over: object) -> dict:
-    item = {
+    """A live schedule whose served intent agrees with what is armed.
+
+    That is the healthy case, so it is the default; a test that needs the
+    platform to disagree with its own arming passes `intended=` with only the
+    fields that differ.
+    """
+    intended_over = over.pop("intended", {})
+    item: dict = {
         "schedule_id": f"channel:conv:flow:f:{slug}",
         "slug": slug,
         "cron_expr": None,
         "interval_seconds": 900,
+        "offset_seconds": 51,
         "paused": False,
         "note": None,
     }
     item.update(over)
+    item["intended"] = {
+        "create_time_schedule_class": "periodic",
+        "cron_expr": item["cron_expr"],
+        "interval_seconds": item["interval_seconds"],
+        "offset_seconds": item["offset_seconds"] if item["interval_seconds"] else None,
+    }
+    item["intended"].update(intended_over)
     return item
 
 
-class TestStableOffset:
-    def test_never_zero_above_modulus_one(self) -> None:
-        """A derived 0 is dropped on the wire, so the range starts at 1."""
-        for i in range(200):
-            assert stable_offset_seconds(f"channel:c:flow:f:s{i}", 60) >= 1
-
-    def test_in_range(self) -> None:
-        for i in range(200):
-            assert 1 <= stable_offset_seconds(f"channel:c:flow:f:s{i}", 180) < 180
-
-    def test_modulus_one_is_the_only_zero(self) -> None:
-        assert stable_offset_seconds("anything", 1) == 0
-
-    def test_stable_across_calls(self) -> None:
-        """Not `hash()` — PYTHONHASHSEED would make that differ per process."""
-        assert stable_offset_seconds(_TICK_ID, 180) == stable_offset_seconds(_TICK_ID, 180)
-
-    def test_rejects_zero_modulus(self) -> None:
-        with pytest.raises(ValueError):
-            stable_offset_seconds("x", 0)
-
-
-class TestPortedOffsetVectors:
-    """The port against values computed with the backend's own implementation."""
-
-    def test_briefing_cron_minute(self) -> None:
-        assert stable_offset_seconds(_BRIEFING_ID, 60) == 45
-
-    def test_tick_interval_phase(self) -> None:
-        assert stable_offset_seconds(_TICK_ID, 180) == 51
-
-    def test_cleanup_cron_minute(self) -> None:
-        """Also the bottom of the range: the derivation never returns 0."""
-        assert stable_offset_seconds(_CLEANUP_ID, 60) == 1
-
-    def test_briefing_expected_cron_matches_backend(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "deadline") == "45 8 * * *"
-
-    def test_cleanup_expected_cron_matches_backend(self) -> None:
-        assert expected_cron(_CLEANUP_ID, "0 9 * * *", "deadline") == "1 9 * * *"
-
-
-class TestParseDailyCron:
-    @pytest.mark.parametrize(
-        "expr,want",
-        [
-            ("0 8 * * *", (8, 0)),
-            ("  30 9 * * *  ", (9, 30)),
-            ("59 23 * * *", (23, 59)),
-        ],
-    )
-    def test_plain_daily(self, expr: str, want: tuple[int, int]) -> None:
-        assert parse_daily_cron(expr) == want
-
-    @pytest.mark.parametrize(
-        "expr",
-        [
-            "0,30 8 * * *",  # minute list
-            "*/15 * * * *",  # step
-            "0 8 * * 1",  # day restriction
-            "0 8 1 * *",  # day-of-month restriction
-            "60 8 * * *",  # out of range
-            "0 24 * * *",  # out of range
-            "not a cron",
-        ],
-    )
-    def test_not_plain_daily(self, expr: str) -> None:
-        assert parse_daily_cron(expr) is None
-
-
-class TestExpectedCron:
-    def test_periodic_passes_through_unspread(self) -> None:
-        """The default class. A `periodic` cron is never de-peaked."""
-        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "periodic") is None
-
-    def test_window_spreads(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 8 * * *", "window") == "45 8 * * *"
-
-    def test_hour_is_preserved(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "0 17 * * *", "deadline") == "45 17 * * *"
-
-    def test_non_daily_shape_unspread_even_under_deadline(self) -> None:
-        assert expected_cron(_BRIEFING_ID, "*/15 * * * *", "deadline") is None
+def _cron(slug: str, cron: str, **over: object) -> dict:
+    return _live(slug, cron_expr=cron, interval_seconds=None, offset_seconds=None, **over)
 
 
 class TestClassify:
@@ -147,45 +61,142 @@ class TestClassify:
         assert not report.alarming
 
     def test_depeaked_cron_is_class_2(self) -> None:
-        sid = "channel:conv:flow:f:daily"
-        want = expected_cron(sid, "0 8 * * *", "deadline")
         report = classify(
             [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
-            [_live("daily", cron_expr=want, interval_seconds=None, schedule_id=sid)],
+            [_cron("daily", "17 8 * * *")],
         )
         finding = report.findings[0]
         assert finding.drift_class == CLASS_DEPEAK
         assert not finding.alarming
 
-    def test_cron_off_its_derivation_is_class_4(self) -> None:
-        """Exact equality: one minute away from the derivation is real drift."""
-        sid = "channel:conv:flow:f:daily"
-        want = expected_cron(sid, "0 8 * * *", "deadline")
-        assert want is not None
-        off_by_one = f"{int(want.split()[0]) - 1} 8 * * *"
+    def test_the_depeaked_minute_is_the_servers_not_a_local_derivation(self) -> None:
+        """Whatever minute the server reports is the one accepted.
+
+        Checked for every minute rather than one, so a classifier deriving
+        the minute locally cannot pass by agreeing with the server on a
+        single lucky id.
+        """
+        for minute in range(1, 60):
+            report = classify(
+                [{"slug": "daily", "cron": "0 8 * * *", "class": "window"}],
+                [_cron("daily", f"{minute} 8 * * *")],
+            )
+            assert report.findings[0].drift_class == CLASS_DEPEAK, minute
+
+    def test_cron_armed_off_its_intent_is_class_4(self) -> None:
+        """One minute away from what the platform means is real drift."""
         report = classify(
             [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
-            [_live("daily", cron_expr=off_by_one, interval_seconds=None, schedule_id=sid)],
+            [_cron("daily", "16 8 * * *", intended={"cron_expr": "17 8 * * *"})],
         )
         assert report.findings[0].drift_class == CLASS_DRIFT
 
-    def test_periodic_cron_differing_is_class_4_not_depeak(self) -> None:
-        """A `periodic` cron passes through, so a difference is never a de-peak."""
-        sid = "channel:conv:flow:f:daily"
-        spread = expected_cron(sid, "0 8 * * *", "deadline")
+    def test_depeak_keeps_the_declared_hour(self) -> None:
+        """The spread moves the minute only; a different hour is drift even
+        when the platform stands behind what is armed."""
         report = classify(
-            [{"slug": "daily", "cron": "0 8 * * *", "class": "periodic"}],
-            [_live("daily", cron_expr=spread, interval_seconds=None, schedule_id=sid)],
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
+            [_cron("daily", "17 9 * * *")],
         )
         assert report.findings[0].drift_class == CLASS_DRIFT
+
+    def test_spreading_class_left_unspread_is_class_4(self) -> None:
+        """Armed as declared, but the platform means a moved minute."""
+        report = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
+            [_cron("daily", "0 8 * * *", intended={"cron_expr": "17 8 * * *"})],
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_DRIFT
+        assert "17 8 * * *" in finding.summary
+
+    def test_spread_cron_whose_derived_minute_is_the_declared_one_is_clean(self) -> None:
+        report = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "deadline"}],
+            [_cron("daily", "0 8 * * *")],
+        )
+        assert report.findings[0].drift_class is None
+
+    def test_periodic_cron_differing_is_class_4_not_depeak(self) -> None:
+        """A `periodic` cron passes through, so a difference is never a de-peak
+        — even one the platform's intent agrees with, which is what a
+        schedule created spread and re-declared `periodic` looks like."""
+        report = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "periodic"}],
+            [_cron("daily", "17 8 * * *")],
+        )
+        assert report.findings[0].drift_class == CLASS_DRIFT
+
+    def test_periodic_cron_armed_as_declared_is_clean_whatever_the_intent(self) -> None:
+        """The intent reflects the class a schedule was created with, which a
+        `periodic` re-declaration does not change. Armed as declared is the
+        manifest's own answer, so the stale class must not raise an alarm."""
+        report = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "periodic"}],
+            [_cron("daily", "0 8 * * *", intended={"cron_expr": "17 8 * * *"})],
+        )
+        assert report.findings[0].drift_class is None
 
     def test_class_defaults_to_periodic(self) -> None:
         """No `class:` in the declaration means `periodic`, so no spreading."""
-        sid = "channel:conv:flow:f:daily"
-        spread = expected_cron(sid, "0 8 * * *", "deadline")
         report = classify(
             [{"slug": "daily", "cron": "0 8 * * *"}],
-            [_live("daily", cron_expr=spread, interval_seconds=None, schedule_id=sid)],
+            [_cron("daily", "17 8 * * *")],
+        )
+        assert report.findings[0].drift_class == CLASS_DRIFT
+
+    def test_create_time_class_is_never_read(self) -> None:
+        """It is provenance, not the manifest's class today.
+
+        Served as spreading on a declaration that is `periodic`, and as
+        `periodic` on one that spreads; neither may change the verdict.
+        """
+        periodic = classify(
+            [{"slug": "daily", "cron": "0 8 * * *"}],
+            [_cron("daily", "17 8 * * *", intended={"create_time_schedule_class": "window"})],
+        )
+        assert periodic.findings[0].drift_class == CLASS_DRIFT
+        spreading = classify(
+            [{"slug": "daily", "cron": "0 8 * * *", "class": "window"}],
+            [_cron("daily", "17 8 * * *", intended={"create_time_schedule_class": "periodic"})],
+        )
+        assert spreading.findings[0].drift_class == CLASS_DEPEAK
+
+    def test_interval_armed_at_its_intended_phase_is_clean(self) -> None:
+        report = classify([{"slug": "tick", "interval": 900}], [_live("tick", offset_seconds=733)])
+        assert report.findings[0].drift_class is None
+
+    def test_interval_armed_off_its_intended_phase_is_class_4(self) -> None:
+        """The interval matches, so only the phase can say anything is wrong."""
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", offset_seconds=12, intended={"offset_seconds": 733})],
+        )
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_DRIFT
+        assert finding.alarming
+        assert "733" in finding.summary
+
+    def test_an_unphased_interval_is_class_4(self) -> None:
+        """No armed phase at all where the platform derives one."""
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [_live("tick", offset_seconds=None, intended={"offset_seconds": 733})],
+        )
+        assert report.findings[0].drift_class == CLASS_DRIFT
+
+    def test_a_marker_does_not_excuse_a_wrong_phase(self) -> None:
+        report = classify(
+            [{"slug": "tick", "interval": 900}],
+            [
+                _live(
+                    "tick",
+                    offset_seconds=12,
+                    note="auto-resumed: set_app_mode",
+                    intended={"offset_seconds": 733},
+                )
+            ],
+            app_mode="test",
         )
         assert report.findings[0].drift_class == CLASS_DRIFT
 
@@ -438,6 +449,10 @@ class TestPauseNotes:
 
 
 class TestAlarmingClasses:
+    def test_class_numbers_are_stable(self) -> None:
+        """`--json` consumers switch on these, so they never move."""
+        assert (CLASS_APP_MODE, CLASS_DEPEAK, CLASS_PAUSED, CLASS_DRIFT) == (1, 2, 3, 4)
+
     def test_only_three_and_four_alarm(self) -> None:
         """The agreed acceptance: exit non-zero only on class 3 and 4."""
         assert {CLASS_PAUSED, CLASS_DRIFT} == schedule_drift.ALARMING_CLASSES

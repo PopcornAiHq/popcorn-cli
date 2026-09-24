@@ -16,39 +16,41 @@ intended ones, and burying the real drift under them is how a checker gets
 ignored. Everything here exists to tell those apart — `classify` sorts each
 difference into one of four classes, and only two of them are worth an alarm.
 
-The de-peak half is exact rather than approximate. `stable_offset_seconds` is
-a pure function of the schedule id and a deliberate re-implementation of the
-server's own derivation, so an expected cron minute is computed and compared
-for equality with no tolerance. Re-implementing rather than importing is the
-point — the CLI depends on no server-side library — and
-`tests/test_schedule_drift.py` pins it against vectors whose expected values
-were computed by the server's own implementation, so a drift between this
-derivation and the server's fails there rather than in a user's report. That
-cross-check is what makes the port falsifiable; a test written only against
-this file's own output would agree with itself no matter how far it drifted.
+The de-peak half is read, not derived. Each schedule in the list response
+carries an `intended` block beside its armed cadence: what the platform's own
+derivation makes of the cadence the schedule carries, computed by the same
+function that arms it. Armed equal to intended is the platform confirming the
+moved minute, or the interval phase, is its own; this module never computes
+either. A copy of that derivation here would be a second implementation with
+nothing to notice when the two disagreed, on the one command an operator runs
+to be told the truth about a channel.
 
-What this cannot see: the interval **phase**. `resolve_schedule` derives one
-for every interval schedule regardless of class, but no field of the
-scheduled-flow list response carries it, so an interval's offset is
-unverifiable from this surface and only its `interval_seconds` is compared.
+The served intent says nothing about the manifest — it is derived from the
+armed cadence, not the declaration — so matching the hour or the interval
+against what the manifest declares stays here, as does the `class:` a
+declaration names. `intended.create_time_schedule_class` is deliberately never
+read: it is the class the schedule was created with, and a manifest that
+re-declares `class:` over a live schedule does not refresh it, so it says
+nothing about what the manifest declares today.
+
+What this cannot see: a schedule whose manifest re-declared it from `periodic`
+onto a spreading class. The platform keeps judging it by its create-time class,
+so it is armed unspread, its intent agrees, and so does its declared cron —
+nothing on this surface separates it from a schedule whose derived minute
+happens to be the declared one.
 """
 
 from __future__ import annotations
 
-import hashlib
-import re
 from dataclasses import dataclass, field
 from typing import Any
 
-# `M H * * *` and nothing else, matching the only shape the server spreads. A
-# minute list, a step, or a day restriction has no single minute to move, so
-# the installer leaves those unspread and so does the expectation here.
-_DAILY_CRON = re.compile(r"^\s*(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+\*\s*$")
-
-# Only these two classes compile a plain daily cron into a spread calendar.
-# `periodic` — which is also the default a manifest entry takes when it
-# declares no `class:` — passes its cron through untouched, so a `periodic`
-# cron that differs from its declaration is real drift rather than a de-peak.
+# The declared classes the platform spreads a plain daily cron under. This is
+# vocabulary for reading a declaration, not the spread itself: it decides
+# whether a manifest asked for a moved minute, and the served intent decides
+# which minute. `periodic` — also the class a declaration with no `class:`
+# takes — passes its cron through untouched, so a `periodic` cron that differs
+# from its declaration is real drift rather than a de-peak.
 _CRON_SPREADING_CLASSES = frozenset({"deadline", "window"})
 _DEFAULT_SCHEDULE_CLASS = "periodic"
 
@@ -169,57 +171,6 @@ CLASS_DRIFT = 4
 ALARMING_CLASSES = frozenset({CLASS_PAUSED, CLASS_DRIFT})
 
 
-def stable_offset_seconds(schedule_id: str, modulus: int) -> int:
-    """A permanent phase in ``[1, modulus)`` for this schedule id.
-
-    A re-implementation of the server's own derivation; see this module's
-    docstring for why it is re-implemented rather than imported. Two
-    properties are load-bearing and both are pinned by tests:
-
-    * It is blake2b, not `hash()` — `PYTHONHASHSEED` randomizes str hashing
-      per process, so a hash-derived offset would not even agree with itself
-      between two runs of this command.
-    * It never returns 0 for ``modulus > 1``. The server shifts the range to
-      ``[1, modulus)`` because temporalio drops a zero phase on the wire; the
-      consequence here is that a computed expectation of 0 means the modulus
-      is wrong, not that the schedule has no offset.
-    """
-    if modulus < 1:
-        raise ValueError(f"modulus must be >= 1, got {modulus}")
-    digest = hashlib.blake2b(schedule_id.encode("utf-8"), digest_size=8).digest()
-    raw = int.from_bytes(digest, "big")
-    if modulus == 1:
-        return 0
-    return raw % (modulus - 1) + 1
-
-
-def parse_daily_cron(cron_expr: str) -> tuple[int, int] | None:
-    """``(hour, minute)`` for a plain daily cron, else None."""
-    match = _DAILY_CRON.match(cron_expr)
-    if not match:
-        return None
-    minute, hour = int(match.group(1)), int(match.group(2))
-    if not (0 <= minute <= 59 and 0 <= hour <= 23):
-        return None
-    return hour, minute
-
-
-def expected_cron(schedule_id: str, cron_expr: str, schedule_class: str) -> str | None:
-    """The cron this declaration should have become once installed.
-
-    Returns None when the installer would have left the declaration alone —
-    a non-spreading class, or a cron with no single minute to move. The
-    caller then expects the declared expression unchanged.
-    """
-    if schedule_class not in _CRON_SPREADING_CLASSES:
-        return None
-    parsed = parse_daily_cron(cron_expr)
-    if parsed is None:
-        return None
-    hour, _declared_minute = parsed
-    return f"{stable_offset_seconds(schedule_id, 60)} {hour} * * *"
-
-
 @dataclass(frozen=True)
 class Finding:
     """One schedule's verdict. `drift_class` is None when nothing differs."""
@@ -324,8 +275,10 @@ def classify(
     """Sort every declared-vs-live difference into one of the four classes.
 
     `declared` is the bound manifest's `schedules:` list; `live` is the
-    scheduled-flow list response. They are matched by `slug`, which is the
-    identity the installer keys on.
+    scheduled-flow list response, each item carrying its served `intended`
+    block — the caller refuses a response without one rather than letting
+    this read an absent intent as a disagreeing one. They are matched by
+    `slug`, which is the identity the installer keys on.
 
     A live schedule with no declaration is reported as clean rather than as
     drift: the installer only deletes name-keyed schedules it owns and leaves
@@ -441,6 +394,22 @@ def _explained_pause(marker: _PauseMarker, app_mode: str | None) -> str:
     return f"{marker.pause_summary} — this channel's app_mode is {app_mode!r}"
 
 
+def _only_minute_moved(declared_cron: str, live_cron: str) -> bool:
+    """Do two crons differ in nothing but a fixed minute?
+
+    That is the whole of what a spread changes, so it is the shape a de-peak
+    has to take. Which minute is right is not decided here — the served
+    intent does that — only that the hour and the day fields survived.
+    """
+    declared, live = declared_cron.split(), live_cron.split()
+    return (
+        len(declared) == len(live) == 5
+        and declared[0].isdigit()
+        and live[0].isdigit()
+        and declared[1:] == live[1:]
+    )
+
+
 def _classify_cadence(
     *,
     slug: str,
@@ -451,40 +420,72 @@ def _classify_cadence(
     marker: _PauseMarker | None,
     app_mode: str | None,
 ) -> Finding:
-    """Compare the cadence of a live, unpaused schedule against its declaration."""
-    schedule_id = item.get("schedule_id") or ""
+    """Compare the cadence of a live, unpaused schedule against its declaration.
+
+    Two comparisons, against two different sources. The manifest is judged
+    against the armed cadence on the fields it declares — the hour, the
+    interval. The armed minute and phase are judged against the served
+    `intended` block, because only the platform knows what they should be.
+    """
+    intended = item.get("intended") or {}
     declared_interval = entry.get("interval")
     declared_cron = entry.get("cron")
     live_interval = item.get("interval_seconds")
     live_cron = item.get("cron_expr")
 
     if declared_interval is not None and live_interval is not None:
-        if declared_interval == live_interval:
-            return Finding(slug=slug, drift_class=None, summary="matches the manifest")
-        return _cadence_difference(slug, declared_cadence, live_cadence, marker, app_mode)
+        if declared_interval != live_interval:
+            return _cadence_difference(slug, declared_cadence, live_cadence, marker, app_mode)
+        armed_phase = item.get("offset_seconds")
+        intended_phase = intended.get("offset_seconds")
+        if armed_phase != intended_phase:
+            # No marker excuses this: a mode change that retunes an interval
+            # re-derives its phase, so a phase that is not the platform's own
+            # was put there by something other than the platform.
+            return Finding(
+                slug=slug,
+                drift_class=CLASS_DRIFT,
+                summary=(
+                    f"fires at phase {armed_phase!r}s inside its interval, but "
+                    f"the platform derives {intended_phase!r}s for this schedule "
+                    "— it is armed off the platform's own spread"
+                ),
+                declared=declared_cadence,
+                live=f"{live_cadence}, phase {armed_phase!r}s",
+            )
+        return Finding(slug=slug, drift_class=None, summary="matches the manifest")
 
     if declared_cron and live_cron:
-        want = expected_cron(
-            schedule_id,
-            str(declared_cron),
-            str(entry.get("class") or _DEFAULT_SCHEDULE_CLASS),
-        )
-        if want is None:
-            # The installer would have passed this declaration through, so
-            # the declared expression is what should be live.
-            if str(declared_cron).strip() == str(live_cron).strip():
+        declared_expr = str(declared_cron).strip()
+        live_expr = str(live_cron).strip()
+        intended_expr = str(intended.get("cron_expr") or "").strip()
+        spreads = str(entry.get("class") or _DEFAULT_SCHEDULE_CLASS) in _CRON_SPREADING_CLASSES
+        armed_as_intended = live_expr == intended_expr
+
+        if live_expr == declared_expr:
+            if armed_as_intended or not spreads:
+                # A `periodic` declaration asks for its cron verbatim, which
+                # is what is armed; the intent disagreeing then only reflects
+                # the class the schedule was created with, not this manifest.
                 return Finding(slug=slug, drift_class=None, summary="matches the manifest")
-            return _cadence_difference(slug, declared_cadence, live_cadence, marker, app_mode)
-        if str(live_cron).strip() == want:
-            if str(declared_cron).strip() == want:
-                return Finding(slug=slug, drift_class=None, summary="matches the manifest")
+            return Finding(
+                slug=slug,
+                drift_class=CLASS_DRIFT,
+                summary=(
+                    f"armed at its declared {declared_expr!r}, but the platform "
+                    f"means it to fire at {intended_expr!r} — the manifest "
+                    "declares a spreading class and the spread was never applied"
+                ),
+                declared=declared_cadence,
+                live=live_cadence,
+            )
+        if spreads and armed_as_intended and _only_minute_moved(declared_expr, live_expr):
             return Finding(
                 slug=slug,
                 drift_class=CLASS_DEPEAK,
                 summary=(
-                    f"de-peaked off {declared_cron!r} to {want!r} — the "
-                    "deterministic per-schedule offset, matched exactly, not "
-                    "approximately"
+                    f"de-peaked off {declared_expr!r} to {live_expr!r} — the "
+                    "minute the platform reports deriving for this schedule"
                 ),
                 declared=declared_cadence,
                 live=live_cadence,
@@ -509,7 +510,7 @@ def _cadence_difference(
     marker: _PauseMarker | None,
     app_mode: str | None,
 ) -> Finding:
-    """A cadence that differs for a reason the de-peak offset does not explain."""
+    """A cadence that differs for a reason the platform's intent does not explain."""
     if marker is not None:
         mode = f" (app_mode {app_mode!r})" if app_mode else ""
         return Finding(
