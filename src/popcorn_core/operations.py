@@ -1482,19 +1482,24 @@ def list_store_audit(
 # App bundles (read)
 # ---------------------------------------------------------------------------
 #
-# The user-JWT mirror of the agent surface's /apps reads. `conversation_id`
-# is required on every one of them and is what
-# authorizes the call — the human surface never reads
-# X-Active-Conversation-ID — so these look like every other channel-scoped
-# operation here and need nothing special from APIClient.
+# The user-JWT mirror of the agent surface's /apps reads. The per-channel
+# reads (tree, file, files) require `conversation_id`, and it is what
+# authorizes them — the human surface never reads X-Active-Conversation-ID —
+# so they look like every other channel-scoped operation here and need
+# nothing special from APIClient. The list is the exception: its inventory is
+# the workspace's, and the channel only selects a binding to report.
 
 
-def list_channel_apps(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Each app's lineage heads, plus this channel's current binding.
+def list_channel_apps(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
+    """Each app's lineage heads, plus a channel's current binding if one is named.
 
     One "product" entry per app and one "fork" entry per fork line the
-    workspace owns. `channel` is null when the channel runs no bundle.
+    workspace owns. The inventory is the workspace's whatever the channel, so
+    the channel is optional: it only selects the binding reported alongside.
+    `channel` is null when none was named or the named one runs no bundle.
     """
+    if conversation is None:
+        return client.get("/api/apps/list")
     conv_id = resolve_conversation(client, conversation)
     return client.get("/api/apps/list", {"conversation_id": conv_id})
 
@@ -1589,10 +1594,11 @@ def require_version_served(resp: dict[str, Any], version_id: int) -> None:
 # ---------------------------------------------------------------------------
 #
 # The user-JWT mirror of the agent surface's writes.
-# Same `conversation_id`-authorizes-the-call shape as the reads, so these are
-# three-liners too. One asymmetry worth knowing at the call site: `publish` is
-# workspace-ADMIN only while fork and apply also accept a channel member, so a
-# member gets a 403 on publish alone.
+# Fork and apply have the reads' `conversation_id`-authorizes-the-call shape,
+# so these are three-liners too. `publish` is the asymmetry worth knowing at
+# the call site: it is workspace-ADMIN only, its `conversation_id` authorizes
+# nothing and only names the channel to install on, and so a channel member
+# gets a 403 on publish alone.
 
 
 def fork_channel_app(

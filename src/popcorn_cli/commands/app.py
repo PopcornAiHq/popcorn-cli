@@ -30,11 +30,10 @@ versions. Its baseline is marked `historical` unless N is the head, and
 
 Two groups of commands, split by what they act on:
 
-- `list`, `lines` and `fork` act on a CHANNEL, so they take `--channel`.
-  `list` takes it too, which is not an oversight: the reads require
-  `conversation_id` because that is the field the API authorizes against.
-  `lines` reports the WORKSPACE's fork lines and needs the channel only for
-  that authorization.
+- `fork` acts on a CHANNEL, so it takes `--channel`. `list` and `lines`
+  report the WORKSPACE's apps and fork lines, which the API serves without a
+  channel; `--channel` on `list` adds what that channel runs, and `lines`
+  needs none.
 - `checkout`, `publish`, `apply` and `status` act on a checkout DIRECTORY and
   read the channel out of its baseline. `--channel` stays accepted there for
   baselines written by 0.19.0, which predate the field.
@@ -125,7 +124,9 @@ _DIRECTORY = Argument(
 )
 
 
-def _render_list(data: dict) -> str:
+def _render_list(data: dict, named_channel: bool = True) -> str:
+    """`named_channel` separates "this channel runs nothing" from "no channel
+    was asked about" — the response's `channel` is null for both."""
     apps = data.get("apps") or []
     channel = data.get("channel")
 
@@ -151,8 +152,10 @@ def _render_list(data: dict) -> str:
             f"This channel runs {channel.get('app')} "
             f"{channel.get('semver')} ({channel.get('kind')}, line {line})"
         )
-    else:
+    elif named_channel:
         lines.append("This channel does not run an app bundle.")
+    else:
+        lines.append("Pass --channel to also see what one channel runs.")
     return "\n".join(lines)
 
 
@@ -160,8 +163,9 @@ def _app_list(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = operations.list_channel_apps(client, args.channel)
-    _output(args, data, _render_list(data))
+    channel = getattr(args, "channel", None)
+    data = operations.list_channel_apps(client, channel)
+    _output(args, data, _render_list(data, named_channel=bool(channel)))
 
 
 # How many channels ride each line is the safety information `app lines`
@@ -187,12 +191,12 @@ _NO_DELETE = (
 )
 
 
-def _render_lines(lines_data: list[dict], channel: str) -> str:
+def _render_lines(lines_data: list[dict]) -> str:
     from ..formatting import format_timestamp
 
     if not lines_data:
         return (
-            f"This workspace owns no fork lines of any app visible to {channel}.\n"
+            "This workspace owns no fork lines.\n"
             "\n"
             "'popcorn app checkout --channel <channel> --fork' makes the first one."
         )
@@ -224,14 +228,14 @@ def _app_lines(args: argparse.Namespace) -> None:
     in one workspace is a routine afternoon and nothing listed them on their
     own.
 
-    `--channel` is required and is not a filter: `/apps/list` authorizes
-    against `conversation_id`, so a workspace-level read still has to name a
-    channel it can reach. The lines that come back are the workspace's.
+    No channel is sent: the inventory is workspace-scoped and the API serves
+    it without one. `--channel` is still accepted so scripts written when the
+    API required it keep working, and it changes nothing that is listed.
     """
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = operations.list_channel_apps(client, args.channel)
+    data = operations.list_channel_apps(client)
     wanted = getattr(args, "app", None)
     lines_data = sorted(
         (
@@ -242,14 +246,13 @@ def _app_lines(args: argparse.Namespace) -> None:
         key=lambda i: (str(i.get("app") or ""), str(i.get("fork_name") or "")),
     )
     payload = {
-        "channel": args.channel,
         "lines": lines_data,
         # Stated on the wire too, so a script reading --json is told the count
         # is absent rather than inferring zero from a missing key.
         "channel_counts_available": False,
         "delete_supported": False,
     }
-    _output(args, payload, _render_lines(lines_data, str(args.channel)))
+    _output(args, payload, _render_lines(lines_data))
 
 
 # Where a version id can be seen, since nothing lists a line's past versions:
@@ -1251,9 +1254,9 @@ register(
         subcommands=[
             Subcommand(
                 "list",
-                "Show each app's product and fork lines, and this channel's binding",
+                "Show each app's product and fork lines, and with --channel what that channel runs",
                 _app_list,
-                [_CHANNEL],
+                [Argument("channel", "Also report what this channel runs (name or UUID)")],
             ),
             Subcommand(
                 "lines",
@@ -1262,10 +1265,8 @@ register(
                 [
                     Argument(
                         "channel",
-                        "Any channel you can reach — the API authorizes this "
-                        "read against a conversation; the lines listed are "
-                        "the workspace's, not the channel's",
-                        required=True,
+                        "Not needed, and ignored: the lines listed are the "
+                        "workspace's. Accepted so older scripts keep working",
                     ),
                     Argument("app", "Only this app's lines (default: every app)"),
                 ],
