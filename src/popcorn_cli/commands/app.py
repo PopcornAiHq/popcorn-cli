@@ -246,6 +246,9 @@ def _app_lines(args: argparse.Namespace) -> None:
         key=lambda i: (str(i.get("app") or ""), str(i.get("fork_name") or "")),
     )
     payload = {
+        # Echoed as passed (null when omitted): `--json` keys are add-only,
+        # even for an argument that no longer scopes anything.
+        "channel": getattr(args, "channel", None),
         "lines": lines_data,
         # Stated on the wire too, so a script reading --json is told the count
         # is absent rather than inferring zero from a missing key.

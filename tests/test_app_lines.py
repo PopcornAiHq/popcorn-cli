@@ -180,6 +180,13 @@ class TestNoChannelIsSent:
             mod._app_lines(_args(channel="#somewhere-else"))
         assert calls == [None, None]
 
+    def test_json_still_carries_the_channel_key(self):
+        """`--json` keys are add-only: `channel` stays, echoing what was
+        passed, or null when nothing was."""
+        listing = _listing(("claimcoordinator", "default", "1.14.0"))
+        assert _run(_args(channel=None), listing)["data"]["channel"] is None
+        assert _run(_args(channel="#alerts"), listing)["data"]["channel"] == "#alerts"
+
     def test_channel_is_optional_on_the_command_line(self):
         from popcorn_cli.registry import COMMANDS
 
