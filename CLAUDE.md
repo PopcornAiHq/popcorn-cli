@@ -196,8 +196,13 @@ The two findings it adds — `code-file-outside-block` and
 **Agents are a fourth** (`agents/<name>/agent.yaml`, `prompt.md`,
 `schemas/*.json`). The checker only stops misreading them — as flows with no
 steps, nested flows, and basename collisions between every pair of agents. It
-adds no finding of its own for them; `app publish` does not yet send `agents/`,
-which `path-not-published` reports truthfully.
+adds no finding of its own for them. `app publish` sends exactly the served
+layout (`app_publish.is_agent_path`, which the checker also calls), and
+anything else under `agents/` is filtered and reported as ignored, which
+`path-not-published` repeats. Filtered rather than collected-for-refusal the
+way `code/` is, because a half-formed agent cannot slip through: the server
+parses every agent directory at publish and refuses one missing its required
+files.
 
 **Activity roles are served too** (`ACTIVITY_ROLES`, `STEP_ERROR_PROPERTIES`).
 The column checks key off each activity's served `column_args` and the

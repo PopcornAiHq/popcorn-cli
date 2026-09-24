@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -44,6 +45,13 @@ from .errors import PopcornError
 FILES_SUBDIRS = flow_rules.SUBDIRS
 MANIFEST_FILENAMES = flow_rules.MANIFEST_FILENAMES
 _DOC_FILENAMES = (flow_rules.AGENT_DOC_FILENAME, flow_rules.README_FILENAME)
+# How an agent directory is laid out, for the messages that name a path the
+# server would not read. Built from the served rules so it cannot drift.
+AGENT_LAYOUT = (
+    f"{flow_rules.AGENTS_SUBDIR}/<name>/ holding "
+    + ", ".join(flow_rules.AGENT_FILENAMES)
+    + f" and {flow_rules.AGENT_SCHEMAS_SUBDIR}/<file>{flow_rules.AGENT_SCHEMA_SUFFIX}"
+)
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
 
@@ -132,6 +140,30 @@ def _is_code_block_path(parts: list[str]) -> bool:
     )
 
 
+def is_agent_path(parts: Sequence[str]) -> bool:
+    """One of the files an agent directory may hold, as the server reads it.
+
+    Exactly three shapes: `agents/<name>/<one of AGENT_FILENAMES>`, and a
+    non-hidden `agents/<name>/<AGENT_SCHEMAS_SUBDIR>/<file><AGENT_SCHEMA_SUFFIX>`.
+    The agent name is held to the code-block slug rule. Unlike `code/`, the
+    depth is exact: the server reads nothing deeper and refuses a published
+    tree that carries anything else under `agents/`, so any other path there
+    is reported as ignored rather than sent.
+    """
+    if len(parts) < 3 or parts[0] != flow_rules.AGENTS_SUBDIR:
+        return False
+    if not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, parts[1]):
+        return False
+    if len(parts) == 3:
+        return parts[2] in flow_rules.AGENT_FILENAMES
+    return (
+        len(parts) == 4
+        and parts[2] == flow_rules.AGENT_SCHEMAS_SUBDIR
+        and not parts[3].startswith(".")
+        and parts[3].endswith(flow_rules.AGENT_SCHEMA_SUFFIX)
+    )
+
+
 def recognized(path: str) -> bool:
     """Whether this CLI understands `path` as installable bundle content.
 
@@ -153,6 +185,8 @@ def recognized(path: str) -> bool:
     parts = path.split("/")
     if parts[0] == flow_rules.CODE_SUBDIR:
         return _is_code_block_path(parts)
+    if parts[0] == flow_rules.AGENTS_SUBDIR:
+        return is_agent_path(parts)
     return (
         len(parts) == flow_rules.SUBDIR_PATH_DEPTH
         and parts[0] in FILES_SUBDIRS
@@ -230,6 +264,9 @@ def classify_tree(directory: Path) -> tuple[list[tuple[str, Path]], list[str]]:
                 for child in _walk_code_dir(entry):
                     published.append((child.relative_to(directory).as_posix(), child))
                 continue
+            if entry.name == flow_rules.AGENTS_SUBDIR:
+                _classify_agents_dir(entry, directory, published, ignored)
+                continue
             if entry.name not in FILES_SUBDIRS:
                 ignored.append(f"{entry.name}/")
                 continue
@@ -251,6 +288,36 @@ def classify_tree(directory: Path) -> tuple[list[tuple[str, Path]], list[str]]:
             continue
         published.append((entry.name, entry))
     return published, ignored
+
+
+def _classify_agents_dir(
+    root: Path,
+    directory: Path,
+    published: list[tuple[str, Path]],
+    ignored: list[str],
+) -> None:
+    """Sort `agents/` into the agent files the server reads and the rest.
+
+    Filtered, unlike `code/`, which has to keep a misplaced file so publish
+    can refuse it rather than ship half a block. An agent cannot go out half
+    formed that way: the server parses each agent directory at publish and
+    refuses one missing either of its required files, so a filtered
+    `agents/x/Prompt.md` still fails loudly — and it is reported here as
+    ignored before that. A directory whose name fails the slug rule is
+    reported once rather than file by file, since nothing in it can be read.
+    """
+    for child in sorted(root.iterdir(), key=lambda p: p.name):
+        if child.name.startswith(".") or child.name in _SILENT_SKIPS:
+            continue
+        if child.is_dir() and not re.match(flow_rules.CODE_BLOCK_NAME_PATTERN, child.name):
+            ignored.append(f"{child.relative_to(directory).as_posix()}/")
+            continue
+        for path in _walk_code_dir(child) if child.is_dir() else [child]:
+            rel = path.relative_to(directory).as_posix()
+            if is_agent_path(rel.split("/")):
+                published.append((rel, path))
+            else:
+                ignored.append(rel)
 
 
 def _walk_code_dir(root: Path) -> list[Path]:
@@ -532,7 +599,7 @@ def ignored_note(ignored: list[str]) -> str:
         "Not installable, so not published: "
         + ", ".join(ignored)
         + " (flows are root-level <name>.yaml; prompts and templates go "
-        "exactly one level under prompts/ or templates/)"
+        "exactly one level under prompts/ or templates/; an agent is " + AGENT_LAYOUT + ")"
     )
 
 
