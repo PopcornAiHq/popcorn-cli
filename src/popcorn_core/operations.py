@@ -1064,51 +1064,6 @@ def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) 
     )
 
 
-# Mirrors the server importer's per-entry ceiling so an oversized bundle fails
-# locally with a clear message instead of as an opaque 400.
-_MAX_TEMPLATE_ENTRY_BYTES = 1024 * 1024
-
-
-def pack_template_dir(path: str) -> bytes:
-    """Zip a template directory the way the importer expects to read it.
-
-    Skips the same cruft the server skips (dotfiles/dotdirs, ``__MACOSX``) and
-    enforces the same per-entry ceiling. Requires a manifest: a bundle without
-    one installs flows with no tables, schedules or webhooks, which is almost
-    never what the author meant.
-    """
-    import io
-    import zipfile
-
-    root = Path(path)
-    if not root.is_dir():
-        raise PopcornError(f"Not a directory: {path}", error_code="validation")
-
-    entries: list[tuple[Path, str]] = []
-    for file in sorted(root.rglob("*")):
-        if not file.is_file():
-            continue
-        rel = file.relative_to(root)
-        if any(p.startswith(".") or p == "__MACOSX" for p in rel.parts):
-            continue
-        size = file.stat().st_size
-        if size > _MAX_TEMPLATE_ENTRY_BYTES:
-            raise PopcornError(
-                f"{rel} is {size} bytes, over the 1 MiB per-file limit",
-                error_code="validation",
-            )
-        entries.append((file, rel.as_posix()))
-
-    if not any(name in ("manifest.yaml", "config.yaml") for _, name in entries):
-        raise PopcornError(f"No manifest.yaml in {path}", error_code="validation")
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file, name in entries:
-            zf.write(file, name)
-    return buf.getvalue()
-
-
 # Why `flow import` no longer exists. Kept as a module constant so the library
 # raise and the CLI subcommand cannot drift apart on the one thing an author
 # needs from this error: where installs actually happen now.
@@ -1148,9 +1103,7 @@ def import_template(
     real publish path instead; see :data:`TEMPLATE_INSTALL_REMOVED`.
 
     The signature is unchanged so a caller reaches the explanation rather than
-    an AttributeError. :func:`pack_template_dir` is deliberately kept: the
-    server-side zip parser was retained for a future upload transport, and the
-    packing rules are the checked half of that contract.
+    an AttributeError.
     """
     raise PopcornError(TEMPLATE_INSTALL_REMOVED, error_code="validation")
 
