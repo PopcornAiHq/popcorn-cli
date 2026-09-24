@@ -42,8 +42,8 @@ from .errors import PopcornError
 # checker consumes, and a second hand-written copy of a served rule is exactly
 # the drift this package set out to end.
 FILES_SUBDIRS = flow_rules.SUBDIRS
-MANIFEST_FILENAMES = ("manifest.yaml", "config.yaml")
-_DOC_FILENAMES = ("AGENT.md", "README.md")
+MANIFEST_FILENAMES = flow_rules.MANIFEST_FILENAMES
+_DOC_FILENAMES = (flow_rules.AGENT_DOC_FILENAME, flow_rules.README_FILENAME)
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
 
