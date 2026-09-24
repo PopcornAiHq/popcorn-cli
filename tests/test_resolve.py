@@ -209,3 +209,84 @@ class TestResolveUser:
         resolve_user(mock_client, "example-ana")
         resolve_user(mock_client, "example-ana")
         assert mock_client.get.call_count == 1
+
+
+class TestResolveByName:
+    """The server answers the lookup; these pin how few requests it takes and
+    that its filter is never trusted as the match itself."""
+
+    @staticmethod
+    def _server(*convs: dict):
+        """A listing that honours `name=` (exact) and `query=` (folded substring)."""
+
+        def _list(_path, params):
+            rows = list(convs)
+            if "name" in params:
+                rows = [c for c in rows if c["name"] == params["name"]]
+            if "query" in params:
+                rows = [c for c in rows if params["query"].lower() in c["name"].lower()]
+            return {"conversations": rows, "response_metadata": {"next_cursor": ""}}
+
+        return _list
+
+    def test_an_exact_name_is_one_request_by_name(self, mock_client):
+        mock_client.get.side_effect = self._server({"id": "conv-001", "name": "general"})
+        assert resolve_conversation(mock_client, "#general") == "conv-001"
+        assert mock_client.get.call_count == 1
+        _, params = mock_client.get.call_args[0]
+        assert params["name"] == "general"
+        assert "query" not in params
+
+    def test_a_case_variant_costs_one_more_request_not_a_walk(self, mock_client):
+        mock_client.get.side_effect = self._server({"id": "conv-001", "name": "General"})
+        assert resolve_conversation(mock_client, "#general") == "conv-001"
+        assert mock_client.get.call_count == 2
+        _, params = mock_client.get.call_args[0]
+        assert params["query"] == "general"
+        assert "name" not in params
+
+    def test_the_fallback_keeps_visibility_switches(self, mock_client):
+        mock_client.get.side_effect = self._server({"id": "conv-001", "name": "General"})
+        resolve_conversation(mock_client, "#general")
+        for call in mock_client.get.call_args_list:
+            assert call[0][1]["exclude_hidden"] == "false"
+            assert call[0][1]["exclude_archived"] == "false"
+
+    def test_a_substring_hit_is_not_a_match(self, mock_client):
+        """`query=` is a substring search; #ops must not resolve to #devops."""
+        mock_client.get.side_effect = self._server({"id": "conv-001", "name": "devops"})
+        with pytest.raises(PopcornError, match="Channel not found"):
+            resolve_conversation(mock_client, "#ops")
+
+    def test_two_channels_with_the_identical_name_raise(self, mock_client):
+        """A channel shared in from another workspace can carry a local name."""
+        mock_client.get.side_effect = self._server(
+            {"id": "conv-local", "name": "ops"}, {"id": "conv-shared", "name": "ops"}
+        )
+        with pytest.raises(PopcornError, match="matches more than one channel") as excinfo:
+            resolve_conversation(mock_client, "#ops")
+        assert "conv-local" in str(excinfo.value)
+        assert "conv-shared" in str(excinfo.value)
+
+    def test_a_server_ignoring_the_filter_does_not_pick_the_top_row(self, mock_client):
+        """An API that predates the parameters drops them silently and serves
+        an unfiltered page; trusting it would resolve to whatever sits first."""
+        mock_client.get.return_value = {
+            "conversations": [
+                {"id": "conv-top", "name": "random"},
+                {"id": "conv-001", "name": "general"},
+            ]
+        }
+        assert resolve_conversation(mock_client, "#general") == "conv-001"
+
+    def test_an_empty_name_asks_nothing(self, mock_client):
+        """An empty `query=` is no filter at all, so it would walk everything."""
+        with pytest.raises(PopcornError, match="Channel not found"):
+            resolve_conversation(mock_client, "#")
+        mock_client.get.assert_not_called()
+
+    def test_a_case_variant_is_cached_under_the_spelling_asked(self, mock_client):
+        mock_client.get.side_effect = self._server({"id": "conv-001", "name": "General"})
+        resolve_conversation(mock_client, "#general")
+        resolve_conversation(mock_client, "#general")
+        assert mock_client.get.call_count == 2

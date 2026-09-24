@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from .errors import ERROR_CODE_NOT_FOUND, ERROR_CODE_VALIDATION, PopcornError
@@ -35,24 +36,67 @@ def _cached(cache: dict[str, tuple[str, float]], key: str, ttl: float) -> str | 
     return value if time.time() - cached_at < ttl else None
 
 
+def _ambiguous(ref: str, matches: dict[str, dict[str, Any]]) -> PopcornError:
+    spellings = sorted(
+        f"#{conv.get('name') or '?'} ({conv_id})" for conv_id, conv in matches.items()
+    )
+    return PopcornError(
+        f"'{ref}' matches more than one channel: {', '.join(spellings)}.\n"
+        "   Channel names are case-sensitive — pass the exact name or the id instead.",
+        error_code=ERROR_CODE_VALIDATION,
+    )
+
+
+def _matching(
+    client: APIClient,
+    params: dict[str, Any],
+    keep: Callable[[str], bool],
+    *,
+    stop_on_match: bool,
+) -> dict[str, dict[str, Any]]:
+    """Conversations in a filtered listing whose name passes `keep`, by id.
+
+    The server's filter narrows the listing; `keep` is what decides. They are
+    not the same test — `query=` is a substring, the fallback wants equality —
+    and re-checking also means a server that ignores the filter yields a slow
+    walk rather than whichever channel sits at the top of an unfiltered page.
+
+    Keyed by id because the listing cursor is an offset into a list the server
+    recomputes per page, so one channel can surface twice.
+    """
+    found: dict[str, dict[str, Any]] = {}
+    for page in iter_pages(client, "/api/conversations/list", params, "conversations"):
+        for conv in page:
+            conv_id = conv.get("id")
+            if conv_id and keep(conv.get("name") or ""):
+                found.setdefault(str(conv_id), conv)
+        # The whole page holding a match is read, so two matches on it are
+        # caught; the pages after it are not worth a request each.
+        if found and stop_on_match:
+            break
+    return found
+
+
 def resolve_conversation(client: APIClient, ref: str) -> str:
     """Resolve #channel-name to UUID, or pass through UUIDs.
 
-    Matches the name exactly first, and only falls back to a case-insensitive
-    match when exactly one channel answers to it. Server-side name uniqueness
-    is a case-SENSITIVE equality, so "#Ops" and "#ops" can both exist as
-    different channels; picking whichever the listing happened to yield first
-    was a silent wrong answer, and a write command aimed at the wrong channel
-    is worse than an error.
-
-    The durable fix is a server-side lookup by name. No such endpoint exists,
-    which is why this function walks the listing at all.
+    Asks the server for the exact name first, and only falls back to a
+    case-insensitive match when exactly one channel answers to it. Name
+    uniqueness is a case-SENSITIVE equality, so "#Ops" and "#ops" can both
+    exist as different channels; picking one of them was a silent wrong
+    answer, and a write command aimed at the wrong channel is worse than an
+    error. The same holds for two channels with the identical name, which a
+    channel shared in from another workspace can produce: the listing is
+    everything the caller is a member of, not one workspace's channels.
     """
     if _is_uuid(ref):
         return ref
 
     # Case-preserved, so the cache cannot answer "#Ops" with a cached "#ops".
+    # The server's exact match is case-sensitive too, so the two agree.
     name = ref.lstrip("#")
+    if not name:
+        raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
 
     cached = _cached(_channel_cache, name, CHANNEL_CACHE_TTL)
     if cached is not None:
@@ -62,44 +106,30 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
     # means that channel whatever its visibility, and hidden ones are excluded
     # by default — which left `channel list --include-hidden` displaying names
     # every other command then rejected as "Channel not found".
-    params = listing_params(include_archived=True, include_hidden=True)
+    visibility = listing_params(include_archived=True, include_hidden=True)
 
-    folded = name.lower()
-    # Keyed by id: the listing cursor is an offset into a list the server
-    # recomputes per page, so one channel can surface twice.
-    variants: dict[str, dict[str, Any]] = {}
+    matches = _matching(
+        client, {**visibility, "name": name}, lambda n: n == name, stop_on_match=True
+    )
+    if len(matches) > 1:
+        raise _ambiguous(ref, matches)
 
-    # Page through the listing rather than taking one maximal page: past that
-    # page the server reports a cursor, and ignoring it turned "your workspace
-    # is large" into "Channel not found". Stop at the first exact match, so a
-    # name near the front still costs one request; only a case variant pays
-    # for the whole workspace, because ambiguity is not decidable until then.
-    for page in iter_pages(client, "/api/conversations/list", params, "conversations"):
-        for conv in page:
-            conv_name = conv.get("name") or ""
-            conv_id = conv.get("id")
-            if not conv_id:
-                continue
-            if conv_name == name:
-                _channel_cache[name] = (str(conv_id), time.time())
-                return str(conv_id)
-            if conv_name.lower() == folded:
-                variants.setdefault(str(conv_id), conv)
-
-    if not variants:
-        raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
-
-    if len(variants) > 1:
-        spellings = sorted(
-            f"#{conv.get('name') or '?'} ({conv_id})" for conv_id, conv in variants.items()
+    if not matches:
+        # A case variant is only decidable over every match, so this one reads
+        # to the end — of the substring matches, not of the workspace.
+        folded = name.lower()
+        matches = _matching(
+            client,
+            {**visibility, "query": name},
+            lambda n: n.lower() == folded,
+            stop_on_match=False,
         )
-        raise PopcornError(
-            f"'{ref}' matches more than one channel: {', '.join(spellings)}.\n"
-            "   Channel names are case-sensitive — pass the exact name or the id instead.",
-            error_code=ERROR_CODE_VALIDATION,
-        )
+        if not matches:
+            raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
+        if len(matches) > 1:
+            raise _ambiguous(ref, matches)
 
-    matched_id = next(iter(variants))
+    matched_id = next(iter(matches))
     _channel_cache[name] = (matched_id, time.time())
     return matched_id
 
