@@ -2263,7 +2263,9 @@ def cmd_commands(args: argparse.Namespace) -> None:
             "env_var": "POPCORN_AGENT",
             "description": (
                 "Set POPCORN_AGENT=1 to default --json, --quiet, and --no-color on "
-                "every invocation, and to suppress auto-upgrade prompts."
+                "every invocation, and to suppress auto-upgrade prompts. It does "
+                "not imply --yes, and 'app publish' requires --yes in agent mode "
+                "even on a TTY."
             ),
         },
         "global_flags": global_flags,
