@@ -1288,16 +1288,9 @@ class TestDirectoryArgument:
         assert strip(vars(parser.parse_args(positional))) == strip(vars(parser.parse_args(flag)))
 
     def test_every_directory_positional_also_accepts_the_flag(self, parser):
-        """The guard for the next command someone adds.
-
-        `flow import` is exempt: it is a removed command that only prints
-        where bundles install from now, so its directory is accepted and
-        ignored rather than read.
-        """
+        """The guard for the next command someone adds."""
         missing = []
         for path, leaf in _leaf_parsers(parser):
-            if path == ("flow", "import"):
-                continue
             positionals = {a.dest for a in leaf._actions if not a.option_strings}
             options = {opt for a in leaf._actions for opt in a.option_strings}
             if "directory" in positionals and "--dir" not in options:

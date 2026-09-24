@@ -1076,50 +1076,6 @@ def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) 
     )
 
 
-# Why `flow import` no longer exists. Kept as a module constant so the library
-# raise and the CLI subcommand cannot drift apart on the one thing an author
-# needs from this error: where installs actually happen now.
-TEMPLATE_INSTALL_REMOVED = """\
-Installing a bundle from a local directory is no longer supported.
-
-A server-side change removed the zip-install route, so
-POST /api/customer-flows/import is 404 on dev and prod. There is no
-client-reachable replacement: installable templates are a fixed set published
-to the bundle registry server-side.
-
-To install a bundle:
-  1. have the bundle published to the registry. That half is internal to the
-     Popcorn team, and it happens AFTER the servers that will run the flows
-     are updated, because a bundle whose flows call a new activity must not
-     become installable before the workers that can run it exist.
-  2. install it by creating a channel with that template:
-       popcorn channel templates                       # is it published yet?
-       popcorn channel create '#chan' --template <name>
-
-Authoring locally still works with no server and no channel:
-  popcorn template check <dir>"""
-
-
-def import_template(
-    client: APIClient,
-    conversation: str,
-    dir_path: str,
-    dry_run: bool = False,
-) -> dict[str, Any]:
-    """Fenced: raises. There is no endpoint left to install a bundle through.
-
-    Raises BEFORE packing or uploading, which is the point. The old body zipped
-    the directory and uploaded it to the target channel, then posted the file
-    key to a route that now 404s -- so every attempt left a stray zip in the
-    channel and reported nothing an author could act on. Failing here names the
-    real publish path instead; see :data:`TEMPLATE_INSTALL_REMOVED`.
-
-    The signature is unchanged so a caller reaches the explanation rather than
-    an AttributeError.
-    """
-    raise PopcornError(TEMPLATE_INSTALL_REMOVED, error_code="validation")
-
-
 def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> dict[str, Any]:
     """Parse + statically validate one flow YAML. Never persists.
 
