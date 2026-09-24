@@ -1015,7 +1015,8 @@ class TestPublishInstallStatus:
         assert "Published alerttracker 0.2.1" in out["rendered"]
         assert (
             "Not applied to this channel: app updates are locked here — ask a "
-            "member to unlock them, then run 'popcorn app apply'" in out["rendered"]
+            "channel admin or a workspace admin to unlock them, then run "
+            "'popcorn app apply'" in out["rendered"]
         )
 
     def test_running_install_points_at_apply(self, tmp_path):

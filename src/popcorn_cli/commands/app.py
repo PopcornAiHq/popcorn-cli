@@ -917,7 +917,8 @@ def _install_lines(result: dict) -> list[str]:
     if status == "blocked_app_updates_locked":
         return [
             "Not applied to this channel: app updates are locked here — ask a "
-            "member to unlock them, then run 'popcorn app apply'",
+            "channel admin or a workspace admin to unlock them, then run "
+            "'popcorn app apply'",
         ]
     if status == "blocked_install_in_progress":
         return [
