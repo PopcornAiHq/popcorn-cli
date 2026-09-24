@@ -17,6 +17,8 @@ The endpoint's `flow_schema` is deliberately absent. See the script.
 
 from __future__ import annotations
 
+from typing import Any
+
 # Deepest legal nesting of `steps:` lists, counting a flow's top-level list as 1.
 # A step carrying `steps:` at this depth is rejected by the DSL's own model
 # validator, which is a failure at install rather than at authoring time.
@@ -24,12 +26,13 @@ MAX_BLOCK_DEPTH = 3
 
 # The mutually exclusive actions a step may carry. Exclusivity lives in a model
 # validator, so `flow_schema` cannot express it — a client reading only the JSON
-# Schema would conclude a step may set all four. Order is the order the server's
-# own error message lists them in.
+# Schema would conclude a step may set every one of them. Order is the order the
+# server's own error message lists them in.
 STEP_ACTIONS = (
     "activity",
     "sleep_seconds",
     "await_approval",
+    "call_flow",
     "steps",
 )
 
@@ -62,6 +65,107 @@ TRIGGER_KEYS = (
     "workflow_id",
     "run_id",
 )
+
+# What `$steps.<id>.error` carries. Every step has the key, null unless the step
+# failed and `on_error: {policy: skip}` absorbed the failure. Each property is a
+# string, so nothing is reachable below one.
+STEP_ERROR_PROPERTIES = (
+    "message",
+    "type",
+)
+
+# Wire name -> what the activity does to its table's rows and to its own output.
+# `column_args` lists each arg whose literal value names the table's columns:
+# `holds` is `column_keys` for a mapping keyed by column (or a list of such
+# mappings) and `column_names` for a list of columns; `side` is `write` when the
+# column lands in the table and `read` when it only selects. `output_schema_arg`
+# names the arg carrying an inline JSON Schema for the step's output, or is None
+# when the output shape is fixed. An activity absent here declares no role, which
+# is not a claim that it touches no rows.
+ACTIVITY_ROLES: dict[str, dict[str, Any]] = {
+    "feature.email.extract": {
+        "writes_rows": False,
+        "reads_rows": False,
+        "column_args": (),
+        "output_schema_arg": "schema",
+    },
+    "foundation.agent.transform": {
+        "writes_rows": False,
+        "reads_rows": False,
+        "column_args": (),
+        "output_schema_arg": "output_schema",
+    },
+    "foundation.fields.extract": {
+        "writes_rows": False,
+        "reads_rows": False,
+        "column_args": (),
+        "output_schema_arg": "output_schema",
+    },
+    "foundation.store.claim_row": {
+        "writes_rows": True,
+        "reads_rows": True,
+        "column_args": (),
+        "output_schema_arg": None,
+    },
+    "foundation.store.delete_row": {
+        "writes_rows": True,
+        "reads_rows": False,
+        "column_args": (),
+        "output_schema_arg": None,
+    },
+    "foundation.store.get_record": {
+        "writes_rows": False,
+        "reads_rows": True,
+        "column_args": (),
+        "output_schema_arg": None,
+    },
+    "foundation.store.list_rows": {
+        "writes_rows": False,
+        "reads_rows": True,
+        "column_args": (
+            {
+                "arg": "filter",
+                "holds": "column_keys",
+                "side": "read",
+            },
+            {
+                "arg": "drop_columns",
+                "holds": "column_names",
+                "side": "read",
+            },
+        ),
+        "output_schema_arg": None,
+    },
+    "foundation.store.patch_row": {
+        "writes_rows": True,
+        "reads_rows": False,
+        "column_args": (
+            {
+                "arg": "patch",
+                "holds": "column_keys",
+                "side": "write",
+            },
+        ),
+        "output_schema_arg": None,
+    },
+    "foundation.store.upsert_rows": {
+        "writes_rows": True,
+        "reads_rows": False,
+        "column_args": (
+            {
+                "arg": "rows",
+                "holds": "column_keys",
+                "side": "write",
+            },
+            {
+                "arg": "merge_on",
+                "holds": "column_names",
+                "side": "write",
+            },
+        ),
+        "output_schema_arg": None,
+    },
+}
 
 # The manifest, and its legacy alias. Reserved: never installed as a flow.
 MANIFEST_FILENAMES = (
@@ -132,6 +236,24 @@ CODE_MIN_PATH_DEPTH = 3
 # Applied to every segment BELOW the block. A hidden entry there is local cruft
 # rather than block source, and publish refuses the tree carrying it.
 CODE_PATH_SEGMENT_PATTERN = "^[^.][^/]*$"
+
+# Directory holding the app's agents, one directory per agent, named by the same
+# slug rule as a code block (CODE_BLOCK_NAME_PATTERN). A FOURTH classification:
+# its files are agent definitions, never flows, and keep their whole path.
+AGENTS_SUBDIR = "agents"
+
+# The files an agent directory may hold directly: `agents/<name>/<one of these>`.
+AGENT_FILENAMES = (
+    "agent.yaml",
+    "prompt.md",
+)
+
+# The one directory inside an agent's directory, holding its JSON schemas:
+# `agents/<name>/<this>/<file><AGENT_SCHEMA_SUFFIX>`.
+AGENT_SCHEMAS_SUBDIR = "schemas"
+
+# The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.
+AGENT_SCHEMA_SUFFIX = ".json"
 
 # The zip reader's per-entry cap. The one value here that is not about
 # classification: it is a real ceiling on an uploaded bundle, so a checker

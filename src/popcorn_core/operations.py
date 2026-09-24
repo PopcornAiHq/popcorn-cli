@@ -56,19 +56,18 @@ def search_channels(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search channels, optionally filtering by name.
+    """Search channels, optionally by a case-insensitive substring of the name.
 
-    The name filter is applied here because neither listing endpoint takes a
-    query — the server can only be asked for the whole list.
+    The server applies the filter, so a query costs the matches rather than
+    the whole listing.
     """
     params = {
         "types": _CHANNEL_TYPES,
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),
     }
-    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
-        q = query.lower()
-        convs = [c for c in convs if q in (c.get("name") or "").lower()]
+        params["query"] = query
+    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     return {"conversations": convs}
 
 
@@ -79,7 +78,11 @@ def search_dms(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search DMs, optionally filtering by participant name."""
+    """Search DMs, optionally filtering by participant name.
+
+    Filtered here, not by the server: its `query=` matches a conversation's
+    name, and a DM is known by who is in it.
+    """
     params = {
         "types": "dm,group_dm",
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),
@@ -336,6 +339,7 @@ def create_conversation(
     conv_type: str = "public_channel",
     member_ids: list[str] | None = None,
     template: str | None = None,
+    if_not_exists: bool = False,
 ) -> dict[str, Any]:
     """Create a new conversation (channel or DM), optionally from a template.
 
@@ -343,12 +347,20 @@ def create_conversation(
     is the ONLY way to install one -- the install runs server-side, in the
     worker, after the channel exists. An unknown name is rejected up front with
     a 400 rather than creating a channel whose install silently no-ops.
+
+    `if_not_exists` asks the server to return a channel that already holds the
+    name, with `already_existed: true`, instead of failing on the duplicate.
+    The server decides what counts as the same name, so nothing here has to
+    reproduce its normalisation. It resolves only to a channel the caller is
+    an active member of; any other holder of the name is still a duplicate.
     """
     body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
     if member_ids:
         body["member_ids"] = member_ids
     if template:
         body["template"] = template
+    if if_not_exists:
+        body["if_not_exists"] = True
     return client.post("/api/conversations/create", data=body)
 
 
@@ -1375,19 +1387,24 @@ def list_store_audit(
 # App bundles (read)
 # ---------------------------------------------------------------------------
 #
-# The user-JWT mirror of the agent surface's /apps reads. `conversation_id`
-# is required on every one of them and is what
-# authorizes the call — the human surface never reads
-# X-Active-Conversation-ID — so these look like every other channel-scoped
-# operation here and need nothing special from APIClient.
+# The user-JWT mirror of the agent surface's /apps reads. The per-channel
+# reads (tree, file, files) require `conversation_id`, and it is what
+# authorizes them — the human surface never reads X-Active-Conversation-ID —
+# so they look like every other channel-scoped operation here and need
+# nothing special from APIClient. The list is the exception: its inventory is
+# the workspace's, and the channel only selects a binding to report.
 
 
-def list_channel_apps(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Each app's lineage heads, plus this channel's current binding.
+def list_channel_apps(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
+    """Each app's lineage heads, plus a channel's current binding if one is named.
 
     One "product" entry per app and one "fork" entry per fork line the
-    workspace owns. `channel` is null when the channel runs no bundle.
+    workspace owns. The inventory is the workspace's whatever the channel, so
+    the channel is optional: it only selects the binding reported alongside.
+    `channel` is null when none was named or the named one runs no bundle.
     """
+    if conversation is None:
+        return client.get("/api/apps/list")
     conv_id = resolve_conversation(client, conversation)
     return client.get("/api/apps/list", {"conversation_id": conv_id})
 
@@ -1482,10 +1499,11 @@ def require_version_served(resp: dict[str, Any], version_id: int) -> None:
 # ---------------------------------------------------------------------------
 #
 # The user-JWT mirror of the agent surface's writes.
-# Same `conversation_id`-authorizes-the-call shape as the reads, so these are
-# three-liners too. One asymmetry worth knowing at the call site: `publish` is
-# workspace-ADMIN only while fork and apply also accept a channel member, so a
-# member gets a 403 on publish alone.
+# Fork and apply have the reads' `conversation_id`-authorizes-the-call shape,
+# so these are three-liners too. `publish` is the asymmetry worth knowing at
+# the call site: it is workspace-ADMIN only, its `conversation_id` authorizes
+# nothing and only names the channel to install on, and so a channel member
+# gets a 403 on publish alone.
 
 
 def fork_channel_app(

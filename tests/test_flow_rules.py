@@ -35,10 +35,71 @@ import sync_flow_rules
 # ── the pinned values ─────────────────────────────────────────────────
 
 
-def test_the_step_union_is_the_four_the_dsl_enforces():
+def test_the_step_union_is_the_five_the_dsl_enforces():
     """A step is exactly one of these; the checker's step-without-action
-    finding lists them in this order because the server's own error does."""
-    assert flow_rules.STEP_ACTIONS == ("activity", "sleep_seconds", "await_approval", "steps")
+    finding lists them in this order because the server's own error does.
+    `call_flow` was served before the checker read it, which is why every
+    shipped bundle calling a child flow reported `step-without-action`."""
+    assert flow_rules.STEP_ACTIONS == (
+        "activity",
+        "sleep_seconds",
+        "await_approval",
+        "call_flow",
+        "steps",
+    )
+
+
+def test_a_step_error_carries_message_and_type():
+    """Hand-maintained in the checker until the endpoint served it, so a
+    property the server added would have been reported as a typo."""
+    assert flow_rules.STEP_ERROR_PROPERTIES == ("message", "type")
+
+
+def _column_args(name: str) -> list[tuple[str, str, str]]:
+    return [
+        (c["arg"], c["holds"], c["side"]) for c in flow_rules.ACTIVITY_ROLES[name]["column_args"]
+    ]
+
+
+def test_the_activities_carrying_column_names():
+    """Every activity the column checks fire on, and the args they read.
+
+    The hand-written list these replace named two activities the platform has
+    never had (an `insert_rows` and a `get_row`), so the checks keyed on them
+    never fired, and missed `merge_on` — a column a table does not declare can
+    never match, so every upsert adds a row instead of merging.
+    """
+    with_columns = {n for n, r in flow_rules.ACTIVITY_ROLES.items() if r["column_args"]}
+    assert with_columns == {
+        "foundation.store.upsert_rows",
+        "foundation.store.patch_row",
+        "foundation.store.list_rows",
+    }
+    assert _column_args("foundation.store.upsert_rows") == [
+        ("rows", "column_keys", "write"),
+        ("merge_on", "column_names", "write"),
+    ]
+    assert _column_args("foundation.store.patch_row") == [("patch", "column_keys", "write")]
+    assert _column_args("foundation.store.list_rows") == [
+        ("filter", "column_keys", "read"),
+        ("drop_columns", "column_names", "read"),
+    ]
+
+
+def test_the_activities_declaring_their_output_at_the_call_site():
+    """`feature.email.extract` takes its schema as `schema`, not
+    `output_schema` — the reason the arg name is served rather than assumed,
+    and why its steps' output references went unchecked before."""
+    served = {
+        n: r["output_schema_arg"]
+        for n, r in flow_rules.ACTIVITY_ROLES.items()
+        if r["output_schema_arg"]
+    }
+    assert served == {
+        "feature.email.extract": "schema",
+        "foundation.agent.transform": "output_schema",
+        "foundation.fields.extract": "output_schema",
+    }
 
 
 def test_the_reference_grammar_is_root_plus_optional_dotted_path():
@@ -127,7 +188,26 @@ def test_the_code_block_rules():
     assert flow_rules.CODE_PATH_SEGMENT_PATTERN == r"^[^.][^/]*$"
 
 
+def test_the_agent_rules():
+    """The fourth classification. Every agent directory holds the same
+    filenames, so a checker without this rule reports each pair of agents as
+    a basename collision, and each `agent.yaml` as a flow with no steps."""
+    assert flow_rules.AGENTS_SUBDIR == "agents"
+    assert flow_rules.AGENT_FILENAMES == ("agent.yaml", "prompt.md")
+    assert flow_rules.AGENT_SCHEMAS_SUBDIR == "schemas"
+    assert flow_rules.AGENT_SCHEMA_SUFFIX == ".json"
+
+
 # ── the generator ─────────────────────────────────────────────────────
+
+
+def _as_json(value: Any) -> Any:
+    """A rendered constant back in the payload's own types: tuples to lists."""
+    if isinstance(value, tuple):
+        return [_as_json(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _as_json(item) for key, item in value.items()}
+    return value
 
 
 def _payload() -> dict[str, Any]:
@@ -139,9 +219,7 @@ def _payload() -> dict[str, Any]:
     """
     payload: dict[str, Any] = {"ok": True, "flow_schema": {"title": "Flow"}}
     for field in sync_flow_rules._FIELDS:
-        value = getattr(flow_rules, field.name)
-        if isinstance(value, tuple):
-            value = list(value)
+        value = _as_json(getattr(flow_rules, field.name))
         node = payload
         for key in field.source[:-1]:
             node = node.setdefault(key, {})
@@ -189,6 +267,36 @@ def test_a_newly_served_bundle_rule_is_an_error_too():
     payload = _payload()
     payload["bundle"]["code_entrypoints"] = {"python": "main.py"}
     with pytest.raises(ValueError, match="code_entrypoints"):
+        sync_flow_rules.render(payload)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "match"),
+    [
+        (lambda r: r["foundation.store.list_rows"].update(scans=True), "scans"),
+        (
+            lambda r: r["foundation.store.list_rows"]["column_args"][0].update(holds="column_json"),
+            "column_json",
+        ),
+        (
+            lambda r: r["foundation.store.list_rows"]["column_args"][0].update(side="both"),
+            "both",
+        ),
+        (lambda r: r["foundation.store.list_rows"].update(reads_rows="yes"), "booleans"),
+        (
+            lambda r: r["foundation.agent.transform"].update(output_schema_arg=3),
+            "output_schema_arg",
+        ),
+    ],
+    ids=["new-role-key", "new-holds", "new-side", "non-bool-flag", "non-string-schema-arg"],
+)
+def test_a_role_the_checker_cannot_read_is_refused(mutate, match):
+    """A new `holds` or `side` would reach the checker as a value it matches
+    against nothing, so a bundle breaking the new rule would read as clean —
+    the silent failure the whole snapshot exists to end."""
+    payload = _payload()
+    mutate(payload["activity_roles"])
+    with pytest.raises(ValueError, match=match):
         sync_flow_rules.render(payload)
 
 

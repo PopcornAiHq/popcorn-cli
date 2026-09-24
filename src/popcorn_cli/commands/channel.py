@@ -62,7 +62,8 @@ register(
                     ),
                     Argument(
                         "if-not-exists",
-                        "Return existing channel instead of failing on duplicate name",
+                        "Return the channel already holding this name (one you are a member of) "
+                        "instead of failing on the duplicate",
                         action="store_true",
                     ),
                 ],

@@ -42,8 +42,8 @@ from .errors import PopcornError
 # checker consumes, and a second hand-written copy of a served rule is exactly
 # the drift this package set out to end.
 FILES_SUBDIRS = flow_rules.SUBDIRS
-MANIFEST_FILENAMES = ("manifest.yaml", "config.yaml")
-_DOC_FILENAMES = ("AGENT.md", "README.md")
+MANIFEST_FILENAMES = flow_rules.MANIFEST_FILENAMES
+_DOC_FILENAMES = (flow_rules.AGENT_DOC_FILENAME, flow_rules.README_FILENAME)
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
 
@@ -540,10 +540,10 @@ def require_bump(local_version: str, base_semver: str) -> None:
     """Refuse a publish whose manifest version did not advance.
 
     Compared against the BASELINE's semver, which is the fork line's head
-    whenever a publish can succeed at all — the endpoint requires the base to
-    be the channel's binding, and a publishable binding is the head. When the
-    head has genuinely moved further the server's 409 is the honest answer and
-    this check does not try to predict it.
+    whenever a publish can succeed at all — the server refuses a base that is
+    not the line's head, and what any channel runs plays no part. When the
+    head has moved on since the checkout the server's 409 is the honest
+    answer and this check does not try to predict it.
     """
     if parse_semver(local_version) > parse_semver(base_semver):
         return
