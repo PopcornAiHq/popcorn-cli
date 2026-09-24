@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import ERROR_CODE_VALIDATION, PopcornError
 from popcorn_core.resolve import _channel_cache, _user_cache, resolve_conversation, resolve_user
 
 
@@ -267,6 +267,61 @@ class TestResolveByName:
             resolve_conversation(mock_client, "#ops")
         assert "conv-local" in str(excinfo.value)
         assert "conv-shared" in str(excinfo.value)
+
+    def _identical_pair(self, mock_client):
+        """A local #ops and one shared in from another workspace."""
+        mock_client.get.side_effect = self._server(
+            {
+                "id": "conv-local",
+                "name": "ops",
+                "workspace_id": mock_client.profile.workspace_id,
+                "type": "public_channel",
+                "is_archived": False,
+            },
+            {
+                "id": "conv-shared",
+                "name": "ops",
+                "workspace_id": "ws-other",
+                "type": "shared_channel",
+                "is_archived": True,
+            },
+        )
+        with pytest.raises(PopcornError) as excinfo:
+            resolve_conversation(mock_client, "#ops")
+        return excinfo.value
+
+    def test_identical_names_say_what_tells_the_candidates_apart(self, mock_client):
+        err = self._identical_pair(mock_client)
+        message = str(err)
+        assert "#ops (conv-local) — this workspace (Test Workspace), public_channel" in message
+        assert "#ops (conv-shared) — workspace ws-other, shared_channel, archived" in message
+
+    def test_identical_names_hint_at_the_id_not_the_name(self, mock_client):
+        """The exact name is what failed, and --workspace does not narrow the
+        listing, so the id is the only hint that resolves it."""
+        err = self._identical_pair(mock_client)
+        assert err.hint is not None
+        assert "ids above" in err.hint
+        assert "never changes" in err.hint
+        assert "--workspace will not narrow it" in err.hint
+        assert "exact name" not in err.hint
+
+    def test_the_hint_reaches_json_consumers(self, mock_client):
+        err = self._identical_pair(mock_client)
+        d = err.to_dict()
+        assert d["error_code"] == ERROR_CODE_VALIDATION
+        assert d["hint"] == err.hint
+        assert err.exit_code == PopcornError.exit_code
+
+    def test_case_variants_hint_at_the_exact_name_or_the_id(self, mock_client):
+        mock_client.get.side_effect = self._server(
+            {"id": "conv-lower", "name": "ops"}, {"id": "conv-upper", "name": "Ops"}
+        )
+        with pytest.raises(PopcornError) as excinfo:
+            resolve_conversation(mock_client, "#OPS")
+        assert excinfo.value.hint is not None
+        assert "exact name" in excinfo.value.hint
+        assert "ids above" in excinfo.value.hint
 
     def test_a_server_ignoring_the_filter_does_not_pick_the_top_row(self, mock_client):
         """An API that predates the parameters drops them silently and serves
