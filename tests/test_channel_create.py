@@ -168,6 +168,41 @@ class TestAlreadyExisted:
 
         assert "example-template was not installed" in capsys.readouterr().err
 
+    def test_members_that_were_not_added_are_called_out(self, parser, client, capsys):
+        with patch("popcorn_core.operations.create_conversation", return_value=_existing()):
+            _run(
+                parser,
+                [
+                    "channel",
+                    "create",
+                    "example-my-channel",
+                    "--members",
+                    "00000000-0000-4000-8000-000000000003",
+                    "--if-not-exists",
+                ],
+            )
+
+        assert "--members were not added" in capsys.readouterr().err
+
+    def test_a_newly_created_channel_gets_no_notes(self, parser, client, capsys):
+        """The notes describe an existing channel; a fresh create did apply them."""
+        with patch("popcorn_core.operations.create_conversation", return_value=_created()):
+            _run(
+                parser,
+                [
+                    "channel",
+                    "create",
+                    "example-fresh",
+                    "--template",
+                    "example-template",
+                    "--if-not-exists",
+                ],
+            )
+
+        captured = capsys.readouterr()
+        assert "Created" in captured.out
+        assert captured.err == ""
+
     def test_notes_stay_off_stdout_under_json(self, parser, client, capsys):
         with patch(
             "popcorn_core.operations.create_conversation",
