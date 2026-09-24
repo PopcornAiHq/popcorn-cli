@@ -370,28 +370,6 @@ def join_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.post("/api/conversations/join", data={"conversation": conv_id})
 
 
-# ---------------------------------------------------------------------------
-# VM (workspace VM agent execution)
-# ---------------------------------------------------------------------------
-
-
-def _normalize_item_id(item_id: str) -> str:
-    """Strip queue prefix from item_id (e.g. 'project-foo/slug' → 'slug')."""
-    return item_id.split("/")[-1] if "/" in item_id else item_id
-
-
-def vm_trace_current(client: APIClient, queue_id: str) -> dict[str, Any] | None:
-    """Fetch the trace for the currently active item in a queue, or None."""
-    from popcorn_core.errors import APIError
-
-    try:
-        return client.get(f"/api/appchannels/trace/{queue_id}/current", {})
-    except APIError as e:
-        if e.status_code == 404:
-            return None
-        raise
-
-
 def leave_conversation(client: APIClient, conversation: str) -> dict[str, Any]:
     """Leave a conversation."""
     conv_id = resolve_conversation(client, conversation)
@@ -554,26 +532,16 @@ def create_webhook(
     description: str | None = None,
     avatar_url: str | None = None,
     action_mode: str | None = None,
-    trigger_flow_id: str | None = None,
     trigger_flow_name: str | None = None,
 ) -> dict[str, Any]:
     """Create a webhook for a conversation.
 
     When ``action_mode`` is ``trigger_workflow`` the API needs to know which
-    flow to start, named either way:
-
-    - ``trigger_flow_id`` — the flow's UUID primary key.
-    - ``trigger_flow_name`` — its name on this conversation.
-
-    Both exist because the two are not interchangeable in practice. The flow
-    listing reports a flow's NAME in its ``id`` field, so the identifier the
-    CLI hands you for a bundle flow (``alert_webhook``) is not a UUID and the
-    id form rejects it. Name-bound creation is also get-or-create per
-    (conversation, flow): an already-bound webhook comes back instead of a
-    duplicate.
-
-    The API treats the two as mutually exclusive; the parser enforces that
-    before the request is built.
+    flow to start, by its NAME on this conversation (what the flow listing
+    reports in its ``id`` field). The API's id form survives only to refuse
+    every value, so it is not offered here. Name-bound creation is
+    get-or-create per (conversation, flow): an already-bound webhook comes back
+    instead of a duplicate.
     """
     conv_id = resolve_conversation(client, conversation)
     body: dict[str, Any] = {"name": name}
@@ -583,8 +551,6 @@ def create_webhook(
         body["avatar_url"] = avatar_url
     if action_mode:
         body["action_mode"] = action_mode
-    if trigger_flow_id:
-        body["trigger_flow_id"] = trigger_flow_id
     if trigger_flow_name:
         body["trigger_flow_name"] = trigger_flow_name
     return client.post("/api/webhooks/create", data=body, params={"conversation": conv_id})
@@ -858,31 +824,6 @@ def _looks_like_uuid(value: str) -> bool:
     return len(value) == 36 and value.count("-") == 4
 
 
-def resolve_flow_ref(client: APIClient, conversation: str, ref: str, lister: Any = None) -> str:
-    """Turn a flow NAME into its id, leaving ids and unknown names alone.
-
-    `flow list` prints names and the authoring docs use them, but a flow
-    installed by `flow import` is a UUID-addressed row. The server's by-name
-    path only covers flows bound through a channel_app, so a bundle installed
-    ad-hoc 404s on its own name. Resolving here closes that gap.
-
-    Best-effort by design: an unmatched name is passed through so the server's
-    own by-name resolution still gets its turn, and a failed lookup falls back
-    rather than breaking a run that would otherwise work.
-    """
-    if _looks_like_uuid(ref):
-        return ref
-    lookup = lister or list_flows
-    try:
-        flows = (lookup(client, conversation) or {}).get("flows") or []
-    except Exception:  # convenience lookup, never fatal
-        return ref
-    for flow in flows:
-        if flow.get("name") == ref and flow.get("id"):
-            return str(flow["id"])
-    return ref
-
-
 def with_conversation_id(inputs: dict[str, Any] | None, conversation_id: str) -> dict[str, Any]:
     """Default `conversation_id` into a run's inputs.
 
@@ -905,7 +846,6 @@ def run_flow(
 ) -> dict[str, Any]:
     """Start a flow run, returning its Temporal workflow_id/run_id."""
     conv_id = resolve_conversation(client, conversation)
-    flow_id = resolve_flow_ref(client, conversation, flow_id)
     inputs = with_conversation_id(inputs, conv_id)
     body: dict[str, Any] = {"conversation_id": conv_id, "flow_id": flow_id}
     if inputs:
@@ -1136,51 +1076,6 @@ def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) 
     )
 
 
-# Mirrors the server importer's per-entry ceiling so an oversized bundle fails
-# locally with a clear message instead of as an opaque 400.
-_MAX_TEMPLATE_ENTRY_BYTES = 1024 * 1024
-
-
-def pack_template_dir(path: str) -> bytes:
-    """Zip a template directory the way the importer expects to read it.
-
-    Skips the same cruft the server skips (dotfiles/dotdirs, ``__MACOSX``) and
-    enforces the same per-entry ceiling. Requires a manifest: a bundle without
-    one installs flows with no tables, schedules or webhooks, which is almost
-    never what the author meant.
-    """
-    import io
-    import zipfile
-
-    root = Path(path)
-    if not root.is_dir():
-        raise PopcornError(f"Not a directory: {path}", error_code="validation")
-
-    entries: list[tuple[Path, str]] = []
-    for file in sorted(root.rglob("*")):
-        if not file.is_file():
-            continue
-        rel = file.relative_to(root)
-        if any(p.startswith(".") or p == "__MACOSX" for p in rel.parts):
-            continue
-        size = file.stat().st_size
-        if size > _MAX_TEMPLATE_ENTRY_BYTES:
-            raise PopcornError(
-                f"{rel} is {size} bytes, over the 1 MiB per-file limit",
-                error_code="validation",
-            )
-        entries.append((file, rel.as_posix()))
-
-    if not any(name in ("manifest.yaml", "config.yaml") for _, name in entries):
-        raise PopcornError(f"No manifest.yaml in {path}", error_code="validation")
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file, name in entries:
-            zf.write(file, name)
-    return buf.getvalue()
-
-
 # Why `flow import` no longer exists. Kept as a module constant so the library
 # raise and the CLI subcommand cannot drift apart on the one thing an author
 # needs from this error: where installs actually happen now.
@@ -1220,9 +1115,7 @@ def import_template(
     real publish path instead; see :data:`TEMPLATE_INSTALL_REMOVED`.
 
     The signature is unchanged so a caller reaches the explanation rather than
-    an AttributeError. :func:`pack_template_dir` is deliberately kept: the
-    server-side zip parser was retained for a future upload transport, and the
-    packing rules are the checked half of that contract.
+    an AttributeError.
     """
     raise PopcornError(TEMPLATE_INSTALL_REMOVED, error_code="validation")
 

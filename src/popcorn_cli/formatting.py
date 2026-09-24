@@ -179,29 +179,3 @@ def fmt_activity(act: dict[str, Any]) -> str:
         parts.append(f"thread: {thread_id}")
 
     return f"  [{ts}]{marker} {label} ({', '.join(parts)})"
-
-
-# ---------------------------------------------------------------------------
-# VM formatting
-# ---------------------------------------------------------------------------
-
-
-def _compact_tool_args(tool: str, inp: dict) -> str:
-    """Extract compact summary of tool call arguments."""
-    if not isinstance(inp, dict):
-        return ""
-    t = tool.lower()
-    if t == "bash":
-        return (inp.get("command") or "")[:120]
-    if t in ("read", "write", "edit"):
-        path = inp.get("path") or inp.get("file_path") or ""
-        if path:
-            parts = path.rsplit("/", 2)
-            return "/".join(parts[-2:]) if len(parts) > 2 else path
-        return ""
-    if t in ("glob", "grep"):
-        return (inp.get("pattern") or "")[:60]
-    for v in inp.values():
-        if isinstance(v, str) and v:
-            return v[:60]
-    return ""

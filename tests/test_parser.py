@@ -632,15 +632,12 @@ class TestWebhook:
             ]
         )
         assert args.trigger_flow_name == "alert_webhook"
-        assert args.trigger_flow_id is None
 
-    def test_webhook_create_flow_id_and_name_are_exclusive(self, parser, capsys):
-        """The API rejects both; fail in the parser rather than at the server.
+    def test_webhook_create_has_no_flow_id_flag(self, parser, capsys):
+        """The server refuses every flow id, so the flag is not offered.
 
-        Asserts on the mutual-exclusion message specifically. A bare
-        `raises(SystemExit)` would also pass when the flag does not exist at
-        all — argparse exits on an unrecognized argument too — so it could
-        not tell the fix from its absence.
+        Asserts on argparse's unknown-argument message: a bare
+        `raises(SystemExit)` would also pass on any other parse error.
         """
         with pytest.raises(SystemExit):
             parser.parse_args(
@@ -651,11 +648,9 @@ class TestWebhook:
                     "my-hook",
                     "--trigger-flow-id",
                     "00000000-0000-4000-8000-000000000011",
-                    "--trigger-flow-name",
-                    "alert_webhook",
                 ]
             )
-        assert "not allowed with argument" in capsys.readouterr().err
+        assert "unrecognized arguments: --trigger-flow-id" in capsys.readouterr().err
 
     def test_trigger_workflow_without_a_flow_is_refused_locally(self, parser):
         """Fail with an actionable hint instead of a server 422."""
@@ -690,22 +685,6 @@ class TestWebhook:
     def test_webhook_deliveries_include_default_none(self, parser):
         args = parser.parse_args(["webhook", "deliveries", "#general"])
         assert args.include is None
-
-    def test_webhook_create_trigger_workflow(self, parser):
-        args = parser.parse_args(
-            [
-                "webhook",
-                "create",
-                "#general",
-                "flow-hook",
-                "--action-mode",
-                "trigger_workflow",
-                "--trigger-flow-id",
-                "flow-abc",
-            ]
-        )
-        assert args.action_mode == "trigger_workflow"
-        assert args.trigger_flow_id == "flow-abc"
 
     def test_webhook_event_types(self, parser):
         args = parser.parse_args(["webhook", "event-types"])

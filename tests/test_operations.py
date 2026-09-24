@@ -393,16 +393,10 @@ class TestWebhookCreate:
             "conv-1",
             "flow hook",
             action_mode="trigger_workflow",
-            trigger_flow_id="flow-abc",
+            trigger_flow_name="alert_webhook",
         )
         body = mock_client.post.call_args.kwargs["data"]
         assert body["action_mode"] == "trigger_workflow"
-        assert body["trigger_flow_id"] == "flow-abc"
-
-    def test_trigger_flow_id_omitted_when_none(self, mock_client):
-        mock_client.post.return_value = {"id": "wh-1"}
-        operations.create_webhook(mock_client, "conv-1", "hook")
-        assert "trigger_flow_id" not in mock_client.post.call_args.kwargs["data"]
 
     def test_trigger_flow_name(self, mock_client):
         """Bundle flows are named, not UUID'd — the name form must reach the API."""
@@ -588,6 +582,8 @@ class TestFlows:
             },
             params={"conversation_id": "conv-1"},
         )
+        # A flow's name is its id on the wire, so a run needs no lookup first.
+        mock_client.get.assert_not_called()
 
     def test_run_flow_with_inputs(self, mock_client):
         mock_client.post.return_value = {"workflow_id": "wf-1"}
@@ -845,65 +841,6 @@ class TestFlowValidation:
         resp = operations.validate_flow_yaml(mock_client, "conv-uuid", "name: x\n")
         assert resp["valid"] is False
         assert len(resp["issues"]) == 1
-
-
-class TestTemplatePacking:
-    def test_pack_skips_dotfiles_and_macos_cruft(self, tmp_path):
-        import io
-        import zipfile
-
-        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
-        (tmp_path / ".DS_Store").write_text("junk")
-        (tmp_path / "__MACOSX").mkdir()
-        (tmp_path / "__MACOSX" / "x.yaml").write_text("name: ghost\n")
-        (tmp_path / "fixtures").mkdir()
-        (tmp_path / "fixtures" / "a.json").write_text("{}")
-
-        data = operations.pack_template_dir(str(tmp_path))
-        names = set(zipfile.ZipFile(io.BytesIO(data)).namelist())
-        assert "manifest.yaml" in names
-        assert "fixtures/a.json" in names, "nested paths must keep their relative prefix"
-        assert not any(".DS_Store" in n or "__MACOSX" in n for n in names)
-
-    def test_pack_skips_a_dotdir_anywhere_in_the_path(self, tmp_path):
-        import io
-        import zipfile
-
-        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
-        (tmp_path / ".git").mkdir()
-        (tmp_path / ".git" / "config").write_text("junk")
-        (tmp_path / "sub").mkdir()
-        (tmp_path / "sub" / ".hidden.yaml").write_text("name: ghost\n")
-
-        names = set(
-            zipfile.ZipFile(io.BytesIO(operations.pack_template_dir(str(tmp_path)))).namelist()
-        )
-        assert names == {"manifest.yaml"}
-
-    def test_pack_rejects_oversized_entry(self, tmp_path):
-        (tmp_path / "manifest.yaml").write_text("display_name: X\n")
-        (tmp_path / "big.yaml").write_text("x" * (1024 * 1024 + 1))
-
-        with pytest.raises(PopcornError) as exc:
-            operations.pack_template_dir(str(tmp_path))
-        assert "1 MiB" in str(exc.value) or "per-file limit" in str(exc.value)
-
-    def test_pack_requires_a_manifest(self, tmp_path):
-        (tmp_path / "only_a_flow.yaml").write_text("name: x\n")
-        with pytest.raises(PopcornError) as exc:
-            operations.pack_template_dir(str(tmp_path))
-        assert "manifest" in str(exc.value).lower()
-
-    def test_pack_accepts_config_yaml_as_the_manifest(self, tmp_path):
-        (tmp_path / "config.yaml").write_text("display_name: X\n")
-        (tmp_path / "a.yaml").write_text("name: x\n")
-        assert operations.pack_template_dir(str(tmp_path))
-
-    def test_pack_rejects_a_non_directory(self, tmp_path):
-        f = tmp_path / "bundle.zip"
-        f.write_text("x")
-        with pytest.raises(PopcornError, match="Not a directory"):
-            operations.pack_template_dir(str(f))
 
 
 class TestTemplateImportIsFenced:

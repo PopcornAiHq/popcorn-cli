@@ -1746,7 +1746,6 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
-      "trigger_flow_id": null,
       "trigger_flow_name": null,
       "webhook_command": "create",
       "workspace": null,
@@ -2687,7 +2686,6 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
-      "trigger_flow_id": null,
       "trigger_flow_name": null,
       "webhook_command": "create",
       "workspace": null,
@@ -2706,7 +2704,7 @@
       "x",
       "--action-mode",
       "silent",
-      "--trigger-flow-id",
+      "--trigger-flow-name",
       "x"
     ],
     "namespace": {
@@ -2722,8 +2720,7 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
-      "trigger_flow_id": "x",
-      "trigger_flow_name": null,
+      "trigger_flow_name": "x",
       "webhook_command": "create",
       "workspace": null,
       "yes": false
