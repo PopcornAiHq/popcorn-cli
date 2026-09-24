@@ -11,7 +11,7 @@ import argparse
 import time
 from typing import TYPE_CHECKING, Any
 
-from popcorn_core import operations
+from popcorn_core import flow_rules, operations
 
 from ..registry import Argument, Command, Subcommand, register
 
@@ -115,11 +115,11 @@ def _poll_until_closed(
         time.sleep(_POLL_SECONDS)
 
 
-# Bundle files that are not flows. The manifest is `template check`'s job,
-# not this validator's; config/strings are template data. Mirrors the
-# backend's own reserved set -- `strings.yaml` is a fourth reserved name
-# alongside manifest/AGENT/README, and every shipped template has one.
-_NOT_A_FLOW = {"manifest.yaml", "config.yaml", "strings.yaml"}
+# Root files with a flow suffix that are still not flows, from the served
+# bundle rules: the manifest (and its legacy alias) is `template check`'s job,
+# and strings.yaml is UI copy. The .md reserved names never carry a flow
+# suffix, so they need no entry here.
+_NOT_A_FLOW = {*flow_rules.MANIFEST_FILENAMES, flow_rules.STRINGS_FILENAME}
 
 
 def _flow_import(args: argparse.Namespace) -> None:
@@ -175,7 +175,12 @@ def _flow_validate(args: argparse.Namespace) -> None:
     client = _get_client(args)
     target = Path(args.path)
     if target.is_dir():
-        files = [p for p in sorted(target.glob("*.y*ml")) if p.name not in _NOT_A_FLOW]
+        # Root only: the bundle reader never reads a flow from a subdirectory.
+        files = [
+            p
+            for p in sorted(target.iterdir())
+            if p.is_file() and p.suffix in flow_rules.FLOW_SUFFIXES and p.name not in _NOT_A_FLOW
+        ]
     else:
         files = [target]
     if not files:

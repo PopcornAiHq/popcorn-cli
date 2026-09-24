@@ -294,6 +294,13 @@ class TestOperations:
         operations.list_channel_apps(mock_client, _CONV)
         mock_client.get.assert_called_once_with("/api/apps/list", {"conversation_id": _CONV})
 
+    def test_list_without_a_channel_sends_none(self, mock_client):
+        """The inventory is workspace-scoped; omitting the channel is a
+        supported read, not a missing argument."""
+        mock_client.get.return_value = {"apps": [], "channel": None}
+        operations.list_channel_apps(mock_client)
+        mock_client.get.assert_called_once_with("/api/apps/list")
+
     def test_files_reads_the_line_head_by_default(self, mock_client):
         """A checkout is what a publish is based on, and a publish must be
         based on the fork line's head — not on whatever the channel runs. A
