@@ -37,6 +37,7 @@ from popcorn_core.app_publish import (
     bump_manifest_text,
     collect_tree,
     diff_tree,
+    diff_tree_hashes,
     fork_line_reach,
     manifest_changelog,
     manifest_version,
@@ -332,6 +333,72 @@ class TestCollectTree:
         )
         assert unrecognized_code_paths(collect_tree(tmp_path).files) == []
 
+    def test_collects_the_served_agent_layout(self, tmp_path):
+        """`agents/` was reported as ignored and never sent, so an edited
+        agent published nothing and a new one could not be added at all."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "agents/reader/agent.yaml": "model: default\n",
+                "agents/reader/prompt.md": "You read.\n",
+                "agents/reader/schemas/result.json": "{}\n",
+                "agents/writer-2/agent.yaml": "model: default\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert tree.ignored == []
+        assert set(tree.files) == {
+            "manifest.yaml",
+            "agents/reader/agent.yaml",
+            "agents/reader/prompt.md",
+            "agents/reader/schemas/result.json",
+            "agents/writer-2/agent.yaml",
+        }
+
+    def test_reports_paths_outside_the_agent_layout(self, tmp_path):
+        """The server refuses a published tree carrying any of these, so they
+        are reported rather than sent. A badly named agent directory is
+        reported once, since nothing in it can be read."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "agents/loose.yaml": "x\n",
+                "agents/Writer/agent.yaml": "x\n",
+                "agents/Writer/prompt.md": "x\n",
+                "agents/reader/agent.yaml": "model: default\n",
+                "agents/reader/notes.md": "x\n",
+                "agents/reader/sub/prompt.md": "x\n",
+                "agents/reader/schemas/result.txt": "x\n",
+                "agents/reader/schemas/nested/result.json": "{}\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert set(tree.files) == {"manifest.yaml", "agents/reader/agent.yaml"}
+        assert sorted(tree.ignored) == [
+            "agents/Writer/",
+            "agents/loose.yaml",
+            "agents/reader/notes.md",
+            "agents/reader/schemas/nested/result.json",
+            "agents/reader/schemas/result.txt",
+            "agents/reader/sub/prompt.md",
+        ]
+
+    def test_skips_hidden_files_under_an_agent_silently(self, tmp_path):
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "agents/reader/prompt.md": "x\n",
+                "agents/reader/.DS_Store": "junk",
+                "agents/reader/schemas/.draft.json": "{}",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert set(tree.files) == {"manifest.yaml", "agents/reader/prompt.md"}
+        assert tree.ignored == []
+
     def test_refuses_a_binary_file_by_name(self, tmp_path):
         _checkout(tmp_path, {"manifest.yaml": _manifest()})
         (tmp_path / "prompts").mkdir()
@@ -401,6 +468,39 @@ class TestDiffTree:
         diff = diff_tree(base, {"manifest.yaml": "1"})
         assert diff.deletes == []
         assert diff.preserved == ["code/singlefile.py"]
+
+    def test_agent_files_round_trip_against_served_hashes(self):
+        """Add, edit and delete under `agents/`, diffed against the hashes a
+        current server serves. Before, all three were invisible: the local
+        side never collected an agent file, and the served ones were kept as
+        `preserved` whether or not the author had deleted them."""
+        served = {
+            "manifest.yaml": "1",
+            "agents/reader/agent.yaml": "model: a\n",
+            "agents/reader/prompt.md": "You read.\n",
+            "agents/reader/schemas/result.json": "{}",
+        }
+        base = {p: hashlib.sha256(c.encode("utf-8")).hexdigest() for p, c in served.items()}
+        local = {
+            "manifest.yaml": "1",
+            "agents/reader/agent.yaml": "model: a\n",
+            "agents/reader/prompt.md": "You read carefully.\n",
+            "agents/writer/agent.yaml": "model: b\n",
+        }
+        diff = diff_tree_hashes(base, local)
+        assert diff.added == ["agents/writer/agent.yaml"]
+        assert diff.changed == ["agents/reader/prompt.md"]
+        assert diff.deletes == ["agents/reader/schemas/result.json"]
+        assert diff.preserved == []
+        assert set(diff.files) == {"agents/writer/agent.yaml", "agents/reader/prompt.md"}
+
+    def test_a_served_agent_path_this_cli_cannot_classify_is_preserved(self):
+        """Recognition follows the served layout exactly, so a shape a stale
+        `flow_rules` predates is kept rather than claimed as a deletion."""
+        base = {"manifest.yaml": "1", "agents/reader/examples/one.md": "x"}
+        diff = diff_tree(base, {"manifest.yaml": "1"})
+        assert diff.deletes == []
+        assert diff.preserved == ["agents/reader/examples/one.md"]
 
     def test_a_recognized_absence_is_still_a_deletion(self):
         """The guard must not swallow the ordinary case."""
@@ -768,6 +868,35 @@ class TestPublishCommand:
         assert set(payload["files"]) == {"manifest.yaml", "code/calc/main.py"}
         assert payload["files"]["code/calc/main.py"] == "print(2)\n"
         assert payload["deletes"] == []
+
+    def test_sends_an_edited_and_a_new_agent(self, tmp_path):
+        """Checkout, edit one agent's prompt, add a second agent, remove a
+        schema, publish — the round trip bundle-defined agents needed."""
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "agents/reader/agent.yaml": "model: default\n",
+            "agents/reader/prompt.md": "You read.\n",
+            "agents/reader/schemas/result.json": "{}\n",
+        }
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
+        (tmp_path / "agents" / "reader" / "prompt.md").write_text("You read twice.\n")
+        (tmp_path / "agents" / "reader" / "schemas" / "result.json").unlink()
+        (tmp_path / "agents" / "writer").mkdir()
+        (tmp_path / "agents" / "writer" / "agent.yaml").write_text("model: default\n")
+        (tmp_path / "agents" / "writer" / "prompt.md").write_text("You write.\n")
+
+        rec = _Recorder()
+        _run_publish(tmp_path, _files_response(base), rec, _args(directory=str(tmp_path)))
+
+        payload = rec.calls[0][1]
+        assert payload["files"] == {
+            "manifest.yaml": _manifest("0.2.1"),
+            "agents/reader/prompt.md": "You read twice.\n",
+            "agents/writer/agent.yaml": "model: default\n",
+            "agents/writer/prompt.md": "You write.\n",
+        }
+        assert payload["deletes"] == ["agents/reader/schemas/result.json"]
 
     def test_refuses_a_misplaced_code_path_before_the_round_trip(self, tmp_path):
         """The server rejects the whole tree over one such path; its message
@@ -1197,6 +1326,27 @@ class TestBaseReadByHash:
             [],
         )
         assert "Working copy matches the fork line's head." in out["rendered"]
+
+    def test_status_reads_agent_files_against_the_served_hashes(self, tmp_path):
+        """A clean checkout of a bundle with agents reports no diff, and an
+        edited agent file reports as changed rather than as ignored."""
+        base = {
+            "manifest.yaml": _manifest("0.2.0"),
+            "agents/reader/agent.yaml": "model: default\n",
+            "agents/reader/prompt.md": "You read.\n",
+        }
+        _checkout(tmp_path, base)
+        _, clean = self._status(tmp_path, _files_response(base))
+        assert (clean["data"]["added"], clean["data"]["changed"], clean["data"]["deleted"]) == (
+            [],
+            [],
+            [],
+        )
+        assert "Not installable" not in clean["rendered"]
+
+        (tmp_path / "agents" / "reader" / "prompt.md").write_text("You read twice.\n")
+        _, edited = self._status(tmp_path, _files_response(base))
+        assert edited["data"]["changed"] == ["agents/reader/prompt.md"]
 
     def test_publish_of_an_untouched_checkout_still_refuses_without_content(self, tmp_path):
         from popcorn_cli.commands import app as mod

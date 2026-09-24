@@ -36,7 +36,7 @@ from pathlib import Path
 import pytest
 
 from popcorn_core.app_publish import collect_tree, unrecognized_code_paths
-from popcorn_core.flow_rules import CODE_SUBDIR
+from popcorn_core.flow_rules import AGENTS_SUBDIR, CODE_SUBDIR
 from popcorn_core.template_check import check_bundle
 
 _ENV = "POPCORN_BACKEND_FLOWS"
@@ -110,3 +110,26 @@ def test_a_shipped_templates_code_blocks_are_publishable(bundle: Path) -> None:
     on_disk = (bundle / CODE_SUBDIR).is_dir()
     collected = any(p.startswith(f"{CODE_SUBDIR}/") for p in tree.files)
     assert collected == on_disk
+
+
+@pytest.mark.parametrize("bundle", _BUNDLES, ids=lambda p: p.name)
+def test_a_shipped_templates_agents_are_publishable(bundle: Path) -> None:
+    """`app publish` must send every agent file the server reads.
+
+    The same gap `code/` had: `agents/` landed whole in `ignored`, so an
+    author could edit an agent, publish, and change nothing. Every file a
+    shipped bundle keeps under `agents/` is in the served layout, so none of
+    it may be ignored.
+    """
+    tree = collect_tree(bundle)
+    assert [p for p in tree.ignored if p.startswith(AGENTS_SUBDIR)] == []
+    on_disk = (
+        sorted(
+            f.relative_to(bundle).as_posix()
+            for f in (bundle / AGENTS_SUBDIR).rglob("*")
+            if f.is_file() and not any(part.startswith(".") for part in f.relative_to(bundle).parts)
+        )
+        if (bundle / AGENTS_SUBDIR).is_dir()
+        else []
+    )
+    assert sorted(p for p in tree.files if p.startswith(f"{AGENTS_SUBDIR}/")) == on_disk
