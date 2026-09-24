@@ -56,8 +56,10 @@ def _run_outcome(run: dict[str, Any], workflow_id: str) -> str:
     from popcorn_core.errors import PopcornError
 
     outcome = run.get("outcome")
-    if outcome in _OUTCOMES:
-        return str(outcome)
+    # The isinstance guard is not redundant: a list or dict is unhashable, so
+    # the set lookup alone would raise TypeError instead of this refusal.
+    if isinstance(outcome, str) and outcome in _OUTCOMES:
+        return outcome
     status = (run.get("status") or "").strip() or "unknown"
     if outcome is None:
         detail = "This API predates the run outcome field, so --wait cannot tell"

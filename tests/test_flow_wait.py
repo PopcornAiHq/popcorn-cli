@@ -190,7 +190,7 @@ def test_missing_outcome_fails_loud_on_the_first_poll(monkeypatch, status):
     assert "flow runs get" in (exc.value.hint or "")
 
 
-@pytest.mark.parametrize("outcome", [None, "", "cancelled", "SUCCEEDED"])
+@pytest.mark.parametrize("outcome", [None, "", "cancelled", "SUCCEEDED", {"v": 1}, ["failed"], 1])
 def test_unrecognised_outcome_fails_loud(monkeypatch, outcome):
     runs = _script(monkeypatch, [("Completed", outcome)])
 
