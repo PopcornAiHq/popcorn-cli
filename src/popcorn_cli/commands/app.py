@@ -46,7 +46,8 @@ one it answers "has my publish landed here?" from server state alone.
 Either way it also checks the channel's live schedules against the ones its
 bound manifest declares. Most differences there are deliberate —
 `set_app_mode` retunes cadences off prod, and a plain daily cron is moved off
-its declared minute by the de-peak offset — so `schedule_drift` classifies
+its declared minute by the de-peak offset, which the server reports per
+schedule as its intended cadence — so `schedule_drift` classifies
 each one and only an unexplained difference, or a schedule paused with nothing
 saying why, makes the command exit non-zero.
 
@@ -996,6 +997,14 @@ def _collect_schedule_drift(
     except APIError as exc:
         return None, f"the channel's live schedules could not be read ({exc})"
     live = live_resp.get("scheduled_flows") or []
+    # The platform's intended cadence is what tells a de-peak or an interval
+    # phase from drift, and this has no way to compute it — so a server that
+    # does not serve it gets no verdict rather than a wrong one.
+    if any(not isinstance(item.get("intended"), dict) for item in live):
+        return None, (
+            "the server does not report each schedule's intended cadence, "
+            "which is what separates a de-peak from drift"
+        )
 
     # `popcorn.app_mode` separates a deliberate retune from an unexplained one,
     # and a channel that never set it reads as None — which `classify` treats

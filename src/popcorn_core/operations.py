@@ -56,19 +56,18 @@ def search_channels(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search channels, optionally filtering by name.
+    """Search channels, optionally by a case-insensitive substring of the name.
 
-    The name filter is applied here because neither listing endpoint takes a
-    query — the server can only be asked for the whole list.
+    The server applies the filter, so a query costs the matches rather than
+    the whole listing.
     """
     params = {
         "types": _CHANNEL_TYPES,
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),
     }
-    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     if query:
-        q = query.lower()
-        convs = [c for c in convs if q in (c.get("name") or "").lower()]
+        params["query"] = query
+    convs = fetch_all(client, "/api/conversations/list", params, "conversations")
     return {"conversations": convs}
 
 
@@ -79,7 +78,11 @@ def search_dms(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search DMs, optionally filtering by participant name."""
+    """Search DMs, optionally filtering by participant name.
+
+    Filtered here, not by the server: its `query=` matches a conversation's
+    name, and a DM is known by who is in it.
+    """
     params = {
         "types": "dm,group_dm",
         **listing_params(include_archived=include_archived, include_hidden=include_hidden),

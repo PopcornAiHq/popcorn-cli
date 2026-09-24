@@ -27,63 +27,77 @@ _CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
 # they already checked out from is friction with nothing behind it.
 _CHANNEL_OPT = Argument("channel", "Channel name or UUID (default: the checkout's)")
 
-# Temporal execution statuses, spelled the way the server emits them: the flow
-# run API hands back Temporal's canonical CamelCase names verbatim. Keeping the
-# server's spelling here is what makes the sets checkable against it; the match
-# itself goes through `_normalise_status` below.
-_TERMINAL_OK = frozenset({"Completed"})
-_TERMINAL_BAD = frozenset({"Failed", "TimedOut", "Canceled", "Terminated"})
-# Still going, so `--wait` keeps polling. ContinuedAsNew is a deliberate member
-# rather than something left unmatched by accident: such a run closed only to
-# hand its remaining work to a fresh run under a new run id, and the caller
-# asked to wait for the flow, not for one run id of it. The successor reaches a
-# real terminal status, and the poll reports that one.
-_IN_FLIGHT = frozenset({"Running", "ContinuedAsNew"})
-
-
-def _normalise_status(status: str) -> str:
-    """Fold a status to letters-only upper case for comparison.
-
-    The server's spelling is the contract, but a multi-word status is exactly
-    where a caller-side guess goes wrong: this CLI matched a hand-written
-    `TIMED_OUT` against the server's `TimedOut`, so a timed-out run was never
-    recognised as finished — it polled to the full `--wait` deadline and then
-    reported a retryable timeout, telling the caller to keep waiting for a run
-    that was already dead. Folding away case and word separators means no
-    spelling of a name the server sends can miss.
-    """
-    return "".join(ch for ch in status if ch.isalnum()).upper()
-
-
-_TERMINAL_OK_KEYS = frozenset(_normalise_status(s) for s in _TERMINAL_OK)
-_TERMINAL_BAD_KEYS = frozenset(_normalise_status(s) for s in _TERMINAL_BAD)
+# The server's verdict on a polled run, served as `run.outcome` beside the raw
+# Temporal `status`. `--wait` branches on this and nothing else: a client-side
+# copy of the status vocabulary is what drifts — this CLI once spelled
+# `TimedOut` as `TIMED_OUT`, so a timed-out run matched neither its success
+# nor its failure set and the wait polled out its whole deadline before
+# calling a dead run retryable. `status` is kept for display only.
+#
+# A run that continued-as-new is `still_running`: its work moved to a successor
+# run under the same workflow id. The poll never pins a run id, so each poll
+# reads the latest run of the workflow and follows the chain to its real end.
+_OUTCOME_SUCCEEDED = "succeeded"
+_OUTCOME_FAILED = "failed"
+_OUTCOME_STILL_RUNNING = "still_running"
+_OUTCOMES = frozenset({_OUTCOME_SUCCEEDED, _OUTCOME_FAILED, _OUTCOME_STILL_RUNNING})
 _POLL_SECONDS = 3
 _DEFAULT_WAIT_SECONDS = 300
+
+
+def _run_outcome(run: dict[str, Any], workflow_id: str) -> str:
+    """The server's `outcome` for a polled run, refusing one it did not send.
+
+    An API older than the field answers with `status` alone. Guessing from
+    that would rebuild the very taxonomy `outcome` replaced, so the wait fails
+    loud instead; a value outside the three documented ones is refused the
+    same way rather than read as any of them.
+    """
+    from popcorn_core.errors import PopcornError
+
+    outcome = run.get("outcome")
+    # The isinstance guard is not redundant: a list or dict is unhashable, so
+    # the set lookup alone would raise TypeError instead of this refusal.
+    if isinstance(outcome, str) and outcome in _OUTCOMES:
+        return outcome
+    status = (run.get("status") or "").strip() or "unknown"
+    if outcome is None:
+        detail = "This API predates the run outcome field, so --wait cannot tell"
+    else:
+        detail = f"The server reported an unrecognised outcome {outcome!r}, so --wait cannot tell"
+    raise PopcornError(
+        f"{detail} whether flow run {workflow_id} has finished (status {status})",
+        error_code="validation",
+        hint=f"popcorn flow runs get --channel <conv> {workflow_id}",
+    )
 
 
 def _poll_until_closed(
     client: APIClient, channel: str, workflow_id: str, timeout: int
 ) -> dict[str, Any]:
-    """Poll a flow run until it reaches a terminal status.
+    """Poll a flow run until the server says it has finished.
 
-    Raises PopcornError on a failed run (so the shell sees a non-zero exit) or
-    when `timeout` seconds elapse without a terminal status.
+    Returns the run when its `outcome` is `succeeded`. Raises PopcornError when
+    it is `failed` (so the shell sees a non-zero exit), when `timeout` seconds
+    elapse while it is `still_running`, or when the response carries no usable
+    `outcome` at all.
     """
     from popcorn_core.errors import EXIT_TIMEOUT, PopcornError
 
     started = time.monotonic()
     while True:
+        # No run id: the latest run of the workflow, so a continued-as-new
+        # chain is followed rather than stuck on its first link.
         resp = operations.get_flow_run(client, channel, workflow_id, include_errors=True)
         run = resp.get("run") or resp
-        # Report the server's own spelling back to the caller; match on the
-        # folded form.
+        outcome = _run_outcome(run, workflow_id)
+        # The server's own spelling, for the caller to read.
         status = (run.get("status") or "").strip()
-        key = _normalise_status(status)
-        if key in _TERMINAL_OK_KEYS:
+        if outcome == _OUTCOME_SUCCEEDED:
             return dict(run)
-        if key in _TERMINAL_BAD_KEYS:
+        if outcome == _OUTCOME_FAILED:
             raise PopcornError(
-                f"Flow run {workflow_id} ended {status}",
+                f"Flow run {workflow_id} ended {status or 'unsuccessfully'}",
                 error_code="validation",
             )
         if time.monotonic() - started > timeout:
@@ -708,7 +722,7 @@ register(
                     ),
                     Argument(
                         "wait",
-                        "Poll until the run reaches a terminal status",
+                        "Poll until the server reports the run finished",
                         action="store_true",
                     ),
                     Argument(
