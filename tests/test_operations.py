@@ -34,10 +34,18 @@ class TestSearch:
         assert len(result["conversations"]) == 2
 
     def test_search_channels_with_query(self, mock_client):
-        mock_client.get.return_value = {"conversations": [{"name": "general"}, {"name": "random"}]}
+        """The server filters; the CLI returns what it was given."""
+        mock_client.get.return_value = {"conversations": [{"name": "general"}]}
         result = operations.search_channels(mock_client, "gen")
-        assert len(result["conversations"]) == 1
-        assert result["conversations"][0]["name"] == "general"
+        _, params = mock_client.get.call_args[0]
+        assert params["query"] == "gen"
+        assert result["conversations"] == [{"name": "general"}]
+
+    def test_search_channels_without_query_sends_none(self, mock_client):
+        mock_client.get.return_value = {"conversations": []}
+        operations.search_channels(mock_client)
+        _, params = mock_client.get.call_args[0]
+        assert "query" not in params
 
     def test_search_messages_requires_query(self, mock_client):
         with pytest.raises(PopcornError, match="Query required"):
