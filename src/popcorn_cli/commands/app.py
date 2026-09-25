@@ -785,6 +785,26 @@ def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
     )
 
 
+def _refuse_missing_app_type(files: dict[str, str], baseline: Baseline) -> None:
+    """Refuse a manifest that dropped `app_type:`, before any request.
+
+    Advisory: the server is the authority and refuses the same publish, but
+    only after the reads and the confirmation prompt, and a version it did
+    accept would install untyped and clear every channel's app_type. The
+    line's app is the value to restore — the server rejects any other.
+    """
+    name, doc = manifest_file(files)
+    if doc.get("app_type"):
+        return
+    raise PopcornError(
+        f"{name} declares no 'app_type:' — a publish without one is refused, "
+        "because installing it would clear the app_type of every channel on "
+        f"{_line_label(baseline)}",
+        error_code="validation",
+        hint=f"restore 'app_type: {baseline.app or '<app>'}' in {name}",
+    )
+
+
 def _line_label(baseline: Baseline) -> str:
     """How a prompt names the fork line: by name when the baseline has one."""
     return f"fork line '{baseline.fork_name}'" if baseline.fork_name else "its fork line"
@@ -876,6 +896,7 @@ def _app_publish(args: argparse.Namespace) -> None:
             error_code="validation",
             hint=f"move each one under {flow_rules.CODE_SUBDIR}/<block>/, or delete it",
         )
+    _refuse_missing_app_type(local.files, baseline)
     version = manifest_version(local.files)
     bump = args.bump
     if bump:

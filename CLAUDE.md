@@ -251,6 +251,10 @@ fork-aware, off `Baseline.kind`: only the product publish path reads the
 manifest's `changelog:`, so on a fork line the note is bundle documentation and
 `app publish -m` is what the registry records. Giving a fork author the product
 answer is what made this check contradict the very next command they would run.
+The baseline also sets the level of `clears-app-type`: a warning for bundle
+source (an untyped ops bundle can mean it), an error in a checkout, which always
+came from a typed version and which the server refuses to publish without
+`app_type:` — `app publish` refuses the same tree before any request.
 
 **Where it will not follow: `when:`.** Four rails, routed legacy-first (see the
 guide's §4). Mirroring that offline means reimplementing the predicate parser,

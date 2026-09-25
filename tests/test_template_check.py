@@ -676,6 +676,25 @@ def test_untyped_bundle_warns_about_app_type(tmp_path):
     assert report.ok  # intentional for an untyped bundle
 
 
+def test_checkout_without_app_type_is_an_error(tmp_path):
+    """A checkout always came from a typed version, and the server refuses a
+    publish whose manifest dropped the key — so here it cannot be intentional."""
+    manifest = {k: v for k, v in versioned_manifest("1.34.3", "Bump.").items() if k != "app_type"}
+    root = write_bundle(tmp_path / "b", manifest=manifest)
+    write_baseline_file(root, "1.34.2", changelog="Old.")
+    report = check_bundle(root)
+    assert [(f.code, f.level) for f in report.findings] == [("clears-app-type", "error")]
+    assert not report.ok
+    # The value to restore is the line's app, read from the baseline.
+    assert "app_type: widgets" in report.findings[0].message
+
+
+def test_checkout_with_app_type_is_clean(tmp_path):
+    root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.34.3", "Bump."))
+    write_baseline_file(root, "1.34.2", changelog="Old.")
+    assert check_bundle(root).findings == []
+
+
 def test_schedule_naming_an_unknown_flow(tmp_path):
     manifest = {**CLEAN_MANIFEST, "schedules": [{"flow": "swept", "interval": 300}]}
     assert "schedule-unknown-flow" in codes(write_bundle(tmp_path / "b", manifest=manifest))
