@@ -445,6 +445,22 @@ class _Checker:
             return
         self.report.manifest = doc
         if not doc.get("app_type"):
+            self._report_missing_app_type()
+        self._check_tables(doc)
+
+    def _report_missing_app_type(self) -> None:
+        """A manifest with no `app_type:` — an error in a checkout, else a warning.
+
+        Installing an untyped bundle CLEARS the channel's app_type. For bundle
+        source with no baseline that can be intentional (an untyped ops
+        bundle), so it stays a warning. A checkout always came from a typed
+        version — every fork line starts from one — so a missing key there is
+        an edit that dropped it, and the server refuses to publish it rather
+        than inferring the type from the line. Same `code` either way, since
+        finding codes are a stable contract; only the level moves.
+        """
+        baseline = read_baseline(self.dir)
+        if baseline is None:
             self.warn(
                 "clears-app-type",
                 "manifest.yaml",
@@ -452,7 +468,16 @@ class _Checker:
                 "which changes the client's whole interface paradigm. Intentional for an "
                 "untyped ops bundle; never import it into a channel running a real app.",
             )
-        self._check_tables(doc)
+            return
+        expected = baseline.app or "<app>"
+        self.err(
+            "clears-app-type",
+            "manifest.yaml",
+            f"No app_type declared, but this is a checkout of "
+            f"{baseline.app or 'an app'} {baseline.semver}. The server refuses to publish "
+            f"a manifest without one — installed, it would clear every channel's app_type. "
+            f"Restore 'app_type: {expected}'.",
+        )
 
     # ── the checkout baseline ─────────────────────────────────────────
 

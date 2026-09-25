@@ -922,6 +922,30 @@ class TestPublishCommand:
         assert "code/<block>/" in str(exc.value.hint or "")
         assert rec.calls == []
 
+    def test_refuses_a_manifest_without_app_type_before_any_request(self, tmp_path):
+        """The server refuses it too, but only after the reads and the prompt."""
+        from popcorn_cli.commands import app as mod
+
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        (tmp_path / "manifest.yaml").write_text('version: "0.2.1"\n')
+
+        rec = _Recorder()
+        args = _args(directory=str(tmp_path), yes=True)
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()) as get_client,
+            patch("popcorn_cli.cli._output"),
+            _serve(_files_response(base)) as calls,
+            patch.object(operations, "publish_channel_app", rec),
+            pytest.raises(PopcornError) as exc,
+        ):
+            mod._app_publish(args)
+        assert exc.value.error_code == "validation"
+        assert "app_type: alerttracker" in str(exc.value.hint or "")
+        assert calls == {"tree": [], "files": []}
+        assert rec.calls == []
+        get_client.assert_not_called()
+
     def test_refuses_a_block_name_that_is_not_a_slug(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0")}
         _checkout(tmp_path, base)
