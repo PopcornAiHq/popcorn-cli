@@ -19,6 +19,16 @@ time would have taken away.
 
     make sync-rules     # fetch and rewrite the module
     make check-rules    # fetch and fail if the committed module has drifted
+    python3 scripts/sync_flow_rules.py --from payload.json
+
+`--from` renders a response body saved to a file instead of fetching one. It
+is what lets the refresh run where there are no member credentials: after each
+production deploy, the platform's pipeline exports this same payload for the
+code it just deployed and runs this script with `--from` against a checkout of
+this repository, and the docs bot proposes the result as a pull request. A
+rule change therefore arrives for review without anyone remembering to run
+`make sync-rules`. The flag reads only the file, so it needs nothing beyond
+the standard library.
 
 The render is a pure function of the payload with no timestamp in it, so an
 unchanged endpoint produces a byte-identical file. That is what makes
@@ -452,19 +462,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Compare instead of writing; exit 1 on drift.",
     )
+    parser.add_argument(
+        "--from",
+        dest="source",
+        type=Path,
+        metavar="FILE",
+        help="Read the endpoint's response body from FILE instead of fetching it.",
+    )
     args = parser.parse_args(argv)
 
     try:
-        rendered = render(fetch())
+        payload = json.loads(args.source.read_text()) if args.source else fetch()
+        rendered = render(payload)
     except Exception as exc:
         # Deliberately not a skip. An unreachable endpoint or a changed payload
         # leaves the committed snapshot unverified, and reporting that as
         # success is the whole failure mode this gate exists to avoid.
         print(f"could not build the snapshot: {exc}", file=sys.stderr)
-        print(
-            "check `popcorn auth status` — this needs workspace-member credentials.",
-            file=sys.stderr,
-        )
+        if args.source is None:
+            print(
+                "check `popcorn auth status` — this needs workspace-member credentials.",
+                file=sys.stderr,
+            )
         return EXIT_UNUSABLE
 
     current = TARGET.read_text() if TARGET.is_file() else ""

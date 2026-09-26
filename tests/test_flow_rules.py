@@ -19,6 +19,7 @@ shrug.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -365,6 +366,34 @@ def test_a_sync_writes_the_new_values(monkeypatch, tmp_path, capsys):
     assert sync_flow_rules.main([]) == 0
     assert '"campaign_id",' in target.read_text()
     assert "rewrote" in capsys.readouterr().out
+
+
+def test_a_sync_from_a_saved_body_never_fetches(monkeypatch, tmp_path, capsys):
+    """`--from` is how the post-deploy refresh runs with no credentials, so it
+    must read only the file — a fetch there would fail for want of a login."""
+
+    def no_fetch() -> dict[str, Any]:
+        raise AssertionError("--from must not fetch")
+
+    body = _payload()
+    body["trigger_keys"] = [*flow_rules.TRIGGER_KEYS, "campaign_id"]
+    source = tmp_path / "schema.json"
+    source.write_text(json.dumps(body))
+    target = tmp_path / "flow_rules.py"
+    monkeypatch.setattr(sync_flow_rules, "TARGET", target)
+    monkeypatch.setattr(sync_flow_rules, "_REPO", tmp_path)
+    monkeypatch.setattr(sync_flow_rules, "fetch", no_fetch)
+    assert sync_flow_rules.main(["--from", str(source)]) == 0
+    assert '"campaign_id",' in target.read_text()
+
+
+def test_an_unreadable_saved_body_fails_without_blaming_credentials(tmp_path, capsys):
+    source = tmp_path / "schema.json"
+    source.write_text("not json")
+    assert sync_flow_rules.main(["--check", "--from", str(source)]) == sync_flow_rules.EXIT_UNUSABLE
+    err = capsys.readouterr().err
+    assert "could not build the snapshot" in err
+    assert "auth status" not in err
 
 
 def test_a_generated_module_is_importable_and_formatted():

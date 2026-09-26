@@ -51,8 +51,9 @@ ci:  ## Non-mutating check for CI — same gates, but fails instead of fixing
 # `GET /customer-flows/schema`, which `popcorn template check` reads instead of
 # hand-copying the DSL's rules out of backend source. Both targets need
 # workspace-member credentials, which is why neither is part of `make ci` —
-# CI cannot reach the endpoint, so drift is caught here, by hand, and by the
-# longhand value assertions in tests/test_flow_rules.py.
+# CI cannot reach the endpoint. Drift is caught here, by hand; by the longhand
+# value assertions in tests/test_flow_rules.py; and by the bot PR opened after
+# each production deploy, which renders the deployed payload with `--from`.
 
 sync-rules:  ## Refresh the generated flow rules from the endpoint
 	uv run python scripts/sync_flow_rules.py

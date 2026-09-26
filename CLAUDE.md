@@ -180,7 +180,8 @@ machine, which is what `--strict` in CI has to guarantee.
 the server's flow-document schema
    │  GET /api/customer-flows/schema
    ▼
-scripts/sync_flow_rules.py  (make sync-rules / make check-rules)
+scripts/sync_flow_rules.py  (make sync-rules / make check-rules,
+   │                         or --from <saved body> after each prod deploy)
    │  renders, deterministically — no timestamp, so no diff means no change
    ▼
 src/popcorn_core/flow_rules.py   ← GENERATED, do not edit
@@ -194,6 +195,18 @@ carries. `make check-rules` fetches and fails on any diff, including a
 hand-edit; it needs credentials, so it cannot run in CI and is a
 before-a-release check instead. A newly served rule makes the script **fail**
 rather than skip, so a rule the checker does not consume forces a decision.
+
+**A rule change arrives as a bot PR.** After each production deploy, the
+platform's pipeline exports this payload for the deployed code, runs
+`sync_flow_rules.py --from` against a checkout of this repo, and — when the
+module changed — has the docs bot open a pull request on
+`automation/sync-flow-rules` with the regenerated module and a patch bump
+(it touches `src/`, so the version rules below apply to it like any other
+PR). It is never auto-merged: read the diff, because a changed rule may need
+a checker change or new longhand assertions in `tests/test_flow_rules.py`,
+which will fail on the PR until someone adds them. Push those to the same
+branch: once it carries a commit that is not the bot's, a later deploy no
+longer force-pushes over it and comments on the PR instead.
 
 Two rules were live divergences when this landed, both under-warns: the
 reference grammar accepted `$a.`, `$a..b` and `$a.1b`, which the interpreter
