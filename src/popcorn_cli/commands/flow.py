@@ -689,7 +689,7 @@ register(
                 "Start a flow run",
                 _flow_run,
                 [
-                    Argument("flow_id", "Flow UUID", positional=True),
+                    Argument("flow_id", "Flow name (as `flow list` prints it)", positional=True),
                     _CHANNEL,
                     Argument(
                         "inputs",
