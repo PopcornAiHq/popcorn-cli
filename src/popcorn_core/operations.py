@@ -1502,6 +1502,19 @@ def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
     return client.post("/api/apps/apply", {}, {"conversation_id": conv_id})
 
 
+def get_channel_app_status(client: APIClient, conversation: str) -> dict[str, Any]:
+    """Where the channel's install stands, with the binding it compares.
+
+    `install.state` is one of current, installing, retrying, locked, failed,
+    skipped or behind. The binding fields (`app`, `bound_*`, `head_*`) are
+    null while a channel's first install is running or has failed, since it
+    has no binding yet. A channel that runs no bundle and has no install
+    under way is a 404.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.get("/api/apps/status", {"conversation_id": conv_id})
+
+
 # ---------------------------------------------------------------------------
 # Channel config
 # ---------------------------------------------------------------------------
