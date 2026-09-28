@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from typing import ClassVar
 
@@ -123,6 +124,101 @@ class TestDerivedSurfaces:
         slot = parser._command_slot()
         for cmd in registry.COMMANDS:
             assert cmd.name in slot.choices
+
+
+class TestHelpEpilogMatchesTheParser:
+    """The `popcorn --help` command listing is a hand-written epilog.
+
+    Nothing derives it, so it drifts: a removed subcommand stays advertised and
+    a new one never appears. Both directions are checked against the built
+    parser rather than `registry.COMMANDS`, so the families still declared by
+    hand in `cli.py` are held to it as well.
+
+    The listing's shape is `  <family>   <description> (<sub>, <sub>, ...)`,
+    where a nested subcommand is written `runs get` or `params set/unset`, and
+    a group may be named bare (`row`) without spelling out its children. Once
+    a group's children are spelled out, all of them must be.
+    """
+
+    # `popcorn help` is an alias for `popcorn --help`, which is the listing.
+    _UNLISTED: ClassVar[set[str]] = {"help"}
+
+    @staticmethod
+    def _children(p: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
+        for action in p._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                return dict(action.choices)
+        return {}
+
+    @staticmethod
+    def _entries(epilog: str) -> dict[str, str]:
+        """`{family: description}`, with wrapped continuation lines joined."""
+        entries: dict[str, str] = {}
+        current = None
+        for line in epilog.splitlines():
+            m = re.match(r"^  (\S+)\s{2,}(.*)$", line)
+            if m:
+                current = m.group(1)
+                entries[current] = m.group(2)
+            elif current and line.startswith("   ") and line.strip():
+                entries[current] += " " + line.strip()
+            else:
+                current = None
+        return entries
+
+    @staticmethod
+    def _listed_paths(description: str) -> list[list[str]]:
+        """`"Flow commands (list, runs get, params set/unset)"` → subcommand paths."""
+        if "(" not in description:
+            return []
+        inner = description[description.rindex("(") + 1 : description.rindex(")")]
+        paths = []
+        for item in inner.split(","):
+            *head, last = item.split()
+            paths.extend([*head, leaf] for leaf in last.split("/"))
+        return paths
+
+    def test_every_listed_subcommand_exists(self, parser):
+        families = self._children(parser)
+        stale = []
+        for name, description in self._entries(parser.epilog or "").items():
+            if name not in families:
+                stale.append(name)
+                continue
+            if not self._children(families[name]):
+                continue  # a leaf command's parentheses are prose, not a list
+            for path in self._listed_paths(description):
+                node = families[name]
+                for word in path:
+                    node = self._children(node).get(word)
+                    if node is None:
+                        stale.append(" ".join([name, *path]))
+                        break
+        assert stale == [], f"--help epilog lists commands that don't exist: {stale}"
+
+    def test_every_subcommand_is_listed(self, parser):
+        entries = self._entries(parser.epilog or "")
+        missing = []
+        for name, family in self._children(parser).items():
+            if name in self._UNLISTED:
+                continue
+            if name not in entries:
+                missing.append(name)
+                continue
+            paths = self._listed_paths(entries[name])
+            for sub, sub_parser in self._children(family).items():
+                nested = [p[1:] for p in paths if p[0] == sub]
+                if not nested:
+                    missing.append(f"{name} {sub}")
+                    continue
+                spelled = {tuple(p) for p in nested if p}
+                if spelled:
+                    missing.extend(
+                        f"{name} {sub} {leaf}"
+                        for leaf in self._children(sub_parser)
+                        if (leaf,) not in spelled
+                    )
+        assert missing == [], f"commands missing from the --help epilog: {missing}"
 
 
 class TestDispatchIsWired:

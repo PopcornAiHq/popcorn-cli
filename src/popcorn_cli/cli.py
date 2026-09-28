@@ -2398,8 +2398,9 @@ Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
 
 Flows:
-  flow            Flow commands (activities, validate, import, list, get, run, runs list, runs get)
-  schedule        Scheduled-flow commands (list, get)
+  flow            Flow commands (activities, validate, list, get, run, runs list, runs get,
+                  runs cancel)
+  schedule        Scheduled-flow commands (list, get, trigger)
 
 Templates:
   template        Channel-template commands (check)
@@ -2425,7 +2426,9 @@ Other:
   api             Raw API call (like gh api)
   completion      Generate shell completions
   commands        Dump CLI schema as JSON
-  doctor          Diagnose local setup"""
+  doctor          Diagnose local setup
+  version         Show version (--check to check for updates)
+  upgrade         Upgrade popcorn to the latest version"""
 
     parser = PopcornParser(
         prog="popcorn",
