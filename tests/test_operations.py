@@ -47,6 +47,21 @@ class TestSearch:
         _, params = mock_client.get.call_args[0]
         assert "query" not in params
 
+    def test_search_users_with_query(self, mock_client):
+        """The server filters users too; the CLI returns what it was given."""
+        mock_client.get.return_value = {"users": [{"id": "u1", "username": "example-ana"}]}
+        result = operations.search_users(mock_client, "ana")
+        path, params = mock_client.get.call_args[0]
+        assert path == "/api/users/list"
+        assert params["query"] == "ana"
+        assert result["users"] == [{"id": "u1", "username": "example-ana"}]
+
+    def test_search_users_without_query_sends_none(self, mock_client):
+        mock_client.get.return_value = {"users": []}
+        operations.search_users(mock_client)
+        _, params = mock_client.get.call_args[0]
+        assert "query" not in params
+
     def test_search_messages_requires_query(self, mock_client):
         with pytest.raises(PopcornError, match="Query required"):
             operations.search_messages(mock_client, "")
