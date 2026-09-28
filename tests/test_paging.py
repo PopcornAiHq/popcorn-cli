@@ -137,12 +137,15 @@ class TestSearchPaging:
         assert [c["id"] for c in got] == ["dm-1", "dm-2"]
 
     def test_user_listing_spans_pages(self, mock_client):
+        """The server filters, so every row of every page is a hit to keep."""
         mock_client.get.side_effect = [
-            _page("users", [{"id": "u1", "username": "ada"}], next_cursor="1"),
-            _page("users", [{"id": "u2", "username": "grace"}]),
+            _page("users", [{"id": "u1", "username": "grace"}], next_cursor="1"),
+            _page("users", [{"id": "u2", "username": "gracie"}]),
         ]
         got = operations.search_users(mock_client, "grace")["users"]
-        assert [u["id"] for u in got] == ["u2"]
+        assert [u["id"] for u in got] == ["u1", "u2"]
+        for call in mock_client.get.call_args_list:
+            assert call.args[1]["query"] == "grace"
 
 
 class TestArchivedAndHidden:

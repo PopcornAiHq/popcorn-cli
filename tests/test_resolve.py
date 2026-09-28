@@ -204,6 +204,24 @@ class TestResolveUser:
         }
         assert resolve_user(mock_client, "kim") == "00000000-0000-4000-8000-000000000003"
 
+    def test_asks_the_server_to_narrow_by_handle(self, mock_client):
+        """The listing is filtered server-side rather than read in full."""
+        mock_client.get.return_value = _USERS
+        resolve_user(mock_client, "@Example-Ana")
+        path, params = mock_client.get.call_args.args
+        assert path == "/api/users/list"
+        assert params["query"] == "example-ana"
+
+    def test_substring_hits_from_the_server_are_not_matches(self, mock_client):
+        """`query=` is a substring filter; only a whole handle resolves."""
+        mock_client.get.return_value = {
+            "users": [
+                {"id": "00000000-0000-4000-8000-000000000001", "username": "example-ana-2"},
+                {"id": "00000000-0000-4000-8000-000000000002", "username": "example-ana"},
+            ]
+        }
+        assert resolve_user(mock_client, "example-ana") == "00000000-0000-4000-8000-000000000002"
+
     def test_caches_result(self, mock_client):
         mock_client.get.return_value = _USERS
         resolve_user(mock_client, "example-ana")

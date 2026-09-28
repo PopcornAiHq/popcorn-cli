@@ -102,17 +102,14 @@ def search_dms(
 
 
 def search_users(client: APIClient, query: str = "") -> dict[str, Any]:
-    """Search users, optionally filtering by name/email."""
-    users = fetch_all(client, "/api/users/list", {}, "users")
-    if query:
-        q = query.lower()
-        users = [
-            u
-            for u in users
-            if q in (u.get("display_name") or "").lower()
-            or q in (u.get("username") or "").lower()
-            or q in (u.get("email") or "").lower()
-        ]
+    """Search users, optionally filtering by name/email.
+
+    The filter runs on the server: a case-insensitive substring over
+    username, display name and email, so a search reads the matching users
+    rather than the whole workspace.
+    """
+    params = {"query": query} if query else {}
+    users = fetch_all(client, "/api/users/list", params, "users")
     return {"users": users}
 
 

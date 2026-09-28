@@ -205,9 +205,12 @@ def resolve_user(client: APIClient, ref: str) -> str:
     if cached is not None:
         return cached
 
-    # Every page, not the first: the ambiguity check below is only meaningful
-    # over the whole workspace, so there is no early exit here.
-    users = fetch_all(client, "/api/users/list", {}, "users")
+    # The server narrows the listing to users with `name` somewhere in a
+    # handle; equality is still decided here, because display names and
+    # emails are not unique and a substring hit is not a match. Every page of
+    # that narrowed listing is read: the ambiguity check below is only
+    # meaningful over all of it, so there is no early exit.
+    users = fetch_all(client, "/api/users/list", {"query": name}, "users")
 
     matched = [u for u in users if name in _user_handles(u) and u.get("id")]
     ids = {str(u["id"]) for u in matched}
