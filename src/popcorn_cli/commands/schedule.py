@@ -1,19 +1,19 @@
-"""`popcorn schedule` — a channel's live scheduled flows (read-only).
+"""`popcorn schedule` — a channel's live scheduled flows: read, and run now.
 
-Read-only because there is no write half to wrap. A schedule is app-bundle
-content: the manifest's `schedules:` list declares it and the installer
-reconciles the channel's Temporal schedules to that list on every install.
-Changing a cadence therefore means editing the manifest and publishing a
-version, the same path as any other change to what a channel does. The
-user-token `create`/`update`/`delete` this command was once expected to grow
-into were deleted server-side outright, not deprecated, and the user-token
-surface is `list`/`get` alone. No `create` or `delete` survives on the agent
-surface either, which keeps two writes, neither of them a definition change:
-`trigger` fires one run now, and `update` is a live PATCH owned by the
-`set_app_mode` bundle flow, which refuses any schedule the bound manifest does
-not declare and is re-applied over by the next install — so a CLI write on
-top of it would be transient even where it was reachable. Read-only here is
-therefore settled, not pending.
+There is no definition write to wrap. A schedule is app-bundle content: the
+manifest's `schedules:` list declares it and the installer reconciles the
+channel's Temporal schedules to that list on every install. Changing a
+cadence therefore means editing the manifest and publishing a version, the
+same path as any other change to what a channel does. The user-token
+`create`/`update`/`delete` this command was once expected to grow into were
+deleted server-side outright, not deprecated. The agent surface keeps a live
+`update` PATCH owned by the `set_app_mode` bundle flow, which the next
+install re-applies over, so a CLI write on top of it would be transient even
+where it was reachable.
+
+`trigger` is the one write, and it is not a definition change: it fires one
+run of a declared schedule now, with the inputs the schedule already stores.
+The server refuses a schedule the bound manifest does not declare.
 
 Handlers import their `..cli` helpers *inside* the function body: cli.py
 imports this package at module load to build the parser, so a module-level
@@ -76,6 +76,40 @@ def _schedule_list(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+def _schedule_trigger(args: argparse.Namespace) -> None:
+    from ..cli import _get_client, _output
+
+    client = _get_client(args)
+    resp = operations.trigger_scheduled_flow(
+        client, args.channel, args.schedule, getattr(args, "overlap_policy", None)
+    )
+    schedule_id = resp.get("schedule_id") or args.schedule
+    workflow_id = resp.get("workflow_id")
+    if resp.get("skipped_overlap"):
+        lines = [
+            f"Not run: {schedule_id} already has a run in flight, and its overlap "
+            "policy dropped this one.",
+            "Pass --overlap-policy allow_all to run it anyway.",
+        ]
+    elif workflow_id:
+        lines = [
+            f"Triggered {schedule_id}",
+            f"  workflow_id  {workflow_id}",
+            f"  run_id       {resp.get('run_id') or '-'}",
+            "",
+            f"Follow it: popcorn flow runs get {workflow_id} --channel '{args.channel}'",
+        ]
+    else:
+        # Null ids are "not observed", not a failure: a buffer_* policy
+        # deferred the run, or Temporal was slow to record it.
+        lines = [
+            f"Triggered {schedule_id}, but no run was seen starting yet — it may be "
+            "deferred behind a running one, or slow to record.",
+            f"Check with: popcorn schedule get {args.schedule} --channel '{args.channel}'",
+        ]
+    _output(args, resp, "\n".join(lines))
+
+
 def _schedule_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -118,7 +152,7 @@ register(
     Command(
         name="schedule",
         category="flows",
-        description="Scheduled-flow commands (list, get)",
+        description="Scheduled-flow commands (list, get, trigger)",
         subcommands=[
             Subcommand(
                 "list",
@@ -137,6 +171,24 @@ register(
                         positional=True,
                     ),
                     _CHANNEL,
+                ],
+            ),
+            Subcommand(
+                "trigger",
+                "Run a declared schedule now, with its stored inputs",
+                _schedule_trigger,
+                [
+                    Argument(
+                        "schedule",
+                        "Schedule slug, flow id, or full schedule_id",
+                        positional=True,
+                    ),
+                    _CHANNEL,
+                    Argument(
+                        "overlap-policy",
+                        "Overlap policy for this run only (default: the schedule's "
+                        "own); allow_all runs it even while another is in flight",
+                    ),
                 ],
             ),
         ],

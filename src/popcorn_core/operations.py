@@ -1073,6 +1073,33 @@ def get_scheduled_flow(client: APIClient, conversation: str, schedule_ref: str) 
     )
 
 
+def trigger_scheduled_flow(
+    client: APIClient,
+    conversation: str,
+    schedule_ref: str,
+    overlap_policy: str | None = None,
+) -> dict[str, Any]:
+    """Run one of the channel's declared schedules now, with its stored inputs.
+
+    Returns `schedule_id`, `workflow_id`, `run_id` and `skipped_overlap`.
+    The ids are null when no run was observed starting within the server's
+    short wait: `skipped_overlap` is then true if the schedule's overlap
+    policy dropped it because a run is in flight, and otherwise the run was
+    deferred or slow to record — "not observed", never "failed".
+    `overlap_policy` overrides the schedule's own for this run only; the
+    server validates it. A schedule the bound manifest does not declare is
+    refused with a 403.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    schedule_id = resolve_schedule_ref(client, conversation, schedule_ref)
+    body = {"overlap_policy": overlap_policy} if overlap_policy else {}
+    return client.post(
+        "/api/customer-scheduled-flows/trigger",
+        body,
+        {"conversation_id": conv_id, "schedule_id": schedule_id},
+    )
+
+
 def validate_flow_yaml(client: APIClient, conversation: str, yaml_text: str) -> dict[str, Any]:
     """Parse + statically validate one flow YAML. Never persists.
 

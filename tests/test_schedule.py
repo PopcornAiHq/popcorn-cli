@@ -7,7 +7,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from popcorn_cli.commands.schedule import _cadence, _humanize_seconds, _schedule_list
+from popcorn_cli.commands.schedule import (
+    _cadence,
+    _humanize_seconds,
+    _schedule_list,
+    _schedule_trigger,
+)
 from popcorn_core import operations
 from popcorn_core.errors import PopcornError
 
@@ -117,6 +122,94 @@ class TestCadence:
 
     def test_neither_form_does_not_crash(self):
         assert _cadence(_item(interval_seconds=None, cron_expr=None)) == "no cadence"
+
+
+_SID = "channel:conv-1:flow:claim_tick:claim-tick"
+
+
+class TestTriggerOperation:
+    def test_posts_the_resolved_id_with_no_body_by_default(self, mock_client):
+        mock_client.get.return_value = {"scheduled_flows": [_item()], "count": 1}
+        mock_client.post.return_value = {"schedule_id": _SID, "workflow_id": "wf-1"}
+        operations.trigger_scheduled_flow(mock_client, "conv-1", "claim-tick")
+        mock_client.post.assert_called_once_with(
+            "/api/customer-scheduled-flows/trigger",
+            {},
+            {"conversation_id": "conv-1", "schedule_id": _SID},
+        )
+
+    def test_overlap_policy_rides_in_the_body(self, mock_client):
+        mock_client.post.return_value = {"schedule_id": _SID}
+        operations.trigger_scheduled_flow(mock_client, "conv-1", _SID, "allow_all")
+        body = mock_client.post.call_args.args[1]
+        assert body == {"overlap_policy": "allow_all"}
+        mock_client.get.assert_not_called()  # a full id needs no lookup
+
+    def test_an_unknown_ref_is_refused_before_any_trigger(self, mock_client):
+        mock_client.get.return_value = {"scheduled_flows": [_item()], "count": 1}
+        with pytest.raises(PopcornError, match="No schedule 'nope'"):
+            operations.trigger_scheduled_flow(mock_client, "conv-1", "nope")
+        mock_client.post.assert_not_called()
+
+
+class TestTriggerRendering:
+    def _render(self, resp, overlap=None):
+        captured = {}
+        args = argparse.Namespace(
+            channel="#ops", schedule="claim-tick", overlap_policy=overlap, json=False
+        )
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=MagicMock()),
+            patch(
+                "popcorn_cli.cli._output",
+                side_effect=lambda _a, data, text: captured.update(data=data, text=text),
+            ),
+            patch("popcorn_core.operations.trigger_scheduled_flow", return_value=resp) as trigger,
+        ):
+            _schedule_trigger(args)
+        captured["call"] = trigger.call_args
+        return captured
+
+    def test_a_started_run_says_how_to_follow_it(self):
+        out = self._render(
+            {
+                "ok": True,
+                "schedule_id": _SID,
+                "workflow_id": "wf-1",
+                "run_id": "run-1",
+                "skipped_overlap": False,
+            }
+        )
+        assert "wf-1" in out["text"] and "run-1" in out["text"]
+        assert "popcorn flow runs get wf-1 --channel '#ops'" in out["text"]
+
+    def test_an_overlap_skip_is_not_reported_as_triggered(self):
+        out = self._render(
+            {"schedule_id": _SID, "workflow_id": None, "run_id": None, "skipped_overlap": True}
+        )
+        assert "Not run" in out["text"]
+        assert "Triggered" not in out["text"]
+        assert "--overlap-policy allow_all" in out["text"]
+
+    def test_unobserved_ids_are_not_called_a_failure(self):
+        out = self._render(
+            {"schedule_id": _SID, "workflow_id": None, "run_id": None, "skipped_overlap": False}
+        )
+        assert "no run was seen starting yet" in out["text"]
+        assert "fail" not in out["text"].lower()
+
+    def test_json_is_the_served_response(self):
+        resp = {
+            "schedule_id": _SID,
+            "workflow_id": "wf-1",
+            "run_id": "run-1",
+            "skipped_overlap": False,
+        }
+        assert self._render(resp)["data"] == resp
+
+    def test_the_overlap_flag_reaches_the_operation(self):
+        out = self._render({"schedule_id": _SID, "workflow_id": "wf-1"}, overlap="allow_all")
+        assert out["call"].args[1:] == ("#ops", "claim-tick", "allow_all")
 
 
 class TestRendering:
