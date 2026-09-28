@@ -663,6 +663,12 @@ class TestChannelTemplates:
         mock_client.get.assert_called_once_with("/api/conversations/templates")
         assert result["templates"][0]["name"] == "crm"
 
+    def test_app_status_reads_the_served_install_block(self, mock_client):
+        mock_client.get.return_value = {"install": {"state": "current"}}
+        result = operations.get_channel_app_status(mock_client, "conv-1")
+        mock_client.get.assert_called_once_with("/api/apps/status", {"conversation_id": "conv-1"})
+        assert result["install"]["state"] == "current"
+
 
 class TestDataStoreOperations:
     """The data-store surface at /api/v1/conversations/{id}/data-store/…

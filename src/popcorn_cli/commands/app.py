@@ -1158,82 +1158,141 @@ def _schedule_drift_section(
     return f"{len(report.alarming)} schedule(s) drifted from the manifest: {slugs}"
 
 
+def _version_label(semver: Any, version_id: Any) -> str:
+    """`0.2.0 (version 7)`, or whichever half the server sent."""
+    if semver and version_id is not None:
+        return f"{semver} (version {version_id})"
+    if semver:
+        return str(semver)
+    if version_id is not None:
+        return f"version {version_id}"
+    return "the line's head"
+
+
+def _served_install_lines(install: dict[str, Any], conversation: str) -> list[str]:
+    """The served install block as rendered lines, headed `Install: <STATE>`.
+
+    Written against the block's fields rather than a table per state, so a
+    state this CLI does not know yet still renders its target, error and
+    hint instead of nothing.
+    """
+    state = str(install.get("state") or "unknown")
+    target = _version_label(install.get("target_semver"), install.get("target_version_id"))
+    attempt, max_attempts = install.get("attempt"), install.get("max_attempts")
+    attempts = (
+        f"attempt {attempt} of {max_attempts}"
+        if attempt is not None and max_attempts is not None
+        else (f"attempt {attempt}" if attempt is not None else "")
+    )
+    headline = {
+        "current": "the channel runs the line's head",
+        "installing": f"installing {target}" + (f", {attempts}" if attempts else ""),
+        "retrying": f"retrying {target}" + (f", {attempts}" if attempts else ""),
+        "locked": f"app updates are locked on this channel, so {target} is not applied",
+        "failed": f"the install of {target} failed" + (f" on {attempts}" if attempts else ""),
+        "skipped": f"the install of {target} was skipped"
+        + (f" ({install['reason']})" if install.get("reason") else ""),
+        "behind": f"no install is moving the channel to {target}",
+    }.get(state, target)
+    lines = [f"Install: {state.upper()} — {headline}."]
+    if install.get("error"):
+        lines.append(f"  Error: {install['error']}")
+    if install.get("at"):
+        lines.append(f"  At:    {install['at']}")
+    if install.get("live") is False:
+        lines.append(
+            "  The install workflow could not be read, so this comes from the "
+            "database alone and a running install would not show."
+        )
+    hint = install.get("retry_hint")
+    if hint:
+        lines.append(f"Next: {hint}")
+        # The served hint names the command without the channel it applies to.
+        if "app apply" in str(hint):
+            lines.append(f"      popcorn app apply --channel '{conversation}'")
+    return lines
+
+
+def _read_install(client: Any, conversation: str) -> tuple[dict | None, str | None]:
+    """The served install block for a checkout's status, or why it is missing.
+
+    A failed read does not fail the report: the working-copy half of `status`
+    stands on its own, so the gap is reported next to it instead.
+    """
+    try:
+        served = operations.get_channel_app_status(client, conversation)
+    except APIError as exc:
+        return None, f"the install status could not be read ({exc})"
+    install = served.get("install")
+    if not isinstance(install, dict):
+        return None, "the server sent no install block"
+    return install, None
+
+
 def _channel_status(args: argparse.Namespace, conversation: str) -> None:
     """ "Has my publish landed on this channel?", from server state alone.
 
-    The question the publish loop actually raises, and before this it had no
-    direct answer: `status` needed a checkout, so callers polled `app list`
-    and grepped a semver out of its prose. Two version IDs from
-    `/apps/tree?ref=head` settle it — `bound_version_id` is what the channel
-    runs, `version_id` is the line's head — and `install_state` puts the
-    answer in one machine-readable field so nothing has to parse rendering.
+    The server answers it in one read, `/apps/status`: the binding, the
+    line's head, and an `install` block saying whether an install is
+    running, retrying, failed, skipped, locked or simply never started.
+    `install` is served verbatim in `--json`, and `install.state` is the
+    field to branch on.
 
-    `install_state` is deliberately NOT the install job's status. `publish`
-    prints a workflow id (`channel-install:<uuid>`) but the API exposes no
-    endpoint that reads it: the whole `/apps` surface is list, tree, file,
-    files, fork, publish, apply, and the one place the backend describes that
-    workflow is a private helper behind publish and apply. So a channel
-    behind its line reads as "pending" whether the install is still running
-    or has failed, and this cannot tell the two apart until the backend
-    exposes the job. `apply` is the retry either way, which is why "pending"
-    points there.
+    `install_state` predates the served block and keeps its two values:
+    "current", or "pending" for every other state. It used to be derived
+    from the version ids alone, which left a dead install pending forever;
+    it now follows `install.state`, so the two never disagree.
     """
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    listing = operations.list_channel_apps(client, conversation)
-    binding = listing.get("channel")
-    if not binding:
+    try:
+        served = operations.get_channel_app_status(client, conversation)
+    except APIError as exc:
+        if exc.status_code != 404:
+            raise
         raise PopcornError(
             f"{conversation} does not run an app bundle — there is no install to report",
             error_code="not_found",
             hint=f"popcorn app list --channel '{conversation}'",
-        )
+        ) from exc
 
-    tree = operations.get_channel_app_tree(client, conversation, ref="head")
-    head_id = tree.get("version_id")
-    head_semver = tree.get("semver")
-    # An older API sends no `bound_*`; then the served version IS the bound
-    # one, so the binding's own fields answer.
-    channel_id = tree.get("bound_version_id", binding.get("version_id"))
-    channel_semver = tree.get("bound_semver", binding.get("semver"))
-    behind = channel_id != head_id
-    line = binding.get("fork_name")
+    install = served.get("install") or {}
+    state = install.get("state")
+    head_id = served.get("head_version_id")
+    head_semver = served.get("head_semver")
+    channel_id = served.get("bound_version_id")
+    channel_semver = served.get("bound_semver")
+    line = served.get("fork_name")
 
     data = {
         "channel": conversation,
-        "app": binding.get("app"),
-        "kind": binding.get("kind"),
+        "app": served.get("app"),
+        "kind": served.get("kind"),
         "fork_name": line,
         "channel_semver": channel_semver,
         "channel_version_id": channel_id,
         "head_semver": head_semver,
         "head_version_id": head_id,
-        "channel_behind": behind,
-        "install_state": "pending" if behind else "current",
+        # Every state but `current` is a channel short of its head (`current`
+        # includes a product channel ahead of a rolled-back track head).
+        "channel_behind": state != "current",
+        "install_state": "current" if state == "current" else "pending",
+        "install": install,
     }
 
-    lines = [
-        f"{binding.get('app')} {channel_semver} ({binding.get('kind')}"
-        + (f", line {line}" if line else "")
-        + f") on {conversation}",
-    ]
-    if behind:
-        lines += [
-            f"Fork line head: {head_semver} (version {head_id})",
-            "",
-            f"Install: PENDING — the channel still runs {channel_semver} (version {channel_id}).",
-            "The install job's own status is not readable from the API, so a "
-            "failed install looks the same as one still running.",
-            f"Re-run this to re-check, or 'popcorn app apply --channel "
-            f"{conversation}' to retry it.",
-        ]
+    if served.get("app") is None:
+        # A first install still running or failed: nothing is bound yet.
+        lines = [f"No app bundle is bound on {conversation} yet."]
     else:
-        lines += [
+        lines = [
+            f"{served.get('app')} {channel_semver} ({served.get('kind')}"
+            + (f", line {line}" if line else "")
+            + f") on {conversation}",
             f"Fork line head: {head_semver} (version {head_id})",
-            "",
-            f"Install: CURRENT — the channel runs the line's head (version {head_id}).",
         ]
+    lines.append("")
+    lines += _served_install_lines(install, conversation)
     drift = _schedule_drift_section(client, conversation, data, lines)
     _output(args, data, "\n".join(lines))
     if drift:
@@ -1276,6 +1335,7 @@ def _app_status(args: argparse.Namespace) -> None:
     channel_id = resp.get("bound_version_id", head_id)
     channel_semver = resp.get("bound_semver", head_semver)
     in_sync = head_id == baseline.base_version_id and not baseline.historical
+    install, install_error = _read_install(client, conversation)
 
     data = {
         "directory": str(directory),
@@ -1297,6 +1357,8 @@ def _app_status(args: argparse.Namespace) -> None:
         "ignored": local.ignored,
         "preserved": diff.preserved,
         "unpublishable": unpublishable,
+        "install": install,
+        "install_error": install_error,
     }
 
     lines = [
@@ -1313,6 +1375,13 @@ def _app_status(args: argparse.Namespace) -> None:
         lines.append(
             f"Fork line moved to {head_semver} (version {head_id}) — re-run 'popcorn app checkout'."
         )
+    elif channel_id != head_id and install is not None:
+        # The served block says why it has not landed, and what moves it on,
+        # which is not always `apply` (a locked channel, a product line).
+        lines.append(
+            f"Channel still runs {channel_semver} (version {channel_id}); "
+            f"{baseline.semver} is the line's head."
+        )
     elif channel_id != head_id:
         lines.append(
             f"Channel still runs {channel_semver} (version {channel_id}); "
@@ -1321,6 +1390,10 @@ def _app_status(args: argparse.Namespace) -> None:
         )
     else:
         lines.append(f"Channel runs the same version ({head_id}).")
+    if install_error is not None:
+        lines.append(f"Install: not checked — {install_error}")
+    elif install is not None and install.get("state") != "current":
+        lines += _served_install_lines(install, conversation)
     lines.append("")
     if diff.empty:
         lines.append("Working copy matches the fork line's head.")

@@ -464,6 +464,9 @@ class TestStatusOfHistorical:
             patch.object(operations, "get_channel_app_tree", return_value=head_tree),
             patch.object(operations, "get_channel_app_files", files_read),
             patch.object(operations, "get_channel_app_file", return_value={"content": "a: 1\n"}),
+            patch.object(
+                operations, "get_channel_app_status", return_value={"install": {"state": "current"}}
+            ),
         ):
             mod._app_status(argparse.Namespace(directory=str(tmp_path), channel=None, json=False))
 

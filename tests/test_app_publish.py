@@ -87,13 +87,20 @@ def _tree_from(files_response: dict, *, hashes: bool = True) -> dict:
 
 
 @contextlib.contextmanager
-def _serve(files_response: dict, *, tree: dict | None = None, hashes: bool = True):
+def _serve(
+    files_response: dict,
+    *,
+    tree: dict | None = None,
+    hashes: bool = True,
+    status: dict | Exception | None = None,
+):
     """Both base reads, recorded: `/apps/tree` and the full `/apps/files`.
 
     The tree defaults to one derived from `files_response` — a current
     server, with hashes — so a test that says nothing about the server gets
     the path every current install takes. The yielded dict records the `ref`
-    of every call to each endpoint.
+    of every call to each endpoint. `/apps/status` answers `current` unless
+    `status` says otherwise (a response, or an exception to raise).
     """
     calls: dict[str, list[str]] = {"tree": [], "files": []}
     served_tree = tree if tree is not None else _tree_from(files_response, hashes=hashes)
@@ -106,11 +113,56 @@ def _serve(files_response: dict, *, tree: dict | None = None, hashes: bool = Tru
         calls["files"].append(ref)
         return files_response
 
+    served_status = status if status is not None else _status_response()
+    status_patch = (
+        patch.object(operations, "get_channel_app_status", side_effect=served_status)
+        if isinstance(served_status, Exception)
+        else patch.object(operations, "get_channel_app_status", return_value=served_status)
+    )
     with (
         patch.object(operations, "get_channel_app_tree", _tree),
         patch.object(operations, "get_channel_app_files", _files),
+        status_patch,
     ):
         yield calls
+
+
+def _install(**over) -> dict:
+    """The served `install` block of `/apps/status`, for a current channel."""
+    payload = {
+        "state": "current",
+        "target_version_id": None,
+        "target_semver": None,
+        "workflow_id": "channel-install:00000000-0000-4000-8000-000000000001",
+        "run_status": "COMPLETED",
+        "live": True,
+        "attempt": None,
+        "max_attempts": None,
+        "error": None,
+        "reason": None,
+        "at": None,
+        "locked": False,
+        "retry_hint": None,
+    }
+    payload.update(over)
+    return payload
+
+
+def _status_response(install: dict | None = None, **over) -> dict:
+    """An `/apps/status` response: the binding, the line's head, `install`."""
+    payload = {
+        "ok": True,
+        "app": "alerttracker",
+        "kind": "fork",
+        "fork_name": "demo914",
+        "bound_version_id": 7,
+        "bound_semver": "0.2.0",
+        "head_version_id": 7,
+        "head_semver": "0.2.0",
+        "install": install if install is not None else _install(),
+    }
+    payload.update(over)
+    return payload
 
 
 def _checkout(directory: Path, files: dict[str, str], **over) -> Baseline:
@@ -1400,7 +1452,7 @@ def _no_declared_schedules():
 
 
 class TestStatusCommand:
-    def _run(self, tmp_path, files_response, args):
+    def _run(self, tmp_path, files_response, args, status=None):
         from popcorn_cli.commands import app as mod
 
         captured = {}
@@ -1412,7 +1464,7 @@ class TestStatusCommand:
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output", _capture),
-            _serve(files_response),
+            _serve(files_response, status=status),
             _no_declared_schedules(),
         ):
             mod._app_status(args)
@@ -1455,11 +1507,50 @@ class TestStatusCommand:
             tmp_path,
             _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
             _args(directory=str(tmp_path)),
+            status=_behind_status(_BEHIND),
         )
         assert out["data"]["in_sync"] is True
         assert out["data"]["channel_behind"] is True
         assert (out["data"]["channel_version_id"], out["data"]["head_version_id"]) == (5, 7)
         assert "Channel still runs 0.1.0 (version 5)" in out["rendered"]
+        assert "popcorn app apply" in out["rendered"]
+
+    def test_a_checkout_reports_a_failed_install(self, tmp_path):
+        """The checkout view carries the served block too: `app apply` in a
+        checkout says `Next: popcorn app status`, so this is where a failed
+        install has to show up."""
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        out = self._run(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
+            _args(directory=str(tmp_path)),
+            status=_behind_status(_FAILED),
+        )
+        assert out["data"]["install"] == _FAILED
+        assert out["data"]["install_error"] is None
+        assert "FAILED" in out["rendered"] and "ValidationFailed" in out["rendered"]
+
+    def test_a_current_checkout_adds_no_install_lines(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        out = self._run(tmp_path, _files_response(base), _args(directory=str(tmp_path)))
+        assert out["data"]["install"]["state"] == "current"
+        assert "Install:" not in out["rendered"]
+
+    def test_an_unreadable_install_status_does_not_fail_the_checkout_report(self, tmp_path):
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        out = self._run(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
+            _args(directory=str(tmp_path)),
+            status=APIError("temporal_unavailable", status_code=503),
+        )
+        assert out["data"]["install"] is None
+        assert "could not be read" in out["data"]["install_error"]
+        assert "Install: not checked" in out["rendered"]
+        # With nothing served, the older advice still stands.
         assert "popcorn app apply" in out["rendered"]
 
     def test_reports_a_current_channel(self, tmp_path):
@@ -2102,37 +2193,29 @@ class TestDeprecatedChangelogAlias:
 # ---------------------------------------------------------------------------
 
 
-def _tree_response(**over) -> dict:
-    """An `/apps/tree?ref=head` response: the line's head plus the binding."""
-    payload = {
-        "ok": True,
-        "app": "alerttracker",
-        "kind": "fork",
-        "version_id": 7,
-        "semver": "0.2.0",
-        "ref": "head",
-        "bound_version_id": 7,
-        "bound_semver": "0.2.0",
-        "paths": ["manifest.yaml"],
-    }
-    payload.update(over)
-    return payload
+_FAILED = _install(
+    state="failed",
+    target_version_id=7,
+    target_semver="0.2.0",
+    run_status="FAILED",
+    attempt=5,
+    max_attempts=5,
+    error="ValidationFailed: agent_store request failed (HTTP 422)",
+    at="2026-09-24T12:00:00+00:00",
+    retry_hint="run 'app apply' to retry; if it fails the same way, fix the "
+    "line's head ('app checkout', then 'app publish')",
+)
+
+_BEHIND = _install(
+    state="behind",
+    target_version_id=7,
+    target_semver="0.2.0",
+    retry_hint="run 'app apply' to move the channel to its line's head",
+)
 
 
-def _binding(**over) -> dict:
-    payload = {
-        "ok": True,
-        "apps": [],
-        "channel": {
-            "app": "alerttracker",
-            "kind": "fork",
-            "fork_name": "demo914",
-            "version_id": 7,
-            "semver": "0.2.0",
-        },
-    }
-    payload.update(over)
-    return payload
+def _behind_status(install: dict) -> dict:
+    return _status_response(install, bound_version_id=5, bound_semver="0.1.0")
 
 
 class TestChannelScopedStatus:
@@ -2142,7 +2225,7 @@ class TestChannelScopedStatus:
     `app list --channel` and string-matched a semver out of its prose.
     """
 
-    def _run(self, args, listing=None, tree=None):
+    def _run(self, args, status=None):
         from popcorn_cli.commands import app as mod
 
         captured = {}
@@ -2152,8 +2235,9 @@ class TestChannelScopedStatus:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "list_channel_apps", return_value=listing or _binding()),
-            patch.object(operations, "get_channel_app_tree", return_value=tree or _tree_response()),
+            patch.object(
+                operations, "get_channel_app_status", return_value=status or _status_response()
+            ),
             _no_declared_schedules(),
         ):
             mod._app_status(args)
@@ -2167,44 +2251,138 @@ class TestChannelScopedStatus:
         assert "CURRENT" in out["rendered"]
 
     def test_a_channel_behind_its_line_reads_as_pending(self, tmp_path):
-        out = self._run(
-            _args(directory=str(tmp_path), channel="#chan"),
-            tree=_tree_response(bound_version_id=5, bound_semver="0.1.0"),
-        )
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_BEHIND))
         assert out["data"]["install_state"] == "pending"
         assert out["data"]["channel_behind"] is True
         assert (out["data"]["channel_semver"], out["data"]["head_semver"]) == ("0.1.0", "0.2.0")
-        assert "PENDING" in out["rendered"]
-        assert "popcorn app apply --channel #chan" in out["rendered"]
+        assert "BEHIND" in out["rendered"]
+        assert "popcorn app apply --channel '#chan'" in out["rendered"]
 
-    def test_pending_says_the_job_status_is_not_readable(self, tmp_path):
-        """The honest half of `app status`: the API exposes no status for the
-        install job, so a failed install and a running one look the same and
-        the output must not imply otherwise."""
+    def test_a_failed_install_is_told_apart_from_a_running_one(self, tmp_path):
+        """The gap the served block closes: both used to read as PENDING."""
+        failed = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_FAILED))
+        running = self._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            _behind_status(
+                _install(
+                    state="installing",
+                    target_version_id=7,
+                    target_semver="0.2.0",
+                    run_status="RUNNING",
+                    attempt=1,
+                    max_attempts=5,
+                )
+            ),
+        )
+        assert failed["data"]["install"]["state"] == "failed"
+        assert running["data"]["install"]["state"] == "installing"
+        assert "FAILED" in failed["rendered"]
+        assert "attempt 5 of 5" in failed["rendered"]
+        assert "ValidationFailed" in failed["rendered"]
+        assert "INSTALLING" in running["rendered"]
+        assert "Next:" not in running["rendered"], "a running install needs nothing of the caller"
+
+    def test_json_carries_the_served_block_verbatim(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_FAILED))
+        assert out["data"]["install"] == _FAILED
+
+    def test_the_older_keys_are_all_still_there(self, tmp_path):
+        """`--json` is add-only: the block joins the report, it replaces nothing."""
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        assert {
+            "channel",
+            "app",
+            "kind",
+            "fork_name",
+            "channel_semver",
+            "channel_version_id",
+            "head_semver",
+            "head_version_id",
+            "channel_behind",
+            "install_state",
+        } <= set(out["data"])
+
+    def test_a_skip_names_its_reason(self, tmp_path):
+        skipped = _install(
+            state="skipped",
+            target_version_id=7,
+            target_semver="0.2.0",
+            reason="stale_target",
+            retry_hint="run 'app apply' to move the channel to its line's head",
+        )
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(skipped))
+        assert "SKIPPED" in out["rendered"] and "stale_target" in out["rendered"]
+
+    def test_a_locked_channel_is_not_told_that_apply_fixes_it(self, tmp_path):
+        """A product channel's hint names no command; none is invented for it."""
+        locked = _install(
+            state="locked",
+            target_version_id=9,
+            target_semver="1.4.0",
+            locked=True,
+            retry_hint="unlock app updates on this channel; auto-update then "
+            "applies the head on its next daily check",
+        )
         out = self._run(
             _args(directory=str(tmp_path), channel="#chan"),
-            tree=_tree_response(bound_version_id=5, bound_semver="0.1.0"),
+            _behind_status(locked) | {"kind": "product", "fork_name": None},
         )
-        assert "not readable from the API" in out["rendered"]
+        assert "LOCKED" in out["rendered"]
+        assert "unlock app updates" in out["rendered"]
+        assert "popcorn app apply" not in out["rendered"]
 
-    def test_it_reads_the_line_head_not_the_bound_version(self, tmp_path):
+    def test_a_dead_install_answered_without_temporal_says_so(self, tmp_path):
+        """The honest half that remains: with the workflow unreadable, a
+        running install cannot be seen, and the output must not imply it can."""
+        out = self._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            _behind_status(_BEHIND | {"live": False, "run_status": None}),
+        )
+        assert "database alone" in out["rendered"]
+
+    def test_a_first_install_with_no_binding_yet_is_reported(self, tmp_path):
+        """No binding row exists until the first install lands, so the
+        binding fields are null; that is still a report, not a 404."""
+        first = _status_response(
+            _install(state="installing", run_status="RUNNING", attempt=1, max_attempts=5),
+            app=None,
+            kind=None,
+            fork_name=None,
+            bound_version_id=None,
+            bound_semver=None,
+            head_version_id=None,
+            head_semver=None,
+        )
+        out = self._run(_args(directory=str(tmp_path), channel="#chan"), first)
+        assert out["data"]["install_state"] == "pending"
+        assert "No app bundle is bound" in out["rendered"]
+        assert "INSTALLING" in out["rendered"]
+
+    def test_an_unknown_state_still_renders(self, tmp_path):
+        out = self._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            _behind_status(_install(state="paused", error="held by an operator")),
+        )
+        assert "PAUSED" in out["rendered"] and "held by an operator" in out["rendered"]
+        assert out["data"]["install_state"] == "pending"
+
+    def test_it_reads_the_served_status_not_the_bound_tree(self, tmp_path):
+        """The head and the install both come from the one status read; a
+        read of `ref=bound` could never see a channel behind its line."""
         from popcorn_cli.commands import app as mod
-
-        refs = []
-
-        def _tree(client, conversation, ref="bound"):
-            refs.append(ref)
-            return _tree_response()
 
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output"),
-            patch.object(operations, "list_channel_apps", return_value=_binding()),
-            patch.object(operations, "get_channel_app_tree", _tree),
+            patch.object(
+                operations, "get_channel_app_status", return_value=_status_response()
+            ) as status,
+            patch.object(operations, "get_channel_app_tree") as tree,
             _no_declared_schedules(),
         ):
             mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
-        assert refs == ["head"], "a status that reads ref=bound can never see a pending install"
+        status.assert_called_once()
+        tree.assert_not_called()
 
     def test_it_names_the_fork_line(self, tmp_path):
         out = self._run(_args(directory=str(tmp_path), channel="#chan"))
@@ -2216,22 +2394,31 @@ class TestChannelScopedStatus:
 
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
-            patch.object(operations, "list_channel_apps", return_value=_binding(channel=None)),
+            patch.object(
+                operations,
+                "get_channel_app_status",
+                side_effect=APIError("this channel does not run an app bundle", status_code=404),
+            ),
             pytest.raises(PopcornError) as exc,
         ):
             mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
         assert exc.value.error_code == "not_found"
         assert "does not run an app bundle" in str(exc.value)
 
-    def test_an_older_api_without_bound_fields_falls_back_to_the_binding(self, tmp_path):
-        """A server predating the binding fields sends no `bound_*`; then the served
-        version IS the bound one and the channel cannot read as behind."""
-        tree = _tree_response()
-        del tree["bound_version_id"]
-        del tree["bound_semver"]
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"), tree=tree)
-        assert out["data"]["install_state"] == "current"
-        assert out["data"]["channel_semver"] == "0.2.0"
+    def test_other_errors_are_not_read_as_no_bundle(self, tmp_path):
+        from popcorn_cli.commands import app as mod
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch.object(
+                operations,
+                "get_channel_app_status",
+                side_effect=APIError("forbidden", status_code=403),
+            ),
+            pytest.raises(APIError) as exc,
+        ):
+            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+        assert exc.value.status_code == 403
 
     def test_no_checkout_and_no_channel_points_at_the_flag(self, tmp_path):
         from popcorn_cli.commands import app as mod
@@ -2368,8 +2555,7 @@ class TestScheduleDriftInStatus:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "list_channel_apps", return_value=_binding()),
-            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(operations, "get_channel_app_status", return_value=_status_response()),
             patch.object(
                 operations,
                 "get_channel_app_file",
@@ -2463,8 +2649,7 @@ class TestScheduleDriftInStatus:
         with (
             patch("popcorn_cli.cli._get_client", return_value=object()),
             patch("popcorn_cli.cli._output"),
-            patch.object(operations, "list_channel_apps", return_value=_binding()),
-            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(operations, "get_channel_app_status", return_value=_status_response()),
             patch.object(operations, "get_channel_app_file", _file),
             patch.object(
                 operations,
@@ -2511,8 +2696,7 @@ class TestScheduleDriftInStatus:
                 "popcorn_cli.cli._output",
                 lambda a, data, rendered: captured.update(data=data, rendered=rendered),
             ),
-            patch.object(operations, "list_channel_apps", return_value=_binding()),
-            patch.object(operations, "get_channel_app_tree", return_value=_tree_response()),
+            patch.object(operations, "get_channel_app_status", return_value=_status_response()),
             patch.object(
                 operations, "get_channel_app_file", return_value={"content": self._MANIFEST}
             ),
