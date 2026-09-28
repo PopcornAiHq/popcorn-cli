@@ -902,6 +902,30 @@ class TestScheduleCommands:
         with pytest.raises(SystemExit):
             parser.parse_args(["schedule", "get", "--channel", "#ops"])
 
+    def test_schedule_trigger(self, parser):
+        args = parser.parse_args(
+            [
+                "schedule",
+                "trigger",
+                "claim-tick",
+                "--channel",
+                "#ops",
+                "--overlap-policy",
+                "allow_all",
+            ]
+        )
+        assert args.schedule_command == "trigger"
+        assert args.schedule == "claim-tick"
+        assert args.overlap_policy == "allow_all"
+
+    def test_schedule_trigger_overlap_defaults_to_the_schedules_own(self, parser):
+        args = parser.parse_args(["schedule", "trigger", "claim-tick", "--channel", "#ops"])
+        assert args.overlap_policy is None
+
+    def test_schedule_trigger_requires_a_channel(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["schedule", "trigger", "claim-tick"])
+
 
 class TestDidYouMean:
     def test_close_typo_suggests(self):

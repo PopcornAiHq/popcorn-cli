@@ -110,6 +110,10 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on) |
 | `popcorn flow runs cancel <workflow_id> --channel <conv> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |
 | `popcorn flow runs cancel --flow <name> --channel <conv> [--force] [--page-token T]` | Stop every running run of a flow — the brake on a driver like `run_eval` whose launched runs outlive it |
+| **Schedules** | |
+| `popcorn schedule list --channel <conv>` | List a channel's live scheduled flows, with cadence and next run |
+| `popcorn schedule get <schedule> --channel <conv>` | One schedule's cadence, overlap policy, inputs and run counters (`<schedule>` is a slug, flow id or full schedule_id) |
+| `popcorn schedule trigger <schedule> --channel <conv> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
 | **Templates** | |
 | `popcorn template check <dir> [--strict]` | Check a template bundle's structure offline — no channel, no server (exit 1 on errors; `--strict` also on warnings) |
 | **Tables** (channel data-store) | |
