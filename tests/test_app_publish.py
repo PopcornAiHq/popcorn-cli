@@ -2456,6 +2456,145 @@ class TestChannelScopedStatus:
         assert "install_state" not in captured["data"]
 
 
+_WORKFLOW = "channel-install:00000000-0000-4000-8000-000000000001"
+
+_FORK_FAILED_HINT = (
+    "run 'app apply' to retry; if it fails the same way, fix the "
+    "line's head ('app checkout', then 'app publish')"
+)
+
+
+def _failed_with(error: str, code: str | None, **over) -> dict:
+    """A failed install as a server that classifies its errors serves it;
+    `code=None` is a server from before `error_code` existed."""
+    fields = {"error": error, "at": None, "retry_hint": _FORK_FAILED_HINT, **over}
+    if code is not None:
+        fields["error_code"] = code
+    return _FAILED | fields
+
+
+class TestInstallErrorCode:
+    """`install.error_code` says what kind of failure `error` is.
+
+    Every code but `internal` keeps a message the channel's owner can act on,
+    so the code only rides next to it. `internal` replaces the message with a
+    generic one, and that is the case the CLI has to explain.
+    """
+
+    def _channel(self, tmp_path, install: dict) -> dict:
+        return TestChannelScopedStatus()._run(
+            _args(directory=str(tmp_path), channel="#chan"), _behind_status(install)
+        )
+
+    def _checkout(self, tmp_path, install: dict) -> dict:
+        base = {"manifest.yaml": _manifest("0.2.0")}
+        _checkout(tmp_path, base)
+        return TestStatusCommand()._run(
+            tmp_path,
+            _files_response(base, ref="head", bound_version_id=5, bound_semver="0.1.0"),
+            _args(directory=str(tmp_path)),
+            status=_behind_status(install),
+        )
+
+    @pytest.mark.parametrize(
+        ("code", "error"),
+        [
+            ("invalid_manifest", "BundleManifestError: flows/tick.yaml: unknown key 'stpes'"),
+            ("invalid_schedule", "ScheduledFlowValidationError: unknown schedule class 'hourly'"),
+            ("bundle_rejected", "ValidationFailed: column 'sev' is not declared"),
+            ("app_mismatch", "ChannelAppMismatchError: the channel runs another app"),
+            ("fork_line_conflict", "ChannelForkRegressionError: the channel is on another line"),
+            ("bundle_unavailable", "no published version of this app is available to install"),
+        ],
+    )
+    def test_an_actionable_code_rides_next_to_its_message(self, tmp_path, code, error):
+        out = self._channel(tmp_path, _failed_with(error, code))
+        lines = out["rendered"].splitlines()
+        at = lines.index(f"  Error: {error}")
+        assert lines[at + 1] == f"  Code:  {code}"
+        assert "inside the platform" not in out["rendered"]
+        # The served hint, verbatim, is still the next step.
+        assert f"Next: {_FORK_FAILED_HINT}" in out["rendered"]
+
+    def test_an_internal_failure_says_the_bundle_cannot_fix_it(self, tmp_path):
+        error = f"internal error during install; see workflow {_WORKFLOW}"
+        out = self._channel(tmp_path, _failed_with(error, "internal"))
+        rendered = out["rendered"]
+        assert f"  Error: {error}" in rendered
+        assert "  Code:  internal" in rendered
+        assert "not in the bundle" in rendered and "no edit or publish fixes it" in rendered
+        assert f"Its detail is on workflow {_WORKFLOW}." in rendered
+        # The served hint says `app apply` retries, so the command is offered.
+        assert "popcorn app apply --channel '#chan'" in rendered
+
+    def test_an_internal_failure_offers_apply_only_when_the_hint_does(self, tmp_path):
+        """A product channel's served hint names no command; the internal
+        explanation must not add one."""
+        product_hint = (
+            "auto-update retries on its next daily check; a failure in "
+            "the product bundle itself needs a new release"
+        )
+        failed = _failed_with(
+            f"internal error during install; see workflow {_WORKFLOW}",
+            "internal",
+            retry_hint=product_hint,
+        )
+        out = TestChannelScopedStatus()._run(
+            _args(directory=str(tmp_path), channel="#chan"),
+            _behind_status(failed) | {"kind": "product", "fork_name": None},
+        )
+        assert "  Code:  internal" in out["rendered"]
+        assert f"Next: {product_hint}" in out["rendered"]
+        assert "app apply" not in out["rendered"]
+
+    def test_an_internal_failure_without_a_workflow_id_points_nowhere(self, tmp_path):
+        failed = _failed_with("internal error during install", "internal", workflow_id=None)
+        out = self._channel(tmp_path, failed)
+        assert "no edit or publish fixes it." in out["rendered"]
+        assert "Its detail is on workflow" not in out["rendered"]
+
+    def test_an_unknown_code_is_shown_and_not_treated_as_internal(self, tmp_path):
+        out = self._channel(tmp_path, _failed_with("SomethingNew: a message", "something_new"))
+        assert "  Code:  something_new" in out["rendered"]
+        assert "inside the platform" not in out["rendered"]
+
+    def test_the_checkout_view_renders_the_code_too(self, tmp_path):
+        error = f"internal error during install; see workflow {_WORKFLOW}"
+        out = self._checkout(tmp_path, _failed_with(error, "internal"))
+        assert "  Code:  internal" in out["rendered"]
+        assert f"Its detail is on workflow {_WORKFLOW}." in out["rendered"]
+
+    @pytest.mark.parametrize("view", ["_channel", "_checkout"])
+    def test_a_server_without_error_code_renders_as_before(self, tmp_path, view):
+        """A server that predates `error_code` sends no such key at all."""
+        failed = _failed_with("ValidationFailed: column 'sev' is not declared", None)
+        assert "error_code" not in failed
+        out = getattr(self, view)(tmp_path, failed)
+        lines = out["rendered"].splitlines()
+        at = lines.index("  Error: ValidationFailed: column 'sev' is not declared")
+        assert not lines[at + 1].startswith("  Code:")
+        assert "Code:" not in out["rendered"]
+        assert "inside the platform" not in out["rendered"]
+
+    def test_a_null_error_code_renders_as_before(self, tmp_path):
+        out = self._channel(
+            tmp_path, _failed_with("ValidationFailed: boom", None) | {"error_code": None}
+        )
+        assert "Code:" not in out["rendered"]
+
+    @pytest.mark.parametrize("view", ["_channel", "_checkout"])
+    def test_json_carries_error_code_verbatim(self, tmp_path, view):
+        """`--json` passes the served block through: the new key arrives with
+        no CLI change, and no key is renamed or dropped around it."""
+        failed = _failed_with(
+            f"internal error during install; see workflow {_WORKFLOW}", "internal"
+        )
+        out = getattr(self, view)(tmp_path, failed)
+        assert out["data"]["install"] == failed
+        assert out["data"]["install"]["error_code"] == "internal"
+        assert out["data"]["install"]["error"] == failed["error"]
+
+
 class TestApplyReadsAsRecovery:
     """Publish → install converged on the first poll across roughly
     a dozen publishes, and `apply` was never needed once. Documenting it as a

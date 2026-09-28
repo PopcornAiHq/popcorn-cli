@@ -1169,6 +1169,12 @@ def _version_label(semver: Any, version_id: Any) -> str:
     return "the line's head"
 
 
+# The served `install.error_code` for a failure the channel cannot fix: its
+# `error` is a generic message naming the install workflow. Every other code
+# (`invalid_manifest`, `bundle_rejected`, ...) keeps an actionable message.
+INTERNAL_INSTALL_ERROR = "internal"
+
+
 def _served_install_lines(install: dict[str, Any], conversation: str) -> list[str]:
     """The served install block as rendered lines, headed `Install: <STATE>`.
 
@@ -1197,6 +1203,20 @@ def _served_install_lines(install: dict[str, Any], conversation: str) -> list[st
     lines = [f"Install: {state.upper()} — {headline}."]
     if install.get("error"):
         lines.append(f"  Error: {install['error']}")
+    # `error_code` is absent from a server that predates it, so every line
+    # it adds is conditional and the older output is unchanged.
+    code = install.get("error_code")
+    if code:
+        lines.append(f"  Code:  {code}")
+    if code == INTERNAL_INSTALL_ERROR:
+        # The served message is deliberately generic; say what that means
+        # for the reader, and where the real failure lives. Whether a retry
+        # is worth it stays the served `retry_hint`'s call.
+        workflow = install.get("workflow_id")
+        lines.append(
+            "  This failure is inside the platform, not in the bundle — no edit "
+            "or publish fixes it." + (f" Its detail is on workflow {workflow}." if workflow else "")
+        )
     if install.get("at"):
         lines.append(f"  At:    {install['at']}")
     if install.get("live") is False:
@@ -1236,7 +1256,8 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
     line's head, and an `install` block saying whether an install is
     running, retrying, failed, skipped, locked or simply never started.
     `install` is served verbatim in `--json`, and `install.state` is the
-    field to branch on.
+    field to branch on — with `install.error_code`, where the server sends
+    it, saying what kind of failure a `failed` or `retrying` one is.
 
     `install_state` predates the served block and keeps its two values:
     "current", or "pending" for every other state. It used to be derived
