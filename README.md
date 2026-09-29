@@ -107,7 +107,8 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn flow get <flow_id> --channel <conv> [--no-triggers]` | Get a flow definition and what starts it on the channel (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
 | `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded) |
 | `popcorn flow runs list --channel <conv> [--status S] [--flow <name>] [--limit N] [--page-token T]` | List flow runs, each with its flow name; `--flow` narrows to one flow (pass it again with `--page-token`); older runs may be stamped with the flow's id instead of its name, and passing that id lists them |
-| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on) |
+| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on, its inputs and the version it ran) |
+| `popcorn flow runs timeline <workflow_id> --channel <conv> [--run-id R] [--before N] [--limit N]` | List a run's steps (activities, timers, signals) newest first, with outcome, duration and attempt; page with `--before` and `--run-id` from `pagination.next` |
 | `popcorn flow runs cancel <workflow_id> --channel <conv> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |
 | `popcorn flow runs cancel --flow <name> --channel <conv> [--force] [--page-token T]` | Stop every running run of a flow — the brake on a driver like `run_eval` whose launched runs outlive it |
 | **Schedules** | |

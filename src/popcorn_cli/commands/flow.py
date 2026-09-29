@@ -8,6 +8,7 @@ import would be a cycle.
 from __future__ import annotations
 
 import argparse
+import json
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -552,6 +553,22 @@ def _run_detail_lines(run: dict[str, Any]) -> list[str]:
         origin = f" (started by {run['trigger_source']})" if run.get("trigger_source") else ""
         lines.append(f"  queue:   {run['task_queue']}{origin}")
 
+    # Null means the run predates the fields or was not pinned to a version,
+    # so it prints as "-"; an absent key is an api older than the fields and
+    # prints nothing. A `call_flow` child's inputs omit what it took from its
+    # parent, so they are not the whole of what the run saw.
+    if "version_id" in run:
+        version = run["version_id"]
+        lines.append(f"  version: {version if version is not None else '-'}")
+    if "inputs" in run:
+        inputs = run["inputs"]
+        if isinstance(inputs, dict) and inputs:
+            lines.append("  inputs:")
+            for key, value in inputs.items():
+                lines.append(f"    {key}: {json.dumps(value, default=str)}")
+        else:
+            lines.append(f"  inputs:  {'{}' if isinstance(inputs, dict) else '-'}")
+
     pending = run.get("current_activities") or []
     if pending:
         lines.append(f"  in flight ({len(pending)}):")
@@ -586,6 +603,71 @@ def _run_detail_lines(run: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _duration(ms: Any) -> str:
+    if not isinstance(ms, int):
+        return "-"
+    return f"{ms}ms" if ms < 1000 else f"{ms / 1000:.1f}s"
+
+
+def _timeline_lines(timeline: dict[str, Any]) -> list[str]:
+    """Render one timeline page: a header, then one line per step.
+
+    Columns are fixed and every one is a non-empty token, with the step label
+    last, so a line splits on whitespace the same way whatever is missing.
+    `outcome` in the header is the whole run's; each line's is that step's.
+    """
+    entries = timeline.get("entries") or []
+    lines = [
+        f"Timeline of {timeline.get('workflow_id', '?')} "
+        f"(run {timeline.get('run_id', '?')}): "
+        f"{timeline.get('status', '?')}, {timeline.get('outcome', '?')}",
+        f"  {len(entries)} entries, newest first",
+    ]
+    for e in entries:
+        attempt = e.get("attempt")
+        lines.append(
+            f"  {e.get('id', '?')!s:>6}  {e.get('scheduled_time') or '-'}  "
+            f"{e.get('kind', '?')!s:<8} {e.get('outcome', '?')!s:<10} "
+            f"{_duration(e.get('duration_ms')):>8}  "
+            f"{'#' + str(attempt) if attempt is not None else '-':<3} "
+            f"{e.get('name', '?')!s:<32} {e.get('step') or '-'}"
+        )
+        if e.get("failure_message"):
+            lines.append(f"          {e['failure_message']}")
+    if timeline.get("has_more") and timeline.get("next_before") is not None:
+        lines.append(
+            f"  older entries remain — rerun with --before {timeline['next_before']} "
+            f"--run-id {timeline.get('run_id', '?')}"
+        )
+    return lines
+
+
+def _flow_runs_timeline(args: argparse.Namespace) -> None:
+    from ..cli import _attach_pagination, _get_client, _output
+
+    client = _get_client(args)
+    resp = operations.get_flow_run_timeline(
+        client,
+        args.channel,
+        args.workflow_id,
+        run_id=getattr(args, "run_id", None),
+        before=getattr(args, "before", None),
+        limit=getattr(args, "limit", None),
+    )
+    timeline = resp.get("timeline") or {}
+    nxt = timeline.get("next_before") if timeline.get("has_more") else None
+    # The resolved run id rides along with the cursor: `before` is an event
+    # id within one run, and without a run id the next call would read the
+    # workflow's latest run, which a continue-as-new replaces mid-sequence.
+    next_flags = None
+    if nxt is not None:
+        next_flags = {"before": str(nxt)}
+        if timeline.get("run_id"):
+            next_flags["run-id"] = timeline["run_id"]
+    _attach_pagination(resp, next_flags)
+    _output(args, resp, "\n".join(_timeline_lines(timeline)))
+
+
 def _flow_runs_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
@@ -607,7 +689,7 @@ register(
         category="flows",
         description=(
             "Flow commands (activities, validate, import, list, get, run, "
-            "runs list, runs get, runs cancel)"
+            "runs list, runs get, runs timeline, runs cancel)"
         ),
         subcommands=[
             # First: the discovery entry point for a template author.
@@ -710,7 +792,7 @@ register(
             ),
             Subcommand(
                 "runs",
-                "Inspect and stop flow runs (list, get, cancel)",
+                "Inspect and stop flow runs (list, get, timeline, cancel)",
                 None,
                 [],
                 [
@@ -754,6 +836,26 @@ register(
                                 "Include error details in the run",
                                 action="store_true",
                             ),
+                        ],
+                    ),
+                    Subcommand(
+                        "timeline",
+                        "List a flow run's steps, newest first",
+                        _flow_runs_timeline,
+                        [
+                            Argument("workflow_id", "Temporal workflow ID", positional=True),
+                            _CHANNEL,
+                            Argument(
+                                "run-id",
+                                "Specific run ID (default: the latest; pass it on later pages)",
+                                type=str,
+                            ),
+                            Argument(
+                                "before",
+                                "Cursor: the previous page's next_before (see pagination.next)",
+                                type=int,
+                            ),
+                            Argument("limit", "Entries per page, 1-200 (default 50)", type=int),
                         ],
                     ),
                     Subcommand(

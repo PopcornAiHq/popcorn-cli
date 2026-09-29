@@ -155,3 +155,33 @@ class TestInFlightActivities:
             }
         )
         assert "connection refused" in out
+
+
+class TestInputsAndVersion:
+    """`inputs` and `version_id` are null for a run started on an older build
+    or never pinned, and absent from an api older than the fields."""
+
+    def test_present(self):
+        out = _render({"version_id": 12, "inputs": {"ticket": "example-1", "limit": 5}})
+        assert "  version: 12" in out
+        assert "  inputs:" in out
+        assert '    ticket: "example-1"' in out
+        assert "    limit: 5" in out
+
+    def test_nested_value_is_json(self):
+        out = _render({"inputs": {"filter": {"status": "open"}}})
+        assert '    filter: {"status": "open"}' in out
+
+    def test_null_prints_a_dash(self):
+        out = _render({"version_id": None, "inputs": None})
+        assert "  version: -" in out
+        assert "  inputs:  -" in out
+        assert "None" not in out
+
+    def test_empty_inputs_are_shown_as_empty(self):
+        assert "  inputs:  {}" in _render({"inputs": {}})
+
+    def test_absent_prints_nothing(self):
+        out = _render({"status": "COMPLETED"})
+        assert "version" not in out
+        assert "inputs" not in out
