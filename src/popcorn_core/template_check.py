@@ -833,20 +833,27 @@ class _Checker:
         accepts. `(None, None)` means no manifest at all; a name with no
         document means one that does not parse, which publish refuses for
         that reason alone.
-        """
-        import yaml
 
+        A legacy manifest that is unreadable is reported here, under the
+        codes `manifest.yaml` gets, since nothing else reads it: an empty one
+        is an empty manifest to publish, anything else not a mapping is not.
+        """
         for name in flow_rules.MANIFEST_FILENAMES:
             path = self.dir / name
             if not path.is_file():
                 continue
             if name == "manifest.yaml":
                 return name, self.report.manifest
-            try:
-                doc = yaml.safe_load(path.read_text())
-            except yaml.YAMLError:
+            before = len(self.report.findings)
+            doc = self._parse_yaml(path)
+            if len(self.report.findings) > before:
                 return name, None
-            return name, doc if isinstance(doc, dict) else None
+            if doc is None:
+                return name, {}
+            if not isinstance(doc, dict):
+                self.err("manifest-not-a-mapping", name, "Manifest must be a YAML mapping.")
+                return name, None
+            return name, doc
         return None, None
 
     def _check_process_decl(self, decl: Any, where: str) -> None:

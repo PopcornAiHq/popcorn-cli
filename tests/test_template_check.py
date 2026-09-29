@@ -1925,3 +1925,23 @@ def test_manifest_yaml_wins_over_config_yaml(tmp_path):
     root = write_process_bundle(tmp_path / "b", manifest=manifest)
     (root / "config.yaml").write_text(yaml.safe_dump(process_manifest()))
     assert "process-undeclared" in codes(root)
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [("process: [unclosed\n", "yaml-parse-error"), ("- a\n- b\n", "manifest-not-a-mapping")],
+)
+def test_an_unreadable_legacy_manifest_is_reported(tmp_path, text, code):
+    """Nothing else reads `config.yaml`, so the tier reports it rather than
+    letting a bundle publish refuses check clean."""
+    root = write_process_bundle(tmp_path / "b")
+    (root / "manifest.yaml").unlink()
+    (root / "config.yaml").write_text(text)
+    assert code in codes(root)
+
+
+def test_an_empty_legacy_manifest_is_an_empty_manifest(tmp_path):
+    root = write_process_bundle(tmp_path / "b")
+    (root / "manifest.yaml").unlink()
+    (root / "config.yaml").write_text("")
+    assert "process-undeclared" in codes(root)
