@@ -966,6 +966,32 @@ def get_flow_run(
     return client.get("/api/customer-flow-runs/get", params)
 
 
+def get_flow_run_timeline(
+    client: APIClient,
+    conversation: str,
+    workflow_id: str,
+    run_id: str | None = None,
+    before: int | None = None,
+    limit: int | None = None,
+) -> dict[str, Any]:
+    """One page of a flow run's per-step timeline, newest first.
+
+    ``before`` is the previous page's ``next_before``; omit it for the newest
+    page. The response echoes the ``run_id`` it resolved, and later pages
+    should send it: without one the server reads the workflow's latest run,
+    which moves if the run continues-as-new between pages.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    params: dict[str, Any] = {"conversation_id": conv_id, "workflow_id": workflow_id}
+    if run_id:
+        params["run_id"] = run_id
+    if before is not None:
+        params["before"] = before
+    if limit is not None:
+        params["limit"] = limit
+    return client.get("/api/customer-flow-runs/timeline", params)
+
+
 def cancel_flow_runs(
     client: APIClient,
     conversation: str,

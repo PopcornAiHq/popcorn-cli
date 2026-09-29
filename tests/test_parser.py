@@ -1026,7 +1026,7 @@ class TestCommands:
         runs = next(s for s in flow["subcommands"] if s["name"] == "runs")
         # `runs` is itself a group → its own nested subcommands are described
         runs_names = {s["name"] for s in runs["subcommands"]}
-        assert runs_names == {"list", "get", "cancel"}
+        assert runs_names == {"list", "get", "timeline", "cancel"}
 
     def test_flow_runs_list_in_pagination_commands(self, capsys):
         import argparse

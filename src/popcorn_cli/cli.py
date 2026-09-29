@@ -38,6 +38,7 @@ Usage:
     popcorn flow list --channel <conv>
     popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]
     popcorn flow runs list --channel <conv>
+    popcorn flow runs timeline <workflow_id> --channel <conv> [--before N]
     popcorn table list --channel <conv>
     popcorn table schema <name> --channel <conv>
     popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N]
@@ -2217,6 +2218,7 @@ def cmd_commands(args: argparse.Namespace) -> None:
                     "workspace inbox",
                     "flow list",
                     "flow runs list",
+                    "flow runs timeline",
                     "flow runs cancel --flow",
                     "table rows",
                     "table scalar list",
@@ -2399,7 +2401,7 @@ Channels:
 
 Flows:
   flow            Flow commands (activities, validate, list, get, run, runs list, runs get,
-                  runs cancel)
+                  runs timeline, runs cancel)
   schedule        Scheduled-flow commands (list, get, trigger)
 
 Templates:
