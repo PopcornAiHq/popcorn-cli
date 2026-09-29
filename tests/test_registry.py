@@ -917,6 +917,7 @@ class TestFlowValidate:
         (tmp_path / "manifest.yaml").write_text("name: manifest_should_be_skipped\n")
         (tmp_path / "config.yaml").write_text("name: config_should_be_skipped\n")
         (tmp_path / "strings.yaml").write_text("name: strings_should_be_skipped\n")
+        (tmp_path / "process.yaml").write_text("name: process_should_be_skipped\n")
         (tmp_path / "fixture.json").write_text("{}")
 
         ok = {"valid": True, "issues": [], "steps": []}

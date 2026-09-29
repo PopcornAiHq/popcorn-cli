@@ -174,6 +174,12 @@ _FIELDS: tuple[_Field, ...] = (
         "The app's user-facing UI copy, locale-sectioned. Reserved.",
     ),
     _Field(
+        "PROCESS_FILENAME",
+        ("bundle", "process_filename"),
+        "The `process:` tier's document: the bundle's default state graph, which a\n"
+        "channel may replace with one of its own. Root-level only. Reserved.",
+    ),
+    _Field(
         "FLOW_SUFFIXES",
         ("bundle", "flow_suffixes"),
         "Extensions that make a bundle entry a candidate flow document. Anything else\n"

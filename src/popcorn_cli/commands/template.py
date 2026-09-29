@@ -24,9 +24,10 @@ def _summary_line(report: BundleReport) -> str:
     flows = len(report.flows)
     fixtures = len(report.fixtures)
     manifest = "manifest" if report.manifest is not None else "no manifest"
+    process = ", process document" if report.process is not None else ""
     return (
         f"Checked {report.directory} — {flows} flow{'s' if flows != 1 else ''}, "
-        f"{fixtures} fixture{'s' if fixtures != 1 else ''}, {manifest}."
+        f"{fixtures} fixture{'s' if fixtures != 1 else ''}, {manifest}{process}."
     )
 
 

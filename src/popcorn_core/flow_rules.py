@@ -182,6 +182,10 @@ README_FILENAME = "README.md"
 # The app's user-facing UI copy, locale-sectioned. Reserved.
 STRINGS_FILENAME = "strings.yaml"
 
+# The `process:` tier's document: the bundle's default state graph, which a
+# channel may replace with one of its own. Root-level only. Reserved.
+PROCESS_FILENAME = "process.yaml"
+
 # Extensions that make a bundle entry a candidate flow document. Anything else
 # is carried as bundle data, or ignored.
 FLOW_SUFFIXES = (
