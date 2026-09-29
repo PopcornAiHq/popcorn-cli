@@ -148,11 +148,12 @@ def test_the_block_nesting_cap_is_three():
     assert flow_rules.MAX_BLOCK_DEPTH == 3
 
 
-def test_the_reserved_filenames_are_the_manifest_its_alias_and_three_docs():
+def test_the_reserved_filenames_are_the_manifest_its_alias_and_four_docs():
     assert flow_rules.MANIFEST_FILENAMES == ("manifest.yaml", "config.yaml")
     assert flow_rules.AGENT_DOC_FILENAME == "AGENT.md"
     assert flow_rules.README_FILENAME == "README.md"
     assert flow_rules.STRINGS_FILENAME == "strings.yaml"
+    assert flow_rules.PROCESS_FILENAME == "process.yaml"
 
 
 def test_the_bundle_layout_rules():

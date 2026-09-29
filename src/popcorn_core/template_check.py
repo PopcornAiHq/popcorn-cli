@@ -12,6 +12,8 @@ or that every layer below accepts in silence:
 - an `output_schema` property that a later step dereferences but that is not
   listed in `required`, so the model may legally omit it
 - a schedule or webhook naming a flow the bundle does not contain
+- a `process.yaml` and a manifest `process:` declaration that disagree, or a
+  process graph naming a table, column or flow the bundle does not have
 
 None of those are bad references, so none of them fail validation. All of them
 were live failures while the alerttracker bundle was written; see
@@ -34,6 +36,11 @@ on-disk checkout baseline and is as offline as the rest — and still needs no
 server. Hand-copying
 them is what let the reference grammar here accept `$a..b` while the
 interpreter rejected it, and let `max_block_depth` go unenforced entirely.
+
+It does not model a state graph's grammar either, for the same reason. A
+`process.yaml` is a `states:` section, and the server's reader for that is
+large, strict, and not served; this checks what the document must agree with
+in the rest of the bundle and leaves the graph itself to the publish.
 
 The one thing it deliberately does NOT model is `when:`. That grammar has four
 rails routed legacy-first, and mirroring the routing offline means
@@ -63,7 +70,7 @@ ERROR = "error"
 WARNING = "warning"
 
 # Filenames no reader ever installs as a flow: the manifest and its legacy
-# alias, plus the three reserved documents. One set rather than the importer's
+# alias, plus the four reserved documents. One set rather than the importer's
 # two, because every use site here asks the same question — is this `.yaml` a
 # flow candidate at all.
 RESERVED_FILENAMES = frozenset(
@@ -72,8 +79,13 @@ RESERVED_FILENAMES = frozenset(
         flow_rules.AGENT_DOC_FILENAME,
         flow_rules.README_FILENAME,
         flow_rules.STRINGS_FILENAME,
+        flow_rules.PROCESS_FILENAME,
     }
 )
+
+# The keys a manifest's `process:` declaration may carry: the store scalar
+# naming the revision in force, and the engine contract a graph is held to.
+_PROCESS_DECL_KEYS = frozenset({"pointer", "contract"})
 
 # Subdirectories the tree reader descends into, seeding a channel parameter
 # from each. The zip reader preserves the same one segment instead of
@@ -217,6 +229,8 @@ class BundleReport:
     flows: list[Flow] = field(default_factory=list)
     fixtures: list[str] = field(default_factory=list)
     manifest: dict[str, Any] | None = None
+    # The root `process.yaml`, parsed, when it is a mapping.
+    process: dict[str, Any] | None = None
     findings: list[Finding] = field(default_factory=list)
 
     @property
@@ -238,6 +252,7 @@ class BundleReport:
             "flows": [{"name": f.name, "file": f.path} for f in self.flows],
             "fixtures": self.fixtures,
             "has_manifest": self.manifest is not None,
+            "has_process": self.process is not None,
             "findings": [
                 {"level": f.level, "code": f.code, "where": f.where, "message": f.message}
                 for f in self.findings
@@ -273,6 +288,7 @@ class _Checker:
         self._check_checkout_version()
         self._load_flows(files)
         self._check_manifest_references()
+        self._check_process()
         for flow in self.report.flows:
             self._check_flow(flow)
         self._check_scalar_collisions()
@@ -727,6 +743,193 @@ class _Checker:
                         f"as its `name:`.",
                     )
 
+    def _check_process(self) -> None:
+        """The `process:` tier: a manifest declaration and a root document.
+
+        The tier keeps a bundle's state graph in `process.yaml` instead of the
+        manifest's `states:`, so a channel can install a graph of its own. The
+        document itself is a `states:` section, and its grammar is the
+        server's: this checks only what publish refuses about how it and the
+        rest of the bundle fit together. Each finding here is one the server
+        would also refuse at publish — a document whose graph is also invalid
+        fails there on the graph first, but fails either way.
+
+        Not checked: whether `contract:` names a known contract (a catalog,
+        not served), and every column the graph derives rather than spells
+        out — a machine's column, the status columns. Both still fail at
+        publish; neither can fail here while publish passes.
+        """
+        manifest = self.report.manifest
+        root = self.dir / flow_rules.PROCESS_FILENAME
+        has_doc = root.is_file()
+        declared = manifest is not None and "process" in manifest
+        where = "manifest.yaml:process"
+
+        if has_doc and not declared:
+            self.err(
+                "process-undeclared",
+                flow_rules.PROCESS_FILENAME,
+                f"{flow_rules.PROCESS_FILENAME} is a process document, but the manifest "
+                "declares no `process:` section. Publish refuses a bundle carrying one "
+                "without the other: declare `process: {pointer: <scalar key>}` in "
+                f"manifest.yaml, or remove {flow_rules.PROCESS_FILENAME}.",
+            )
+            return
+        if manifest is None or not declared:
+            return
+
+        if "states" in manifest:
+            self.err(
+                "process-and-states",
+                where,
+                "The manifest declares both `states:` and `process:`. A bundle keeps its "
+                "graph in one place: `states:` in the manifest, or `process:` with the "
+                f"graph in {flow_rules.PROCESS_FILENAME}.",
+            )
+        self._check_process_decl(manifest.get("process"), where)
+        if "tables" not in manifest:
+            self.err(
+                "process-without-tables",
+                where,
+                "The manifest declares `process:` but no `tables:`. The graph's rows live "
+                "in a table the manifest must declare.",
+            )
+        if not has_doc:
+            self.err(
+                "process-document-missing",
+                where,
+                f"The manifest declares `process:` but the bundle has no "
+                f"{flow_rules.PROCESS_FILENAME} at its root. That file is the default graph "
+                "a fresh channel runs, and publish refuses the bundle without it.",
+            )
+            return
+
+        before = len(self.report.findings)
+        doc = self._parse_yaml(root)
+        if len(self.report.findings) > before:
+            return  # unparseable, already reported as yaml-parse-error
+        if not isinstance(doc, dict) or not doc:
+            self.err(
+                "process-document-invalid",
+                flow_rules.PROCESS_FILENAME,
+                f"{flow_rules.PROCESS_FILENAME} must be a non-empty mapping — a `states:` "
+                "section's contents (`table:`, `machines:`, `events:`, `transitions:`, …) "
+                "at the top level.",
+            )
+            return
+        self.report.process = doc
+        self._check_process_references(doc)
+
+    def _check_process_decl(self, decl: Any, where: str) -> None:
+        """The `process:` mapping itself, as strictly as publish reads it."""
+        if not isinstance(decl, dict):
+            self.err(
+                "process-declaration-invalid",
+                where,
+                "`process:` must be a mapping, e.g. `process: {pointer: myapp.process}`.",
+            )
+            return
+        unknown = sorted(str(k) for k in set(decl) - _PROCESS_DECL_KEYS)
+        if unknown:
+            self.err(
+                "process-declaration-invalid",
+                where,
+                f"`process:` carries unknown keys {unknown}; it takes "
+                f"{', '.join(sorted(_PROCESS_DECL_KEYS))}.",
+            )
+        pointer = decl.get("pointer")
+        if not isinstance(pointer, str) or not pointer.strip():
+            self.err(
+                "process-declaration-invalid",
+                where,
+                "`process: pointer:` must name the store scalar that records which "
+                "revision of the graph is in force, e.g. `myapp.process`.",
+            )
+        elif any(ch.isspace() for ch in pointer.strip()):
+            self.err(
+                "process-declaration-invalid",
+                where,
+                f"`process: pointer:` {pointer.strip()!r} may not contain whitespace; it "
+                "is a store scalar key.",
+            )
+        contract = decl.get("contract")
+        if contract is not None and not isinstance(contract, str):
+            self.err(
+                "process-declaration-invalid",
+                where,
+                "`process: contract:` must be the name of an engine contract, or absent.",
+            )
+
+    def _check_process_references(self, doc: dict[str, Any]) -> None:
+        """What the graph names that the rest of the bundle must declare.
+
+        Only the names the document spells out: its `table:`, the columns a
+        transition writes, and the flows a transition runs or launches. A value
+        of an unexpected shape is skipped, not reported — that is the graph's
+        grammar, which publish reports better.
+        """
+        where = flow_rules.PROCESS_FILENAME
+        table_name = doc.get("table")
+        columns: set[str] | None = None
+        if isinstance(table_name, str):
+            tables = (self.report.manifest or {}).get("tables")
+            table = tables.get(table_name) if isinstance(tables, dict) else None
+            raw = table.get("columns") if isinstance(table, dict) else None
+            if not isinstance(table, dict):
+                self.err(
+                    "process-table-undeclared",
+                    f"{where}:table",
+                    f"The graph's rows live in table '{table_name}', which the manifest's "
+                    "`tables:` does not declare.",
+                )
+            elif not isinstance(raw, list):
+                self.err(
+                    "process-table-undeclared",
+                    f"{where}:table",
+                    f"Table '{table_name}' declares no `columns:`, so the graph has nowhere "
+                    "to store its states.",
+                )
+            else:
+                # Keyed as the server keys them — any truthy name, stringified —
+                # so a name this checker would not otherwise accept still counts.
+                columns = {str(c.get("name")) for c in raw if isinstance(c, dict) and c.get("name")}
+
+        transitions = doc.get("transitions")
+        if not isinstance(transitions, list):
+            return
+        flow_names = {f.name for f in self.report.flows}
+        for i, transition in enumerate(transitions):
+            if not isinstance(transition, dict):
+                continue
+            at = f"{where}:transitions.{i}"
+            if columns is not None:
+                for key in ("writes", "payload_writes"):
+                    writes = transition.get(key)
+                    if not isinstance(writes, dict):
+                        continue
+                    missing = sorted(str(c) for c in writes if str(c) not in columns)
+                    if missing:
+                        self.err(
+                            "process-undeclared-column",
+                            f"{at}.{key}",
+                            f"This edge writes {missing}, which table '{table_name}' does not "
+                            "declare. Declare the column in manifest.yaml, or fix the name.",
+                        )
+            launched: list[tuple[str, Any]] = [("flow", transition.get("flow"))]
+            then = transition.get("then")
+            if isinstance(then, list):
+                for j, entry in enumerate(then):
+                    name = entry.get("flow") if isinstance(entry, dict) else entry
+                    launched.append((f"then.{j}", name))
+            for key, name in launched:
+                if isinstance(name, str) and name and name not in flow_names:
+                    self.err(
+                        "process-unknown-flow",
+                        f"{at}.{key}",
+                        f"This edge names flow '{name}', which no flow in this bundle "
+                        f"declares as its `name:`. Known: {', '.join(sorted(flow_names)) or '(none)'}.",
+                    )
+
     def _check_unpublished_paths(self) -> None:
         """Name every path `app publish` would leave behind.
 
@@ -824,7 +1027,7 @@ class _Checker:
                 self.err(
                     "fixture-installed-as-flow" if in_fixtures else "yaml-is-not-a-flow",
                     str(rel),
-                    "Every .yaml/.yml in the bundle that is not manifest/config/strings is "
+                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/process is "
                     "installed as a flow, and this file has no `name:`/`steps:`. "
                     + (
                         "Move it outside the bundle directory — a fixtures/ "

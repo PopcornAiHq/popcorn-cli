@@ -127,6 +127,12 @@ module docstring explains the scope; the rules to keep when changing it:
   args carry column names or a result schema comes from the served
   `flow_rules.ACTIVITY_ROLES`. It deliberately doesn't model `when:` grammar; a
   near-miss reimplementation once rejected dozens of valid clauses.
+- **A `process.yaml` is held to agreement, not grammar.** The `process:` tier's
+  document is a `states:` graph, whose reader is large and not served. The
+  checker checks what the graph must agree with (the manifest's `process:`
+  declaration, `tables:`, the columns an edge writes, the flows an edge runs) and
+  leaves the graph itself to publish, as with `when:`. Every `process-*` finding
+  is one publish also refuses.
 - **It stays offline**: imports only stdlib, `flow_rules`, and `app_checkout`,
   so `--strict` gives identical findings on every machine.
 - **Finding `code` values are a stable contract** (CI and agents branch on

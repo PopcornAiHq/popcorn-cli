@@ -1,0 +1,382 @@
+# The chase bundle's process document at 0.9.0, the first version on the
+# `process:` tier: the state graph a fresh channel runs, kept beside the
+# manifest instead of under its `states:`. Copied verbatim below this header,
+# so `template check` is tested against a graph the platform actually ships.
+# Refresh it from `popcorn app checkout` of a chase channel, not by hand.
+table: tracker
+status:
+  column: Status
+  ctas_column: CTAs
+  why_column: Why
+  sub: Stage
+  row_ctas: unless_warn
+  policy_column: Policy
+  worklist: {table: issues, key: cause}
+  compose:
+    - when: [{machine: tracking, is: not_tracking}]
+      show: tracking
+    - when: [{machine: problem, is: internal_error}]
+      show: problem
+    - show: process
+
+machines:
+  process:
+    column: Stage
+    description: >-
+      The process: collecting stages, each a chase of its own, and the
+      decisions between them.
+    states:
+      collecting_1:
+        label: "Stage 1 collecting"
+        policy:
+          turn: always
+          reminders: true
+          outbound: true
+          owner: agent
+          chase:
+            type: questions
+            items: chase.collecting_1.items
+            standards: chase.collecting_1.standards
+            guidance: chase.collecting_1.guidance
+            copy: [chase.copy, chase.collecting_1.copy]
+            settings: chase.collecting_1.settings
+      gate_1:
+        label: Decision 1 needed
+        warn: true
+        why: "Stage 1 answers are in. Choose how to proceed, or decline."
+        policy: {turn: never, reminders: false, outbound: false, owner: staff}
+      collecting_2a:
+        label: "Stage 2 (A) collecting"
+        policy:
+          turn: always
+          reminders: true
+          outbound: true
+          owner: agent
+          chase:
+            type: questions
+            items: chase.collecting_2a.items
+            standards: chase.collecting_2a.standards
+            guidance: chase.collecting_2a.guidance
+            copy: [chase.copy, chase.collecting_2a.copy]
+            settings: chase.collecting_2a.settings
+      collecting_2b:
+        label: "Stage 2 (B) collecting"
+        policy:
+          turn: always
+          reminders: true
+          outbound: true
+          owner: agent
+          chase:
+            type: questions
+            items: chase.collecting_2b.items
+            standards: chase.collecting_2b.standards
+            guidance: chase.collecting_2b.guidance
+            copy: [chase.copy, chase.collecting_2b.copy]
+            settings: chase.collecting_2b.settings
+      gate_2:
+        label: Decision 2 needed
+        warn: true
+        why: "Stage 2 answers are in. Finish the process, or decline."
+        policy: {turn: never, reminders: false, outbound: false, owner: staff}
+      done:
+        label: Done
+        tone: black
+        terminal: true
+        policy: {turn: never, reminders: false, outbound: false, owner: staff}
+      no_response:
+        label: No response
+        tone: gray
+        terminal: reopenable
+        policy: {turn: reply_only, reminders: false, outbound: false, owner: staff}
+      archived:
+        label: Archived
+        tone: gray
+        terminal: reopenable
+        policy: {turn: reply_only, reminders: false, outbound: false, owner: staff}
+        detail:
+          column: Archive Reason
+          tone: gray
+          values: [answers_incomplete, not_interested, wrong_recipient, spam,
+                   opted_out, declined, user_archived]
+          labels:
+            answers_incomplete: Answers never completed
+            not_interested: The recipient said they are not interested
+            wrong_recipient: The recipient is not the person we meant to reach
+            spam: The reply was spam
+            opted_out: The recipient asked us to stop writing
+            declined: Declined at a decision gate
+            user_archived: Archived by the team
+    groups:
+      collecting: [collecting_1, collecting_2a, collecting_2b]
+      gates: [gate_1, gate_2]
+      open: [collecting_1, gate_1, collecting_2a, collecting_2b, gate_2]
+
+  problem:
+    column: Problem
+    overlay: true
+    description: >-
+      Our side stopped. A person repairs the row and presses Try again;
+      the stage underneath is kept.
+    states:
+      internal_error:
+        label: Internal error
+        warn: true
+        policy: {turn: never, reminders: false, outbound: false, owner: staff}
+        detail:
+          column: Internal Error Reason
+          tone: gray
+          values: [turn_failed, review_unresolved, board_mismatch, address_change,
+                   refused_suppressed, refused_followup_limit,
+                   refused_spell_exhausted, refused_reminder_skipped,
+                   settings_invalid]
+          labels:
+            turn_failed: The turn failed twice
+            review_unresolved: The reviewer could not approve the email
+            board_mismatch: The graded answers contradict what the recipient wrote
+            address_change: The recipient asked us to write to a different address
+            refused_suppressed: The writer tried to email a recipient we may not email
+            refused_followup_limit: The writer tried a follow-up past the budget
+            refused_spell_exhausted: The writer tried another reminder after the spell was spent
+            refused_reminder_skipped: The writer waited when a reminder was due
+            settings_invalid: The stage's own settings cannot be used
+
+  tracking:
+    column: Tracking Mode
+    overlay: true
+    description: The manual park.
+    states:
+      not_tracking:
+        label: Not tracking
+        tone: gray
+        stored_as: stopped
+        policy: {turn: never, reminders: false, outbound: false, owner: staff}
+
+events:
+  staff: [proceed_a, proceed_b, decline, finish, archive, try_again,
+          stop_tracking, resume_tracking]
+  agent: [ask, wait, complete, close, handoff]
+  world: [client_replied, no_response, answers_incomplete]
+  system: [turn_failed, review_unresolved, plan_refused]
+
+transitions:
+  # ---- the engine's edges, on every collecting stage --------------------
+  - on: agent.ask
+    from: collecting
+    to: same
+    when: [{machine: problem, is: none}]
+    description: The writer asked the recipient the open items
+  - on: agent.wait
+    from: collecting
+    to: same
+    when: [{machine: problem, is: none}]
+    description: The writer sent nothing this turn
+  - on: agent.complete
+    from: collecting_1
+    to: gate_1
+    expected: true
+    description: "Every stage 1 item is answered; a person decides how to proceed"
+  - on: agent.complete
+    from: [collecting_2a, collecting_2b]
+    to: gate_2
+    expected: true
+    description: "Every stage 2 item is answered; a person finishes the process"
+  - on: agent.close
+    from: collecting
+    to: archived
+    detail_from: close_reason
+    description: "The writer ended the chase for cause; the reason is on the row"
+  - on: agent.handoff
+    from: problem.none
+    to: internal_error
+    detail_from: handoff_reason
+    when: [{machine: process, group: collecting}]
+    expected: true
+    description: The writer stopped rather than email on facts it cannot trust or change
+  - on: system.turn_failed
+    from: problem.none
+    to: internal_error
+    detail: turn_failed
+    when: [{machine: process, group: collecting}]
+    description: "The turn failed twice; Try again runs a fresh one"
+  - on: system.review_unresolved
+    from: problem.none
+    to: internal_error
+    detail: review_unresolved
+    when: [{machine: process, group: collecting}]
+    description: "The reviewer could not approve any draft; Try again runs a fresh turn"
+  - on: system.plan_refused
+    from: problem.none
+    to: internal_error
+    detail_from: refusal
+    when: [{machine: process, group: collecting}]
+    description: "The engine refused the email the writer wrote; the email is in Draft"
+  # ---- silence, and the reopen ------------------------------------------
+  - on: world.no_response
+    from: collecting
+    to: no_response
+    expected: true
+    description: Reminders went unanswered and the recipient never replied
+  - on: world.answers_incomplete
+    from: collecting
+    to: archived
+    detail: answers_incomplete
+    expected: true
+    description: Reminders went unanswered after the recipient had replied before
+  - on: world.client_replied
+    from: no_response
+    to: [collecting_1, collecting_2a, collecting_2b]
+    payload_writes: {Stage: reopen_stage}
+    then:
+      - flow: chase_turn
+        inputs:
+          conversation_id: $conversation_id
+          record_id: $record_id
+          force: false
+          force_chases: false
+          model_override: ""
+          eval_case: null
+          guidance_override: {}
+    description: "The recipient wrote back; the stage they were in reopened"
+  - on: world.client_replied
+    from: archived
+    to: [collecting_1, collecting_2a, collecting_2b]
+    when: [{column: Archive Reason, in: [answers_incomplete]}]
+    payload_writes: {Stage: reopen_stage}
+    then:
+      - flow: chase_turn
+        inputs:
+          conversation_id: $conversation_id
+          record_id: $record_id
+          force: false
+          force_chases: false
+          model_override: ""
+          eval_case: null
+          guidance_override: {}
+    description: "The recipient wrote back after a close for silence; the stage reopened"
+  # ---- the gates ----------------------------------------------------------
+  - on: staff.proceed_a
+    from: gate_1
+    to: collecting_2a
+    expected: true
+    writes: {Tracking Mode: ""}
+    # The next stage opens in the run that pressed the button, not on the
+    # next tick.
+    then:
+      - flow: chase_turn
+        inputs:
+          conversation_id: $conversation_id
+          record_id: $record_id
+          force: false
+          force_chases: false
+          model_override: ""
+          eval_case: null
+          guidance_override: {}
+    description: "Decided: proceed with option A"
+    cta:
+      kind: proceed-a
+      label: Proceed with option A
+      message: "Continue {Name|this record} with option A."
+      when: [{shown: true, is: gate_1}]
+  - on: staff.proceed_b
+    from: gate_1
+    to: collecting_2b
+    expected: true
+    writes: {Tracking Mode: ""}
+    # The next stage opens in the run that pressed the button, not on the
+    # next tick.
+    then:
+      - flow: chase_turn
+        inputs:
+          conversation_id: $conversation_id
+          record_id: $record_id
+          force: false
+          force_chases: false
+          model_override: ""
+          eval_case: null
+          guidance_override: {}
+    description: "Decided: proceed with option B"
+    cta:
+      kind: proceed-b
+      label: Proceed with option B
+      message: "Continue {Name|this record} with option B."
+      when: [{shown: true, is: gate_1}]
+  - on: staff.finish
+    from: gate_2
+    to: done
+    expected: true
+    writes: {Tracking Mode: ""}
+    description: "Decided: the process is complete"
+    cta:
+      kind: finish
+      label: Finish
+      message: "Finish {Name|this record}."
+      when: [{shown: true, is: gate_2}]
+  - on: staff.decline
+    from: gates
+    to: archived
+    detail: declined
+    writes: {Tracking Mode: ""}
+    description: "Decided: decline"
+    cta:
+      kind: decline
+      label: Decline
+      message: "Decline {Name|this record}."
+      when: [{shown: true, in: [gate_1, gate_2]}]
+  - on: staff.archive
+    from: open
+    to: archived
+    detail: user_archived
+    writes: {Tracking Mode: ""}
+    also: {problem: none}
+    description: Archived by the team
+    cta:
+      kind: archive
+      label: Archive
+      prominence: quiet
+      direct_only: true
+      message: "Archive {Name|this record}."
+  # ---- the problem overlay's one button ------------------------------------
+  - on: staff.try_again
+    from: internal_error
+    to: problem.none
+    then:
+      - flow: chase_turn
+        inputs:
+          conversation_id: $conversation_id
+          record_id: $record_id
+          force: true
+          force_chases: false
+          model_override: ""
+          eval_case: null
+          guidance_override: {}
+    description: Retried the turn after an internal error
+    cta:
+      kind: try-again
+      label: Try again
+      message: "Try {Name|this record}'s turn again."
+      when: [{shown: true, is: internal_error}]
+  # ---- tracking -------------------------------------------------------------
+  - on: staff.stop_tracking
+    from: tracking.none
+    to: not_tracking
+    expected: true
+    writes: {Tracking Mode: stopped}
+    description: Stopped tracking
+    cta:
+      kind: stop-tracking
+      label: Stop tracking
+      prominence: quiet
+      direct_only: true
+      message: "Stop tracking {Name|this record}."
+      when: [{shown: true, in: [gate_1, gate_2]}]
+  - on: staff.resume_tracking
+    from: not_tracking
+    to: tracking.none
+    writes: {Tracking Mode: ""}
+    description: Resumed tracking
+    cta:
+      kind: resume-tracking
+      label: Resume tracking
+      direct_only: true
+      message: "Resume tracking {Name|this record}."
+      when: [{shown: true, is: not_tracking}]

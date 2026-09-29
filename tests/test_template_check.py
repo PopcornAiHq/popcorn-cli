@@ -1635,3 +1635,270 @@ def test_a_corrupt_baseline_reads_as_no_checkout(tmp_path):
     root = write_bundle(tmp_path / "b", manifest=versioned_manifest("1.0.0"))
     (root / ".popcorn-app.json").write_text("{not json")
     assert check_bundle(root).findings == []
+
+
+# ── the process: tier ─────────────────────────────────────────────────
+#
+# A `process:` bundle keeps its state graph in a root `process.yaml` instead of
+# the manifest's `states:`. The fixture is the graph the chase bundle shipped
+# with at 0.9.0; the bundle around it supplies only what that graph names.
+
+CHASE_PROCESS = (Path(__file__).parent / "fixtures" / "process" / "chase.yaml").read_text()
+
+# Every column chase's tracker and issues tables declare. The graph reads and
+# writes a good share of them, so a narrower list is one publish refuses.
+_TRACKER_COLUMNS = (
+    "Name",
+    "Email",
+    "Phone",
+    "Details",
+    "Source",
+    "Agent Intake",
+    "Boards",
+    "Draft",
+    "Agent Review",
+    "Status",
+    "Stage",
+    "Problem",
+    "Tracking Mode",
+    "Archive Reason",
+    "Internal Error Reason",
+    "Why",
+    "CTAs",
+    "Policy",
+    "Template",
+    "Template Sha256",
+    "Template Html",
+    "Fields",
+    "Values",
+    "Signer Roles",
+    "Signers",
+    "Signature Tag Format",
+    "Signature Fields",
+    "Split Placeholders",
+    "Prefilled",
+    "Merged",
+    "Merged Sha256",
+    "Merged Values Sha256",
+    "Placements",
+    "Unresolved",
+    "Preview Keys",
+    "Pages Ready",
+    "Prepared At",
+    "Regenerating",
+    "Sending",
+    "Send Fingerprint",
+    "Send Intent",
+    "Send Requested",
+    "DocumentId",
+    "Previous DocumentId",
+    "Signing Status",
+    "Sent At",
+    "Checked At",
+    "Signed Key",
+    "Signed At",
+    "Document Status",
+    "Document Why",
+)
+_ISSUE_COLUMNS = (
+    "cause",
+    "affected_record_ids",
+    "Issue",
+    "Why",
+    "Name",
+    "Email",
+    "Owner",
+    "Stage",
+    "Status",
+    "Opened",
+    "Resolved",
+    "ctas",
+)
+
+CHASE_TURN: dict[str, Any] = {
+    "name": "chase_turn",
+    "steps": [{"id": "now", "activity": "foundation.workflow.now"}],
+}
+
+
+def process_manifest(**extra: Any) -> dict[str, Any]:
+    manifest = bare_manifest(**extra)
+    manifest["tables"]["tracker"] = {
+        "columns": [{"name": c, "type": "string"} for c in _TRACKER_COLUMNS]
+    }
+    manifest["tables"]["issues"] = {
+        "columns": [{"name": c, "type": "string"} for c in _ISSUE_COLUMNS]
+    }
+    manifest.setdefault("process", {"pointer": "chase.process", "contract": "chase"})
+    return manifest
+
+
+def write_process_bundle(
+    root: Path,
+    *,
+    manifest: dict[str, Any] | None = None,
+    process: str | None = CHASE_PROCESS,
+    flows: dict[str, dict[str, Any]] | None = None,
+) -> Path:
+    write_bundle(
+        root,
+        manifest=process_manifest() if manifest is None else manifest,
+        flows={"intake": CLEAN_INTAKE, "chase_turn": CHASE_TURN} if flows is None else flows,
+    )
+    if process is not None:
+        (root / "process.yaml").write_text(process)
+    return root
+
+
+def chase_graph(**changes: Any) -> dict[str, Any]:
+    graph = yaml.safe_load(CHASE_PROCESS)
+    graph.update(changes)
+    return graph
+
+
+def dump_graph(graph: dict[str, Any]) -> str:
+    # Key order is meaning here — a machine's first state is its initial one —
+    # so the default sorted dump would hand publish a different graph.
+    return yaml.safe_dump(graph, sort_keys=False)
+
+
+def test_a_process_bundle_checks_clean(tmp_path):
+    report = check_bundle(write_process_bundle(tmp_path / "b"))
+    assert report.findings == [], [str(f) for f in report.findings]
+    assert report.process is not None and report.process["table"] == "tracker"
+    assert report.to_dict()["has_process"] is True
+    # The document is not a flow, so it never reaches the flow checks.
+    assert {f.name for f in report.flows} == {"intake", "chase_turn"}
+
+
+def test_the_fixture_exercises_every_reference_the_checker_reads():
+    """Guards the fixture rather than the checker: if a refresh dropped the
+    graph's flow edges or its writes, the clean test above would pass while
+    testing nothing."""
+    graph = yaml.safe_load(CHASE_PROCESS)
+    edges = graph["transitions"]
+    assert any(t.get("flow") or t.get("then") for t in edges)
+    assert any(t.get("writes") for t in edges)
+
+
+@pytest.mark.parametrize(
+    "decl",
+    [
+        {"pointer": "chase.process"},
+        {"pointer": "chase.process", "contract": "chase"},
+        # Publish strips the pointer before judging it.
+        {"pointer": "  chase.process  "},
+    ],
+)
+def test_a_valid_process_declaration_is_accepted(tmp_path, decl):
+    root = write_process_bundle(tmp_path / "b", manifest=process_manifest(process=decl))
+    assert codes(root) == set()
+
+
+def test_process_yaml_without_a_declaration_is_refused(tmp_path):
+    """The reported false positive: a process document read as a flow. Without
+    the manifest's `process:` it is still refused — but as what it is."""
+    manifest = process_manifest()
+    del manifest["process"]
+    found = codes(write_process_bundle(tmp_path / "b", manifest=manifest))
+    assert found == {"process-undeclared"}
+
+
+def test_process_yaml_is_never_a_flow(tmp_path):
+    manifest = process_manifest()
+    del manifest["process"]
+    report = check_bundle(write_process_bundle(tmp_path / "b", manifest=manifest))
+    assert "yaml-is-not-a-flow" not in {f.code for f in report.findings}
+    assert "process.yaml" not in {f.path for f in report.flows}
+
+
+def test_a_declaration_without_the_document_is_refused(tmp_path):
+    assert codes(write_process_bundle(tmp_path / "b", process=None)) == {"process-document-missing"}
+
+
+def test_process_and_states_together_are_refused(tmp_path):
+    manifest = process_manifest(states=chase_graph())
+    assert "process-and-states" in codes(write_process_bundle(tmp_path / "b", manifest=manifest))
+
+
+def test_a_process_bundle_needs_tables(tmp_path):
+    manifest = process_manifest()
+    del manifest["tables"]
+    found = codes(write_process_bundle(tmp_path / "b", manifest=manifest, flows={"t": CHASE_TURN}))
+    assert {"process-without-tables", "process-table-undeclared"} <= found
+
+
+@pytest.mark.parametrize(
+    "decl",
+    [
+        None,
+        "chase.process",
+        {},
+        {"pointer": ""},
+        {"pointer": "chase process"},
+        {"pointer": 7},
+        {"pointer": "chase.process", "revision": "abc"},
+        {"pointer": "chase.process", "contract": 1},
+    ],
+)
+def test_a_malformed_process_declaration_is_refused(tmp_path, decl):
+    root = write_process_bundle(tmp_path / "b", manifest=process_manifest(process=decl))
+    assert codes(root) == {"process-declaration-invalid"}
+
+
+@pytest.mark.parametrize("text", ["", "# only a comment\n", "- a\n- b\n", "{}\n", "tracker\n"])
+def test_a_process_document_that_is_not_a_mapping_is_refused(tmp_path, text):
+    assert codes(write_process_bundle(tmp_path / "b", process=text)) == {"process-document-invalid"}
+
+
+def test_an_unparseable_process_document_is_reported_once(tmp_path):
+    assert codes(write_process_bundle(tmp_path / "b", process="table: [unclosed\n")) == {
+        "yaml-parse-error"
+    }
+
+
+def test_the_graphs_table_must_be_declared(tmp_path):
+    root = write_process_bundle(tmp_path / "b", process=dump_graph(chase_graph(table="leads")))
+    assert "process-table-undeclared" in codes(root)
+
+
+def test_the_graphs_table_must_declare_columns(tmp_path):
+    manifest = process_manifest()
+    manifest["tables"]["tracker"] = {}
+    assert "process-table-undeclared" in codes(
+        write_process_bundle(tmp_path / "b", manifest=manifest)
+    )
+
+
+def test_a_column_an_edge_writes_must_be_declared(tmp_path):
+    manifest = process_manifest()
+    manifest["tables"]["tracker"]["columns"] = [
+        c for c in manifest["tables"]["tracker"]["columns"] if c["name"] != "Tracking Mode"
+    ]
+    report = check_bundle(write_process_bundle(tmp_path / "b", manifest=manifest))
+    found = [f for f in report.findings if f.code == "process-undeclared-column"]
+    assert found and all("Tracking Mode" in f.message for f in found)
+
+
+def test_a_flow_the_graph_runs_must_exist(tmp_path):
+    report = check_bundle(write_process_bundle(tmp_path / "b", flows={"intake": CLEAN_INTAKE}))
+    found = [f for f in report.findings if f.code == "process-unknown-flow"]
+    assert found and all("chase_turn" in f.message for f in found)
+
+
+def test_a_then_entry_naming_an_unknown_flow_is_refused(tmp_path):
+    graph = chase_graph()
+    graph["transitions"][0]["then"] = ["chase_turn", {"flow": "ghost"}]
+    report = check_bundle(write_process_bundle(tmp_path / "b", process=dump_graph(graph)))
+    found = [f for f in report.findings if f.code == "process-unknown-flow"]
+    assert [f.where for f in found] == ["process.yaml:transitions.0.then.1"]
+
+
+def test_the_graphs_grammar_is_left_to_publish(tmp_path):
+    """A graph publish would refuse for its grammar alone — here one with no
+    `machines:` at all — checks clean offline. Mirroring the server's graph
+    reader is the near-miss reimplementation this module refuses for `when:`
+    too."""
+    graph = chase_graph()
+    del graph["machines"]
+    assert codes(write_process_bundle(tmp_path / "b", process=dump_graph(graph))) == set()
