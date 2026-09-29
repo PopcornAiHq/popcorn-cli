@@ -759,11 +759,13 @@ class _Checker:
         out — a machine's column, the status columns. Both still fail at
         publish; neither can fail here while publish passes.
         """
-        manifest = self.report.manifest
+        manifest_name, manifest = self._process_manifest()
+        if manifest_name is not None and manifest is None:
+            return  # a manifest that does not parse; nothing here can be judged
         root = self.dir / flow_rules.PROCESS_FILENAME
         has_doc = root.is_file()
         declared = manifest is not None and "process" in manifest
-        where = "manifest.yaml:process"
+        where = f"{manifest_name}:process"
 
         if has_doc and not declared:
             self.err(
@@ -772,7 +774,7 @@ class _Checker:
                 f"{flow_rules.PROCESS_FILENAME} is a process document, but the manifest "
                 "declares no `process:` section. Publish refuses a bundle carrying one "
                 "without the other: declare `process: {pointer: <scalar key>}` in "
-                f"manifest.yaml, or remove {flow_rules.PROCESS_FILENAME}.",
+                f"{manifest_name or 'manifest.yaml'}, or remove {flow_rules.PROCESS_FILENAME}.",
             )
             return
         if manifest is None or not declared:
@@ -818,7 +820,34 @@ class _Checker:
             )
             return
         self.report.process = doc
-        self._check_process_references(doc)
+        self._check_process_references(doc, manifest)
+
+    def _process_manifest(self) -> tuple[str | None, dict[str, Any] | None]:
+        """The manifest publish reads the `process:` declaration from.
+
+        `manifest.yaml` wins over the legacy `config.yaml`, as in the server's
+        tree reader and `app_publish.manifest_file`. The rest of this checker
+        reads `manifest.yaml` only, but the tier's findings are errors, and a
+        legacy bundle declaring `process:` in `config.yaml` publishes — so
+        reading only `manifest.yaml` here would refuse a bundle the server
+        accepts. `(None, None)` means no manifest at all; a name with no
+        document means one that does not parse, which publish refuses for
+        that reason alone.
+        """
+        import yaml
+
+        for name in flow_rules.MANIFEST_FILENAMES:
+            path = self.dir / name
+            if not path.is_file():
+                continue
+            if name == "manifest.yaml":
+                return name, self.report.manifest
+            try:
+                doc = yaml.safe_load(path.read_text())
+            except yaml.YAMLError:
+                return name, None
+            return name, doc if isinstance(doc, dict) else None
+        return None, None
 
     def _check_process_decl(self, decl: Any, where: str) -> None:
         """The `process:` mapping itself, as strictly as publish reads it."""
@@ -860,7 +889,7 @@ class _Checker:
                 "`process: contract:` must be the name of an engine contract, or absent.",
             )
 
-    def _check_process_references(self, doc: dict[str, Any]) -> None:
+    def _check_process_references(self, doc: dict[str, Any], manifest: dict[str, Any]) -> None:
         """What the graph names that the rest of the bundle must declare.
 
         Only the names the document spells out: its `table:`, the columns a
@@ -872,7 +901,7 @@ class _Checker:
         table_name = doc.get("table")
         columns: set[str] | None = None
         if isinstance(table_name, str):
-            tables = (self.report.manifest or {}).get("tables")
+            tables = manifest.get("tables")
             table = tables.get(table_name) if isinstance(tables, dict) else None
             raw = table.get("columns") if isinstance(table, dict) else None
             if not isinstance(table, dict):

@@ -1902,3 +1902,26 @@ def test_the_graphs_grammar_is_left_to_publish(tmp_path):
     graph = chase_graph()
     del graph["machines"]
     assert codes(write_process_bundle(tmp_path / "b", process=dump_graph(graph))) == set()
+
+
+def test_a_legacy_config_yaml_manifest_declares_the_tier_too(tmp_path):
+    """Publish reads `config.yaml` as the manifest when there is no
+    `manifest.yaml`, so a `process:` declared there is a declaration."""
+    root = write_process_bundle(tmp_path / "b")
+    (root / "manifest.yaml").rename(root / "config.yaml")
+    assert {f.code for f in check_bundle(root).findings if f.code.startswith("process-")} == set()
+
+
+def test_a_legacy_config_yaml_manifest_is_named_in_the_finding(tmp_path):
+    root = write_process_bundle(tmp_path / "b", process=None)
+    (root / "manifest.yaml").rename(root / "config.yaml")
+    found = [f for f in check_bundle(root).findings if f.code == "process-document-missing"]
+    assert [f.where for f in found] == ["config.yaml:process"]
+
+
+def test_manifest_yaml_wins_over_config_yaml(tmp_path):
+    manifest = process_manifest()
+    del manifest["process"]
+    root = write_process_bundle(tmp_path / "b", manifest=manifest)
+    (root / "config.yaml").write_text(yaml.safe_dump(process_manifest()))
+    assert "process-undeclared" in codes(root)
