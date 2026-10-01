@@ -716,24 +716,58 @@ def redact_webhook_url(url: str) -> str:
     to the channel, so it is what goes. The query and any userinfo go too:
     nothing about the URL's shape is promised, and either could carry a
     secret just as well. What is left still says which host was hit.
+
+    Never raises: it runs on the error path for a URL httpx has just refused,
+    so a malformed port or bracket has to degrade, not become a traceback.
     """
-    parts = urlparse(url)
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return "<ingest URL>/…"
     host = parts.hostname or ""
-    if parts.port:
-        host = f"{host}:{parts.port}"
+    try:
+        if parts.port:
+            host = f"{host}:{parts.port}"
+    except ValueError:
+        pass
     head, _, _ = parts.path.rpartition("/")
     return f"{parts.scheme}://{host}{head}/…"
 
 
+# Shorter than this, a URL part is left alone in free text: `?v=1` would
+# otherwise blank every "1" in an error body, and a value that short is no
+# secret worth the damage.
+_MIN_SCRUBBED = 6
+
+
+def _webhook_url_secrets(url: str) -> list[str]:
+    """Every part of ``url`` that could be its credential, longest first.
+
+    The last path segment, each query value, and the userinfo — the same
+    parts `redact_webhook_url` drops, since either of the last two could carry
+    the token as well as the path does.
+    """
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return []
+    candidates = [parts.path.rpartition("/")[2], parts.username or "", parts.password or ""]
+    candidates += [v for values in parse_qs(parts.query).values() for v in values]
+    found = {c for c in candidates if len(c) >= _MIN_SCRUBBED}
+    return sorted(found, key=len, reverse=True)
+
+
 def scrub_webhook_url(text: str, url: str) -> str:
-    """``text`` with ``url`` — and its bare token — replaced by the redacted form.
+    """``text`` with ``url``, and each part of it that could be the
+    credential, replaced by the redacted form.
 
     For what the CLI does not author: an httpx exception's message and an
-    ingest host's error body can both echo the request URL back.
+    ingest host's reply can both echo the request URL back, whole or in part.
     """
-    token = urlparse(url).path.rpartition("/")[2]
     text = text.replace(url, redact_webhook_url(url))
-    return text.replace(token, "…") if token else text
+    for secret in _webhook_url_secrets(url):
+        text = text.replace(secret, "…")
+    return text
 
 
 def resolve_webhook_id(

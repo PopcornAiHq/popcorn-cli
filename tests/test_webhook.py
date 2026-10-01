@@ -403,6 +403,15 @@ class TestSendHidesTheUrl:
         assert "network error" in out + err
         assert _TOKEN not in out + err
 
+    def test_an_invalid_port_is_a_validation_error_not_a_traceback(self, popcorn):
+        import httpx
+
+        url = "https://hooks.example.test:99999/ingest/s3cr3t-token"
+        code, out, err = popcorn("webhook", "send", url, reply=httpx.InvalidURL("Invalid port"))
+        assert code != 0
+        assert "Not a usable ingest URL" in out + err
+        assert _TOKEN not in out + err
+
     def test_an_invalid_url_is_a_validation_error_not_a_traceback(self, popcorn):
         import httpx
 
@@ -413,6 +422,28 @@ class TestSendHidesTheUrl:
 
 
 class TestRedactWebhookUrl:
+    def test_a_malformed_port_degrades_rather_than_raising(self):
+        """It runs on the InvalidURL error path, where a ValueError would
+        surface as a traceback."""
+        assert operations.redact_webhook_url("https://hooks.example.test:99999/x/tok") == (
+            "https://hooks.example.test/x/…"
+        )
+        assert operations.redact_webhook_url("https://[::1/x/tok") == "<ingest URL>/…"
+
+    def test_scrubs_a_query_token_echoed_alone(self):
+        url = "https://hooks.example.test/ingest?token=s3cr3t-query"
+        assert operations.scrub_webhook_url("bad token s3cr3t-query", url) == "bad token …"
+
+    def test_scrubs_userinfo_echoed_alone(self):
+        url = "https://hookuser:s3cr3t-pass@hooks.example.test/ingest/x"
+        out = operations.scrub_webhook_url("auth failed for hookuser / s3cr3t-pass", url)
+        assert "s3cr3t-pass" not in out
+        assert "hookuser" not in out
+
+    def test_leaves_short_query_values_alone(self):
+        url = "https://hooks.example.test/ingest/s3cr3t-token?v=1"
+        assert operations.scrub_webhook_url("retry 1 of 3", url) == "retry 1 of 3"
+
     def test_drops_the_last_segment(self):
         assert operations.redact_webhook_url(_URL) == "https://hooks.example.test/ingest/…"
 
