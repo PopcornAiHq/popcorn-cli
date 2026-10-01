@@ -18,6 +18,7 @@ def test_a_directory_sends_only_root_flows(tmp_path):
         "manifest.yaml",
         "config.yaml",
         "strings.yaml",
+        "process.yaml",
         "AGENT.md",
         "README.md",
     ):

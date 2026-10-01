@@ -118,9 +118,13 @@ def _poll_until_closed(
 
 # Root files with a flow suffix that are still not flows, from the served
 # bundle rules: the manifest (and its legacy alias) is `app validate`'s job,
-# and strings.yaml is UI copy. The .md reserved names never carry a flow
-# suffix, so they need no entry here.
-_NOT_A_FLOW = {*flow_rules.MANIFEST_FILENAMES, flow_rules.STRINGS_FILENAME}
+# strings.yaml is UI copy, and the process: tier's document is a state graph.
+# The .md reserved names never carry a flow suffix, so they need no entry here.
+_NOT_A_FLOW = {
+    *flow_rules.MANIFEST_FILENAMES,
+    flow_rules.STRINGS_FILENAME,
+    flow_rules.PROCESS_FILENAME,
+}
 
 
 def _validate_channel(args: argparse.Namespace, target: Path) -> str:

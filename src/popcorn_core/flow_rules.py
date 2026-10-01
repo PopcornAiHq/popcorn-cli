@@ -182,6 +182,11 @@ README_FILENAME = "README.md"
 # The app's user-facing UI copy, locale-sectioned. Reserved.
 STRINGS_FILENAME = "strings.yaml"
 
+# The process: tier's state-graph document, read from the bundle root. Reserved:
+# never installed as a flow, though it carries a flow suffix. Publish requires it
+# when the manifest declares `process:` and refuses it when the manifest doesn't.
+PROCESS_FILENAME = "process.yaml"
+
 # Extensions that make a bundle entry a candidate flow document. Anything else
 # is carried as bundle data, or ignored.
 FLOW_SUFFIXES = (
