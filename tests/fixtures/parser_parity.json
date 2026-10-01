@@ -3196,6 +3196,7 @@
       "no_color": false,
       "payload": "x",
       "quiet": false,
+      "show_url": false,
       "target": "x",
       "timeout": null,
       "webhook_command": "send",
@@ -3210,7 +3211,8 @@
       "x",
       "x",
       "--channel",
-      "x"
+      "x",
+      "--show-url"
     ],
     "namespace": {
       "channel": "x",
@@ -3221,6 +3223,7 @@
       "no_color": false,
       "payload": "x",
       "quiet": false,
+      "show_url": true,
       "target": "x",
       "timeout": null,
       "webhook_command": "send",

@@ -16,12 +16,14 @@ in one command, since the pair is almost always run together; `fork` stays a
 command of its own, and a checkout WITHOUT it stays the way to read what a
 channel runs without touching it.
 
-A checkout is the fork line's HEAD, not what the channel happens to run. A
+A checkout is the line's HEAD, not what the channel happens to run. A
 publish is a line operation and must be based on the head; the two differ
 only while the channel lags its line — a head whose
 install has not landed, or failed — and that is the case where a checkout of
 the bound tree used to leave the line stuck. `checkout` says so when it
-happens; `status` shows both versions.
+happens; `status` shows both versions. A product line's head is what the
+workspace's release track offers, which the server's head read does not
+serve; `_newer_product_head` is how checkout reaches it anyway.
 
 `checkout --version N` is the one way to read anything else: a past version
 of the line, to recover the tree from before a bad publish or to diff two
@@ -79,6 +81,7 @@ from popcorn_core.app_checkout import (
     guide_text,
     occupied,
     read_baseline,
+    semver_key,
     write_agent_guide,
     write_baseline,
     write_tree,
@@ -312,6 +315,43 @@ def _read_version(client, conv_id: str, version_id: int) -> dict:
         raise
 
 
+def _newer_product_head(client: Any, conversation: str, served: dict) -> dict | None:
+    """The product line's head, when it is newer than what a head read served.
+
+    A head read (`ref=head`) of a product-bound channel serves the version the
+    channel RUNS: the server's answer is that a product channel has no
+    editable line, so its head is its binding. The product line has a head all
+    the same — the version this workspace's release track offers now, which
+    `app status` reports and an update moves the channel to — and that is the
+    version `checkout` says it writes. `/apps/status` names it, and a read by
+    id serves it.
+
+    `{"version_id", "semver"}`, or None: for a fork line, whose head read
+    already served its head; when the status read fails or predates the head
+    fields; and when the head is not newer — a channel can sit ahead of a
+    track that was rolled back, and "the head" there would be a downgrade.
+    """
+    if served.get("kind") != "product":
+        return None
+    try:
+        status = operations.get_channel_app_status(client, conversation)
+    except APIError:
+        return None
+    head_id = status.get("head_version_id")
+    head_semver = str(status.get("head_semver") or "")
+    if (
+        not isinstance(head_id, int)
+        or head_id == served.get("version_id")
+        or status.get("app") != served.get("app")
+    ):
+        return None
+    head_key = semver_key(head_semver)
+    served_key = semver_key(str(served.get("semver") or ""))
+    if head_key is None or served_key is None or head_key <= served_key:
+        return None
+    return {"version_id": head_id, "semver": head_semver}
+
+
 def _app_checkout(args: argparse.Namespace) -> None:
     from ..cli import _confirm_force, _get_client, _output
 
@@ -346,8 +386,23 @@ def _app_checkout(args: argparse.Namespace) -> None:
         forked = _fork(args, client, conv_id, args.fork or None)
 
     head: dict | None = None
+    # A product line's head when the head read did not serve it, and why not
+    # if it could not be read either; see `_newer_product_head`.
+    product_head: dict | None = None
+    unread_head: str | None = None
     if version_id is None:
         resp = operations.get_channel_app_files(client, conv_id)
+        product_head = _newer_product_head(client, conv_id, resp)
+        if product_head is not None:
+            try:
+                resp = operations.get_channel_app_files(
+                    client, conv_id, version_id=product_head["version_id"]
+                )
+            except PopcornError as exc:
+                # The channel's own version is still a true answer to "what
+                # does this bundle say" — written, with the head named as
+                # what it is not.
+                unread_head = str(exc)
     else:
         resp = _read_version(client, conv_id, version_id)
         # Whether the named version is the line's head decides what the
@@ -446,6 +501,9 @@ def _app_checkout(args: argparse.Namespace) -> None:
         data["historical"] = historical
         data["head_version_id"] = head.get("version_id")
         data["head_semver"] = head.get("semver")
+    elif product_head is not None:
+        data["head_version_id"] = product_head["version_id"]
+        data["head_semver"] = product_head["semver"]
     if forked is not None:
         data["fork"] = forked
     lines = [
@@ -466,6 +524,18 @@ def _app_checkout(args: argparse.Namespace) -> None:
             f"This is a {baseline.kind} version (version {baseline.base_version_id}); "
             f"the channel runs {channel_semver} (version {channel_id}). A publish "
             "needs a fork line — 'popcorn app checkout --fork' makes one."
+        )
+    elif product_head is not None and unread_head is not None:
+        lines.append(
+            f"Note: the product line's head is {product_head['semver']} (version "
+            f"{product_head['version_id']}), newer than this copy, and could not be "
+            f"read ({unread_head}) — so this is the version the channel runs."
+        )
+    elif baseline.kind == "product" and channel_id != baseline.base_version_id:
+        lines.append(
+            f"Note: this channel still runs {baseline.app} {channel_semver} "
+            f"(version {channel_id}); {baseline.semver} is the product line's head, "
+            "the version an update moves it to."
         )
     elif channel_id != baseline.base_version_id:
         lines.append(
@@ -541,7 +611,7 @@ def _channel_of(args: argparse.Namespace, baseline: Baseline) -> str:
 
 
 def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
-    """The fork line's head: its version fields, and `{path: sha256}` of its tree.
+    """The line's head: its version fields, and `{path: sha256}` of its tree.
 
     Hashes are all a diff needs from the base side (see `diff_tree_hashes`),
     so this reads `/apps/tree`, which serves them, and never the content.
@@ -552,10 +622,26 @@ def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
     the hashes always come from one response.
     """
     tree = operations.get_channel_app_tree(client, conversation, ref="head")
+    # A product line's head is read by id, exactly as `checkout` reads it —
+    # otherwise a checkout of that head reads here as one the line has moved
+    # back past.
+    head_id: int | None = None
+    product_head = _newer_product_head(client, conversation, tree)
+    if product_head is not None:
+        try:
+            tree = operations.get_channel_app_tree(
+                client, conversation, version_id=product_head["version_id"]
+            )
+            head_id = product_head["version_id"]
+        except PopcornError:
+            pass
     hashes = served_hashes(tree)
     if hashes is not None:
         return tree, hashes
-    resp = operations.get_channel_app_files(client, conversation, ref="head")
+    if head_id is None:
+        resp = operations.get_channel_app_files(client, conversation, ref="head")
+    else:
+        resp = operations.get_channel_app_files(client, conversation, version_id=head_id)
     return resp, {path: file_sha256(text) for path, text in files_from_response(resp).items()}
 
 
@@ -1628,7 +1714,7 @@ register(
             ),
             Subcommand(
                 "checkout",
-                "Write the fork line's head (or, with --version, one past "
+                "Write the line's head (or, with --version, one past "
                 "version) to disk, with a baseline",
                 _app_checkout,
                 [

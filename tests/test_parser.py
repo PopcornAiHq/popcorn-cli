@@ -692,6 +692,7 @@ class TestWebhook:
 
 
 _SENT = {"url": "https://hooks.popcorn.ai/ingest/tok", "status": 200, "response": {"ok": 1}}
+_HOOK = {"id": "00000000-0000-4000-8000-000000000002", "name": "Intake", "url": "u/1"}
 
 
 class TestWebhookSend:
@@ -724,7 +725,7 @@ class TestWebhookSend:
         args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
         with (
             patch("popcorn_cli.cli._get_client"),
-            patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1"),
+            patch("popcorn_core.operations.resolve_webhook", return_value=_HOOK),
             patch("popcorn_core.operations.send_webhook", return_value=_SENT) as send,
         ):
             dispatch(args)
@@ -734,7 +735,7 @@ class TestWebhookSend:
         args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
         with (
             patch("popcorn_cli.cli._get_client"),
-            patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1") as resolve,
+            patch("popcorn_core.operations.resolve_webhook", return_value=_HOOK) as resolve,
             patch("popcorn_core.operations.send_webhook", return_value=_SENT),
         ):
             dispatch(args)

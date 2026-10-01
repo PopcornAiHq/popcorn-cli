@@ -1,6 +1,6 @@
 """Materialize an app bundle onto disk, and the baseline that tracks it.
 
-`popcorn app checkout` writes the fork line's head (or, with `--version`, one
+`popcorn app checkout` writes the line's head (or, with `--version`, one
 named version of the line) as files plus a `.popcorn-app.json` baseline. The
 baseline is what `app publish` diffs against: it names the version the working copy came from, so a publish can be
 refused when the line has moved underneath it, and it names the channel so
