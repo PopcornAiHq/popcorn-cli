@@ -769,11 +769,25 @@ class TestProductLineHead:
         assert out["status_reads"] == 0
         assert out["reads"] == [None]
 
-    def test_a_failed_status_read_keeps_the_head_reads_answer(self, tmp_path):
+    def test_a_failed_status_read_is_said_not_passed_off_as_the_head(self, tmp_path):
         out = self._run(_args(directory=str(tmp_path / "out")), APIError("boom", status_code=500))
         assert out["reads"] == [None]
         assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert (
+            "Note: this is the version the channel runs — the product line's head "
+            "could not be checked (boom), so a newer one may exist." in out["rendered"]
+        )
+        assert out["data"]["head_error"] == "boom"
         assert "head_version_id" not in out["data"]
+
+    def test_a_server_without_the_status_route_checks_out_as_before(self, tmp_path):
+        """A 404 here is the route missing, not the channel: it was just read."""
+        out = self._run(
+            _args(directory=str(tmp_path / "out")), APIError("not found", status_code=404)
+        )
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert "Note:" not in out["rendered"]
+        assert "head_error" not in out["data"]
 
     def test_an_unreadable_head_is_named_rather_than_hidden(self, tmp_path):
         out = self._run(
@@ -787,6 +801,7 @@ class TestProductLineHead:
             "copy, and could not be read" in out["rendered"]
         )
         assert out["data"]["head_semver"] == "0.20.0"
+        assert "does not support" in out["data"]["head_error"]
 
     def test_status_against_that_checkout_is_in_sync(self, tmp_path):
         """`app status --dir` reads the head the same way, so the checkout
@@ -818,6 +833,29 @@ class TestProductLineHead:
         assert trees == [None, 20]
         assert (resp["version_id"], resp["semver"]) == (20, "0.20.0")
         assert hashes == {"manifest.yaml": sha}
+
+    @pytest.mark.parametrize("fails", ["status", "by_id"])
+    def test_status_raises_rather_than_comparing_against_the_binding(self, fails):
+        """Falling back to the channel's version would report a checkout of
+        the head as stale and send the author to re-check it out."""
+        from popcorn_cli.commands import app as mod
+
+        def _tree(client, conversation, ref="bound", version_id=None):
+            if version_id is not None:
+                raise PopcornError("this server does not support reading a specific version")
+            return {"app": "alerttracker", "kind": "product", "ref": "head", **_BOUND}
+
+        status = (
+            {"side_effect": APIError("boom", status_code=503)}
+            if fails == "status"
+            else {"return_value": self._status(_HEAD)}
+        )
+        with (
+            patch.object(operations, "get_channel_app_tree", _tree),
+            patch.object(operations, "get_channel_app_status", **status),
+            pytest.raises(PopcornError),
+        ):
+            mod._read_head(object(), _CONV)
 
 
 # ---------------------------------------------------------------------------

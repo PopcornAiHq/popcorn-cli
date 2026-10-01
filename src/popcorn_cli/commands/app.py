@@ -327,16 +327,23 @@ def _newer_product_head(client: Any, conversation: str, served: dict) -> dict | 
     id serves it.
 
     `{"version_id", "semver"}`, or None: for a fork line, whose head read
-    already served its head; when the status read fails or predates the head
+    already served its head; for a server without `/apps/status` (a 404 —
+    the channel was just read, so it runs a bundle) or without its head
     fields; and when the head is not newer — a channel can sit ahead of a
     track that was rolled back, and "the head" there would be a downgrade.
+
+    Any other failure of the status read is raised, not read as "no newer
+    head": swallowing it would hand back the channel's version as though it
+    were the head, which is the very report this exists to fix.
     """
     if served.get("kind") != "product":
         return None
     try:
         status = operations.get_channel_app_status(client, conversation)
-    except APIError:
-        return None
+    except APIError as exc:
+        if exc.status_code == 404:
+            return None
+        raise
     head_id = status.get("head_version_id")
     head_semver = str(status.get("head_semver") or "")
     if (
@@ -387,12 +394,19 @@ def _app_checkout(args: argparse.Namespace) -> None:
 
     head: dict | None = None
     # A product line's head when the head read did not serve it, and why not
-    # if it could not be read either; see `_newer_product_head`.
+    # if it could not be read either; see `_newer_product_head`. `head_error`
+    # is the case where it could not even be asked which version that is.
     product_head: dict | None = None
     unread_head: str | None = None
+    head_error: str | None = None
     if version_id is None:
         resp = operations.get_channel_app_files(client, conv_id)
-        product_head = _newer_product_head(client, conv_id, resp)
+        try:
+            product_head = _newer_product_head(client, conv_id, resp)
+        except PopcornError as exc:
+            # Not fatal: the channel's own version is still a true read of
+            # what it runs. Said, rather than passed off as the head.
+            head_error = str(exc)
         if product_head is not None:
             try:
                 resp = operations.get_channel_app_files(
@@ -504,6 +518,8 @@ def _app_checkout(args: argparse.Namespace) -> None:
     elif product_head is not None:
         data["head_version_id"] = product_head["version_id"]
         data["head_semver"] = product_head["semver"]
+    if unread_head is not None or head_error is not None:
+        data["head_error"] = unread_head or head_error
     if forked is not None:
         data["fork"] = forked
     lines = [
@@ -530,6 +546,12 @@ def _app_checkout(args: argparse.Namespace) -> None:
             f"Note: the product line's head is {product_head['semver']} (version "
             f"{product_head['version_id']}), newer than this copy, and could not be "
             f"read ({unread_head}) — so this is the version the channel runs."
+        )
+    elif head_error is not None:
+        lines.append(
+            f"Note: this is the version the channel runs — the product line's head "
+            f"could not be checked ({head_error}), so a newer one may exist. "
+            f"'popcorn app status --channel {args.channel}' shows it."
         )
     elif baseline.kind == "product" and channel_id != baseline.base_version_id:
         lines.append(
@@ -624,17 +646,14 @@ def _read_head(client, conversation: str) -> tuple[dict, dict[str, str]]:
     tree = operations.get_channel_app_tree(client, conversation, ref="head")
     # A product line's head is read by id, exactly as `checkout` reads it —
     # otherwise a checkout of that head reads here as one the line has moved
-    # back past.
+    # back past. A failure to learn or read it is raised rather than falling
+    # back: compared against the channel's version instead, that checkout
+    # would be reported stale, with the advice to re-check it out.
     head_id: int | None = None
     product_head = _newer_product_head(client, conversation, tree)
     if product_head is not None:
-        try:
-            tree = operations.get_channel_app_tree(
-                client, conversation, version_id=product_head["version_id"]
-            )
-            head_id = product_head["version_id"]
-        except PopcornError:
-            pass
+        head_id = product_head["version_id"]
+        tree = operations.get_channel_app_tree(client, conversation, version_id=head_id)
     hashes = served_hashes(tree)
     if hashes is not None:
         return tree, hashes
