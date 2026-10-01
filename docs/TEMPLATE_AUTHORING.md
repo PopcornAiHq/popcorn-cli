@@ -24,5 +24,5 @@ The tools remain the authority over the guide wherever they disagree:
 ```bash
 popcorn flow activities --summary          # what can I call?
 popcorn flow validate my_flow.yaml         # is this reference real?
-popcorn template check ./mytemplate        # does the bundle hold together?
+popcorn app validate ./mytemplate        # does the bundle hold together?
 ```

@@ -738,67 +738,58 @@ def test_webhook_naming_an_unknown_flow(tmp_path):
     assert "webhook-unknown-flow" in codes(write_bundle(tmp_path / "b", manifest=manifest))
 
 
-def test_concat_column_must_be_a_string(tmp_path):
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
-    for col in manifest["tables"]["widgets"]["columns"]:
-        if col["name"] == "Seen At":
-            col["type"] = "datetime"
-    assert "concat-requires-string" in codes(write_bundle(tmp_path / "b", manifest=manifest))
+def _widgets_column(manifest: dict, name: str) -> dict:
+    return next(c for c in manifest["tables"]["widgets"]["columns"] if c["name"] == name)
 
 
-def test_merge_key_must_be_string_typed(tmp_path):
-    """A non-string merge key silently never matches the text-index probe."""
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
-    for col in manifest["tables"]["widgets"]["columns"]:
-        if col["name"] == "Fingerprint":
-            col["type"] = "number"
-    assert "merge-key-not-string" in codes(write_bundle(tmp_path / "b", manifest=manifest))
+def _concat_on_datetime(manifest: dict) -> None:
+    _widgets_column(manifest, "Seen At")["type"] = "datetime"
 
 
-def test_merge_key_must_be_indexed(tmp_path):
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
-    for col in manifest["tables"]["widgets"]["columns"]:
-        if col["name"] == "Fingerprint":
-            col.pop("unique")
-    assert "merge-key-not-indexed" in codes(write_bundle(tmp_path / "b", manifest=manifest))
+def _merge_key_number(manifest: dict) -> None:
+    _widgets_column(manifest, "Fingerprint")["type"] = "number"
 
 
-def test_merge_key_on_a_computed_column_is_indexed(tmp_path):
-    """A computed column is projected into the record index by definition.
-
-    The store accepts `computed` wherever it accepts `unique` / `index` for a
-    merge key (`SchemaDef._validate_merge_key`), and `project_record` always
-    emits an index row for one. Demanding `unique` here would be a false
-    positive against every bundle keyed on a computed tuple — and taking the
-    advice would turn the merge grain into a uniqueness constraint.
-    """
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
-    table = manifest["tables"]["widgets"]
-    for col in table["columns"]:
-        if col["name"] == "Fingerprint":
-            col.pop("unique")
-            col["computed"] = {"fn": "tuple", "from": ["Title", "Status"]}
-    assert "merge-key-not-indexed" not in codes(write_bundle(tmp_path / "b", manifest=manifest))
+def _merge_key_unindexed(manifest: dict) -> None:
+    _widgets_column(manifest, "Fingerprint").pop("unique")
 
 
-def test_merge_key_on_an_index_true_column_is_indexed(tmp_path):
-    """`index: true` is the store's spelling — the schema has no `indexed` key.
-
-    A plain index satisfies the OR-probe just as `unique` does; the difference
-    is whether duplicates are refused, which the merge grain does not need.
-    """
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
-    for col in manifest["tables"]["widgets"]["columns"]:
-        if col["name"] == "Fingerprint":
-            col.pop("unique")
-            col["index"] = True
-    assert "merge-key-not-indexed" not in codes(write_bundle(tmp_path / "b", manifest=manifest))
-
-
-def test_merge_key_naming_an_unknown_column(tmp_path):
-    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
+def _merge_key_unknown(manifest: dict) -> None:
     manifest["tables"]["widgets"]["merge_key"]["any_of"] = ["Nope"]
-    assert "merge-key-unknown-column" in codes(write_bundle(tmp_path / "b", manifest=manifest))
+
+
+def _column_without_name(manifest: dict) -> None:
+    manifest["tables"]["widgets"]["columns"].append({"type": "string"})
+
+
+@pytest.mark.parametrize(
+    "defect",
+    [
+        _concat_on_datetime,
+        _merge_key_number,
+        _merge_key_unindexed,
+        _merge_key_unknown,
+        _column_without_name,
+    ],
+)
+def test_table_rules_are_left_to_the_server(tmp_path, defect):
+    """The store's table rules are the server's to report, not this checker's.
+
+    `app validate` asks the server, which runs publish's own check; the copies
+    that used to live here had already drifted from it once (a computed merge
+    key was refused here and accepted there). Offline, a table the store would
+    refuse produces no table finding at all — it is never guessed at.
+    """
+    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
+    defect(manifest)
+    found = codes(write_bundle(tmp_path / "b", manifest=manifest))
+    assert not found & {
+        "concat-requires-string",
+        "merge-key-not-string",
+        "merge-key-not-indexed",
+        "merge-key-unknown-column",
+        "column-without-name",
+    }
 
 
 def test_runtime_scalar_declared_in_manifest_warns(tmp_path):

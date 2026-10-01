@@ -45,7 +45,7 @@ popcorn webhook list '#deploys'                      # copy the URL
 
 **It is an untyped bundle** — it declares no `app_type`, so installing it
 *clears* any app_type already on the channel. Use a dedicated channel, never
-one running a real app. `template check` warns about this offline.
+one running a real app. `app validate` warns about this offline.
 
 Then point a GitHub webhook at the URL with the **Deployment statuses** event
 selected (repo → Settings → Webhooks).
@@ -78,8 +78,8 @@ curl -X POST <webhook-url> -H 'Content-Type: application/json' \
 | `fixtures/*.json` | captured payloads, including one that is not a deployment at all |
 
 Fixtures are `.json` on purpose. A `.yaml` anywhere in the bundle would be
-installed as a flow — the importer keys entries by basename. `popcorn template
-check` fails the bundle if one slips in.
+installed as a flow — the importer keys entries by basename. `popcorn app
+validate` fails the bundle if one slips in.
 
 ## What the fixtures are for
 

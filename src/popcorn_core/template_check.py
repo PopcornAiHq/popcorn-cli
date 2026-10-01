@@ -43,6 +43,20 @@ rule this module used to enforce ("exactly one `==`/`!=`, no boolean operators")
 described a grammar the engine never had, and rejected 55 valid clauses across
 the five templates the platform ships.
 
+What it does not check is whether a publish would be ACCEPTED, and in
+particular whether the agent store would take the manifest's `tables:` — a
+column type, a `format` that does not suit its type, `merge: concat` on a
+non-string, a `merge_key` naming a missing or unindexed column, two table
+names that differ only in case. Those rules are the server's: several span
+fields of a table, so no exported schema can carry them, and a copy here
+would drift the way the reference grammar once did. So this module stays
+offline and `popcorn app validate` adds the rest. In a fork checkout, when
+logged in, it sends the edits to the server, which runs publish's own checks
+without publishing and reports each refusal; `BundleReport.add_server_findings`
+records them as `publish-refused` errors. Outside a fork checkout, or logged
+out, or with the server unreachable, it says the server checks were skipped and
+why (`BundleReport.skip_server`), and the offline findings stand alone.
+
 Every finding is a `Finding(level, code, where, message)`. The codes are a
 stable contract: CI and agents branch on them, so rename one only with a
 version bump.
@@ -140,12 +154,18 @@ _OUTPUT_SCHEMA_ARGS: dict[str, str] = {
 
 @dataclass(frozen=True)
 class Finding:
-    """One structural defect. `where` is bundle-relative, or 'bundle'."""
+    """One structural defect. `where` is bundle-relative, or 'bundle'.
+
+    `rule` is set only on a finding the server reported (code
+    `publish-refused`): the name of the server check that refused, which is
+    the server's vocabulary and may grow without a release of this CLI.
+    """
 
     level: str
     code: str
     where: str
     message: str
+    rule: str | None = None
 
     def __str__(self) -> str:
         return f"{self.level} {self.code} [{self.where}]: {self.message}"
@@ -218,6 +238,10 @@ class BundleReport:
     fixtures: list[str] = field(default_factory=list)
     manifest: dict[str, Any] | None = None
     findings: list[Finding] = field(default_factory=list)
+    # Whether the server's publish checks ran: {"status": "ran"} or
+    # {"status": "skipped", "reason": ...}. None when nobody asked — a caller
+    # of `check_bundle` alone gets the offline checks and nothing else.
+    server: dict[str, Any] | None = None
 
     @property
     def errors(self) -> list[Finding]:
@@ -238,13 +262,48 @@ class BundleReport:
             "flows": [{"name": f.name, "file": f.path} for f in self.flows],
             "fixtures": self.fixtures,
             "has_manifest": self.manifest is not None,
-            "findings": [
-                {"level": f.level, "code": f.code, "where": f.where, "message": f.message}
-                for f in self.findings
-            ],
+            "findings": [_finding_dict(f) for f in self.findings],
             "error_count": len(self.errors),
             "warning_count": len(self.warnings),
+            **({"server": self.server} if self.server is not None else {}),
         }
+
+    def add_server_findings(self, findings: list[Any]) -> None:
+        """Record the server's publish checks as having run, with what they found.
+
+        Each server finding becomes an error with code `publish-refused`: the
+        server answers whether a publish would be accepted, so everything it
+        reports is a refusal. A finding about a table is located at that
+        table in the manifest; anything else at `bundle`, since the server
+        does not report a file for it.
+        """
+        for raw in findings:
+            if not isinstance(raw, dict):
+                continue
+            table = raw.get("table")
+            where = f"manifest.yaml:tables.{table}" if table else "bundle"
+            rule = raw.get("rule")
+            self.findings.append(
+                Finding(
+                    ERROR,
+                    "publish-refused",
+                    where,
+                    str(raw.get("message") or "the server refused this bundle"),
+                    rule=str(rule) if rule else None,
+                )
+            )
+        self.server = {"status": "ran"}
+
+    def skip_server(self, reason: str) -> None:
+        """Record that the server's publish checks did not run, and why."""
+        self.server = {"status": "skipped", "reason": reason}
+
+
+def _finding_dict(f: Finding) -> dict[str, Any]:
+    out = {"level": f.level, "code": f.code, "where": f.where, "message": f.message}
+    if f.rule is not None:
+        out["rule"] = f.rule
+    return out
 
 
 class _Checker:
@@ -446,7 +505,6 @@ class _Checker:
         self.report.manifest = doc
         if not doc.get("app_type"):
             self._report_missing_app_type()
-        self._check_tables(doc)
 
     def _report_missing_app_type(self) -> None:
         """A manifest with no `app_type:` — an error in a checkout, else a warning.
@@ -605,72 +663,6 @@ class _Checker:
                     cols[col_name] = col
             out[str(name)] = cols
         return out
-
-    def _check_tables(self, manifest: dict[str, Any]) -> None:
-        tables = manifest.get("tables")
-        if not isinstance(tables, dict):
-            return
-        for table_name, table in tables.items():
-            where = f"manifest.yaml:tables.{table_name}"
-            cols = {}
-            for col in self._columns(table):
-                name = col.get("name")
-                if not isinstance(name, str):
-                    self.err("column-without-name", where, "A column declaration has no `name`.")
-                    continue
-                cols[name] = col
-                if col.get("merge") == "concat" and col.get("type") != "string":
-                    self.err(
-                        "concat-requires-string",
-                        where,
-                        f"Column '{name}' is merge:concat but type:{col.get('type')}. "
-                        "Concat appends to a string; it cannot accumulate onto another type.",
-                    )
-            self._check_merge_key(table, cols, where)
-
-    def _check_merge_key(self, table: Any, cols: dict[str, dict[str, Any]], where: str) -> None:
-        """merge_key columns must be indexed and string-typed.
-
-        The OR-probe behind `any_of` only queries the text index, so a
-        non-string or unindexed merge key never matches and every upsert
-        inserts a new row instead of merging.
-
-        Three spellings satisfy "indexed", matching what the store accepts in
-        `SchemaDef._validate_merge_key`: `unique`, `index`, or `computed`. A
-        computed column is projected into the record index by definition —
-        `project_record` always emits a row for it — so it needs no flag of
-        its own, and demanding `unique` on one would change the merge grain
-        into a uniqueness constraint rather than fixing anything.
-        """
-        merge_key = table.get("merge_key") if isinstance(table, dict) else None
-        if not isinstance(merge_key, dict):
-            return
-        any_of = merge_key.get("any_of")
-        if not isinstance(any_of, list):
-            return
-        for name in any_of:
-            col = cols.get(str(name))
-            if col is None:
-                self.err(
-                    "merge-key-unknown-column",
-                    where,
-                    f"merge_key.any_of names '{name}', which is not a declared column.",
-                )
-                continue
-            if col.get("type") != "string":
-                self.err(
-                    "merge-key-not-string",
-                    where,
-                    f"merge_key column '{name}' is type:{col.get('type')}. The OR-probe only "
-                    "queries the text index, so a non-string key silently never matches.",
-                )
-            if not (col.get("unique") or col.get("index") or col.get("computed")):
-                self.err(
-                    "merge-key-not-indexed",
-                    where,
-                    f"merge_key column '{name}' is not indexed. Add `unique: true` or "
-                    "`index: true` — an unindexed merge key silently never matches.",
-                )
 
     def _check_manifest_references(self) -> None:
         """Schedules and webhooks address flows by `name:`, not by filename."""

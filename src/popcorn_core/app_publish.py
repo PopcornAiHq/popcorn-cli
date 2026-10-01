@@ -19,7 +19,7 @@ Two of them are worth naming:
   `unrecognized_tree_paths` — the server's refusal — applies to a tree
   already sent, which is never what this builds.
 - `require_bump` is the ordering rule, not the parser: `parse_semver` lives in
-  `app_checkout` beside the baseline it compares against, so `template check`
+  `app_checkout` beside the baseline it compares against, so `app validate`
   can predict this refusal offline without importing the publish path.
 """
 
@@ -233,7 +233,7 @@ def collect_tree(directory: Path) -> LocalTree:
 def ignored_paths(directory: Path) -> list[str]:
     """Just the paths the installer would not read, without reading any file.
 
-    `template check` reports these, and it must not fail where `collect_tree`
+    `app validate` reports these, and it must not fail where `collect_tree`
     would: that reads every published file, so a non-UTF-8 entry at a
     recognised path raises. A checker that aborts instead of reporting is
     worse than one that misses, hence the split.

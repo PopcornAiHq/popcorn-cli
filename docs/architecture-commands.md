@@ -98,7 +98,7 @@ Two arguments use it:
   positional could not be told apart from the ones after it.
 - **The directory.** Declared in the registry as `Argument("directory", …,
   positional=True, flag_alias="--dir")`, on the `app` commands and
-  `template check`.
+  `app validate`.
 
 Declaring a bare `conversation`/`channel`/`directory` positional instead
 re-splits the surface, and `tests/test_parser.py` — `TestChannelArgument` and

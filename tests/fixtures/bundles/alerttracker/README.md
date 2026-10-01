@@ -26,7 +26,7 @@ popcorn webhook list '#alerts'                      # copy the URL
 
 **It is an untyped bundle** — it declares no `app_type`, so installing it
 *clears* any app_type already on the channel. Use a dedicated channel, never
-one running a real app. `template check` warns about this offline.
+one running a real app. `app validate` warns about this offline.
 
 ## Try it without a producer
 

@@ -117,18 +117,28 @@ vs one producer extracting every field by path), so don't merge them or make
 `deploywatch` multi-producer. `examples/` holds only what can't be fetched from
 a server; see `examples/README.md`.
 
-### `popcorn template check`
+### `popcorn app validate`
 
-`src/popcorn_core/template_check.py` is an offline structural checker. Its
-module docstring explains the scope; the rules to keep when changing it:
+`popcorn template check` is its old name, kept as a hidden alias (`Command.hidden`
+in the registry) because callers outside this repo still use it.
+
+`src/popcorn_core/template_check.py` is the offline structural checker behind
+it; `app validate` adds the server's publish checks in a fork checkout when
+logged in, and says when it skipped them. The module docstring explains the
+scope; the rules to keep when changing it:
 
 - **Grammar, not catalog.** It models the DSL's shape (step actions, block
   scoping, `$trigger` keys, `collect:`) but never what an activity takes — which
   args carry column names or a result schema comes from the served
   `flow_rules.ACTIVITY_ROLES`. It deliberately doesn't model `when:` grammar; a
   near-miss reimplementation once rejected dozens of valid clauses.
-- **It stays offline**: imports only stdlib, `flow_rules`, and `app_checkout`,
-  so `--strict` gives identical findings on every machine.
+- **The checker stays offline**: imports only stdlib, `flow_rules`, and
+  `app_checkout`, so its findings are identical on every machine. The server
+  call lives in the command (`commands/app.py — _run_server_checks`), and its
+  findings carry code `publish-refused`.
+- **Never copy a server rule into it.** A rule the server enforces at publish
+  (the manifest's table rules, for one) is reported by the server call;
+  restating it here is how the two drift.
 - **Finding `code` values are a stable contract** (CI and agents branch on
   them); renaming one is a minor bump.
 

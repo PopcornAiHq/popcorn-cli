@@ -91,7 +91,7 @@ class TestDerivedSurfaces:
         schema = json.loads(capsys.readouterr().out)
         assert schema["schema_version"] == 1
         by_name = {c["name"]: c for c in schema["commands"]}
-        for cmd in registry.COMMANDS:
+        for cmd in registry.visible():
             assert cmd.name in by_name, f"{cmd.name} missing from `popcorn commands --json`"
             emitted = by_name[cmd.name]
             assert emitted["category"] == cmd.category
@@ -104,7 +104,7 @@ class TestDerivedSurfaces:
         for shell in ("bash", "zsh"):
             cmd_completion(argparse.Namespace(shell=shell))
             out = capsys.readouterr().out
-            for cmd in registry.COMMANDS:
+            for cmd in registry.visible():
                 assert cmd.name in out, f"{cmd.name} missing from {shell} completion"
                 for sub in cmd.subcommands:
                     assert sub.name in out, f"{cmd.name} {sub.name} missing from {shell}"
@@ -114,7 +114,7 @@ class TestDerivedSurfaces:
         # registry and non-registry families together under prose headings).
         # This guard makes forgetting it a test failure, not a silent gap.
         epilog = parser.epilog or ""
-        for cmd in registry.COMMANDS:
+        for cmd in registry.visible():
             assert f"\n  {cmd.name}" in epilog, f"{cmd.name} missing from the --help epilog"
 
     def test_registry_families_are_fuzzy_match_candidates(self, parser):
@@ -122,7 +122,7 @@ class TestDerivedSurfaces:
         # typed, which the parser reads off its own subcommand positional —
         # so a family missing from there gets no "Did you mean".
         slot = parser._command_slot()
-        for cmd in registry.COMMANDS:
+        for cmd in registry.visible():
             assert cmd.name in slot.choices
 
 
@@ -141,7 +141,9 @@ class TestHelpEpilogMatchesTheParser:
     """
 
     # `popcorn help` is an alias for `popcorn --help`, which is the listing.
-    _UNLISTED: ClassVar[set[str]] = {"help"}
+    # `help` is a hand-written family with no listing of its own; a hidden
+    # registry family parses but is deliberately listed nowhere.
+    _UNLISTED: ClassVar[set[str]] = {"help", *registry.hidden_names()}
 
     @staticmethod
     def _children(p: argparse.ArgumentParser) -> dict[str, argparse.ArgumentParser]:
@@ -913,7 +915,7 @@ class TestFlowValidate:
     ):
         (tmp_path / "a.yaml").write_text("name: flow_a\n")
         (tmp_path / "b.yml").write_text("name: flow_b\n")
-        # Reserved: a manifest is not a flow; `template check` owns it.
+        # Reserved: a manifest is not a flow; `app validate` owns it.
         (tmp_path / "manifest.yaml").write_text("name: manifest_should_be_skipped\n")
         (tmp_path / "config.yaml").write_text("name: config_should_be_skipped\n")
         (tmp_path / "strings.yaml").write_text("name: strings_should_be_skipped\n")

@@ -2069,6 +2069,71 @@
   },
   {
     "argv": [
+      "app",
+      "validate",
+      "--dir",
+      "#ops"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "command": "app",
+      "debug": false,
+      "directory": "#ops",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "validate",
+      "x"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "command": "app",
+      "debug": false,
+      "directory": "x",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "validate",
+      "x",
+      "--strict"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "command": "app",
+      "debug": false,
+      "directory": "x",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": true,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
       "flow",
       "activities"
     ],
