@@ -174,6 +174,13 @@ _FIELDS: tuple[_Field, ...] = (
         "The app's user-facing UI copy, locale-sectioned. Reserved.",
     ),
     _Field(
+        "PROCESS_FILENAME",
+        ("bundle", "process_filename"),
+        "The process: tier's state-graph document, read from the bundle root. Reserved:\n"
+        "never installed as a flow, though it carries a flow suffix. Publish requires it\n"
+        "when the manifest declares `process:` and refuses it when the manifest doesn't.",
+    ),
+    _Field(
         "FLOW_SUFFIXES",
         ("bundle", "flow_suffixes"),
         "Extensions that make a bundle entry a candidate flow document. Anything else\n"

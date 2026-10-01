@@ -1369,6 +1369,15 @@ def test_a_yaml_under_a_block_is_not_a_flow(tmp_path):
     assert check_bundle(root).findings == []
 
 
+def test_a_root_process_document_is_not_a_flow(tmp_path):
+    """The process: tier keeps its state graph in a root `process.yaml`.
+    Read as a flow it drew `yaml-is-not-a-flow` on a bundle publish accepts.
+    Whether the document fits the manifest is publish's check, not this one."""
+    root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
+    (root / "process.yaml").write_text(yaml.safe_dump({"table": "tracker", "machines": {}}))
+    assert check_bundle(root).findings == []
+
+
 def test_a_file_directly_under_code_is_an_error(tmp_path):
     """Code ships one directory per block, so a loose file has no block to
     belong to and publish refuses the whole tree."""
