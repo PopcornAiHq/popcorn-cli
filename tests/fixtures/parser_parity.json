@@ -1711,6 +1711,7 @@
       "#ops"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "#ops",
@@ -2076,6 +2077,7 @@
     ],
     "namespace": {
       "app_command": "validate",
+      "channel": null,
       "command": "app",
       "debug": false,
       "directory": "#ops",
@@ -2097,6 +2099,7 @@
     ],
     "namespace": {
       "app_command": "validate",
+      "channel": null,
       "command": "app",
       "debug": false,
       "directory": "x",
@@ -2119,6 +2122,7 @@
     ],
     "namespace": {
       "app_command": "validate",
+      "channel": null,
       "command": "app",
       "debug": false,
       "directory": "x",
@@ -3449,6 +3453,7 @@
       "x"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "x",
@@ -3471,6 +3476,7 @@
       "--strict"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "x",

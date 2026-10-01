@@ -1498,7 +1498,8 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
     The server runs publish's own checks on the same request `app publish`
     would send, so its rules — the manifest's tables above all — are never
     copied here. It needs what a publish needs: a fork checkout of the line's
-    head, with edits, and a login. Anything short of that is a skip with the
+    head, with edits, a channel on that line (which authorizes the call), and
+    a login. Anything short of that is a skip with the
     reason, never a failure and never a guess: the offline findings stand.
     """
     from ..cli import _get_client
@@ -1513,8 +1514,14 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
     if baseline.historical:
         report.skip_server("a past version — publish is based only on the line's head")
         return
-    if not baseline.conversation_id:
-        report.skip_server(f"{BASELINE_FILE} records no channel — re-run 'popcorn app checkout'")
+    # The channel authorizes the call, as for `flow validate`: the flag, else
+    # the baseline's. The server also requires it to run the checkout's line.
+    conversation = getattr(args, "channel", None) or baseline.conversation_id
+    if not conversation:
+        report.skip_server(
+            f"no channel — {BASELINE_FILE} records none; pass --channel or "
+            "re-run 'popcorn app checkout'"
+        )
         return
     try:
         client = _get_client(args)
@@ -1522,7 +1529,7 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
         report.skip_server("not logged in")
         return
     try:
-        _, base_hashes = _fetch_base(client, baseline.conversation_id, baseline)
+        _, base_hashes = _fetch_base(client, str(conversation), baseline)
     except APIError as exc:
         report.skip_server(f"could not read the fork line: {exc}")
         return
@@ -1540,7 +1547,7 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
         return
     try:
         result = operations.validate_app_bundle(
-            client, publish_payload(baseline.base_version_id, diff, None)
+            client, str(conversation), publish_payload(baseline.base_version_id, diff, None)
         )
     except AuthError:
         report.skip_server("not logged in")
@@ -1585,6 +1592,11 @@ VALIDATE_ARGUMENTS = [
         "strict",
         "Exit non-zero on warnings as well as errors",
         action="store_true",
+    ),
+    Argument(
+        "channel",
+        "Channel the server checks run against (default: the checkout's "
+        "baseline); it must run the checkout's fork line",
     ),
 ]
 

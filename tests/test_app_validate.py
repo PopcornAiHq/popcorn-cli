@@ -77,6 +77,7 @@ def _run(
     monkeypatch.setenv("POPCORN_NO_UPDATE_CHECK", "1")
     monkeypatch.setattr(sys, "argv", ["popcorn", *argv])
     calls: list[dict] = []
+    channels: list[str] = []
 
     def get_client(args):
         if isinstance(client, Exception):
@@ -84,12 +85,14 @@ def _run(
         return client
 
     def fetch_base(c, conversation, baseline):
+        channels.append(conversation)
         if isinstance(base, Exception):
             raise base
         return {}, base
 
-    def validate(c, payload):
+    def validate(c, conversation, payload):
         calls.append(payload)
+        channels.append(conversation)
         if validate_error is not None:
             raise validate_error
         return {"ok": not findings, "findings": findings or []}
@@ -105,7 +108,7 @@ def _run(
         except SystemExit as exc:
             code = int(exc.code or 0)
     out = capsys.readouterr()
-    return {"code": code, "out": out.out, "err": out.err, "calls": calls}
+    return {"code": code, "out": out.out, "err": out.err, "calls": calls, "channels": channels}
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +135,8 @@ def test_server_findings_are_rendered_and_fail_the_check(tmp_path, monkeypatch, 
     assert "2 errors, 0 warnings" in out
     # Exactly the body `app publish` would send: the edit over the baseline.
     (payload,) = result["calls"]
+    # The channel authorizes the call; by default the baseline's.
+    assert result["channels"] == [_CONV, _CONV]
     assert payload["base_version_id"] == 41
     assert list(payload["files"]) == ["manifest.yaml"]
     assert payload["deletes"] == []
@@ -217,6 +222,37 @@ def test_a_skipped_server_check_is_said_and_does_not_fail(
     assert result["code"] == 0, result["out"] + result["err"]
     if setup != "unreachable":
         assert result["calls"] == []
+
+
+def test_channel_flag_overrides_the_baseline(tmp_path, monkeypatch, capsys):
+    root = _checkout(tmp_path)
+    result = _run(
+        monkeypatch,
+        capsys,
+        ["app", "validate", str(root), "--channel", "#example-ops"],
+        findings=[],
+        base=_base_hashes(root),
+    )
+    assert result["code"] == 0
+    assert result["channels"] == ["#example-ops", "#example-ops"]
+
+
+def test_no_channel_anywhere_skips_the_server_checks(tmp_path, monkeypatch, capsys):
+    """A baseline that records no channel, and no --channel: say so, like
+    logged out, and never call the server without its authorization."""
+    root = _checkout(tmp_path)
+    write_baseline_file(root, "1.0.0", kind="fork")
+    result = _run(
+        monkeypatch,
+        capsys,
+        ["app", "validate", str(root), "--strict"],
+        findings=[_TABLE_FINDING],
+        base=_base_hashes(root),
+    )
+    assert result["code"] == 0, result["out"]
+    assert "server checks: skipped (no channel" in result["out"]
+    assert "pass --channel" in result["out"]
+    assert result["calls"] == [] and result["channels"] == []
 
 
 def test_offline_errors_still_fail_when_the_server_is_skipped(tmp_path, monkeypatch, capsys):

@@ -1544,17 +1544,25 @@ def publish_channel_app(
     return client.post("/api/apps/publish", payload, {"conversation_id": conv_id})
 
 
-def validate_app_bundle(client: APIClient, payload: dict[str, Any]) -> dict[str, Any]:
+def validate_app_bundle(
+    client: APIClient, conversation: str, payload: dict[str, Any]
+) -> dict[str, Any]:
     """Ask whether a publish of `payload` would be accepted, without publishing.
 
     `payload` is exactly what `publish_channel_app` sends. The server runs
     publish's own checks and answers `{"ok": bool, "findings": [...]}`, each
     finding a `message` plus, where the check knows them, `rule`, `table` and
     `column`. Findings are a 200; a request publish would reject before
-    reading the bundle (an empty diff, a base this workspace cannot see) keeps
-    publish's status. No channel is named: nothing is installed.
+    reading the bundle (an empty diff, a base this workspace cannot see)
+    keeps publish's status.
+
+    `conversation_id` is required as authorization, as for `flow validate`:
+    a workspace admin, or a member of the channel. The channel must run the
+    fork line `base_version_id` is on, or the server answers 409. Nothing is
+    installed on it.
     """
-    return client.post("/api/apps/validate", payload)
+    conv_id = resolve_conversation(client, conversation)
+    return client.post("/api/apps/validate", payload, {"conversation_id": conv_id})
 
 
 def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
