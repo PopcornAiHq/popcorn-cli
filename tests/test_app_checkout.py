@@ -159,6 +159,8 @@ class TestAgentGuide:
         """The failure it exists for: a good edit that was never published."""
         text = write_agent_guide(tmp_path).read_text()
         assert "popcorn app validate" in text
+        # The old name still runs, but a checkout must teach the current one.
+        assert "template check" not in text
         assert "popcorn app publish" in text
 
     def test_carries_the_format_rule(self, tmp_path):

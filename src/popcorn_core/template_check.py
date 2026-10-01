@@ -389,7 +389,7 @@ class _Checker:
         reader addresses a block file by its full path under `code/<block>/`,
         and the importer installs flows and seeds `prompts/`/`templates/` — a
         `.py` is not an entry it keys at all. Modelling it as a collision made
-        `template check` reject every bundle with two Python blocks, since the
+        `app validate` reject every bundle with two Python blocks, since the
         runner's convention requires each of them to carry `main.py`.
         """
         rel = path.relative_to(self.dir)
@@ -623,7 +623,7 @@ class _Checker:
         """What the manifest's `changelog:` does for the line this checkout is on.
 
         The two lines answer differently, and saying the fork answer on a
-        product checkout (or the reverse) is how `template check` ends up
+        product checkout (or the reverse) is how `app validate` ends up
         telling an author to maintain a field the very next command calls
         inert. On a fork line — every `popcorn app publish` — the server
         records the REQUEST's changelog and never reads the manifest, so the
@@ -786,7 +786,7 @@ class _Checker:
         try:
             import yaml
         except ImportError as exc:  # pragma: no cover - dependency is declared
-            raise RuntimeError("template checks require PyYAML") from exc
+            raise RuntimeError("popcorn app validate requires PyYAML") from exc
         rel = str(path.relative_to(self.dir))
         try:
             return yaml.safe_load(path.read_text())
