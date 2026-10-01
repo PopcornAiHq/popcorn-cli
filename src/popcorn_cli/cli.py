@@ -145,6 +145,8 @@ from .formatting import (
     fmt_message,
     fmt_user,
     format_timestamp,
+    message_parts,
+    part_text,
     set_color,
 )
 
@@ -1065,16 +1067,14 @@ def cmd_list_threads(args: argparse.Namespace) -> None:
         return
 
     for t in threads:
-        parent = t.get("parent_message", {})
-        author = parent.get("author", {})
+        parent = t.get("parent_message") or {}
+        author = parent.get("author") or {}
         name = author.get("display_name") or author.get("username") or "?"
         reply_count = t.get("reply_count", 0)
         last_reply = t.get("last_reply_at", "")
-        preview = ""
-        for part in parent.get("content", []):
-            if part.get("type") == "text":
-                preview = part.get("text", "")[:80]
-                break
+        # First text part, on one line: an agent's reply is multi-line markdown.
+        first = next((text for text in map(part_text, message_parts(parent)) if text), "")
+        preview = " ".join(first.split())[:80]
         print(
             f"  {parent.get('id', '?')}  {reply_count} replies  "
             f"last: {format_timestamp(last_reply)}  {name}: {preview}"
