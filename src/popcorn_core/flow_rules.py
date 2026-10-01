@@ -6,7 +6,7 @@ by `scripts/sync_flow_rules.py`; run `make sync-rules` to refresh it and
 checker disagree with the platform silently, which is the failure this module
 exists to end.
 
-`popcorn template check` reads its rules from here and nowhere else, which is
+`popcorn app validate` reads its rules from here and nowhere else, which is
 what keeps it offline: no server, no channel, no credentials, and the same
 findings for a bundle on every machine. The trade is that this can go stale —
 but staleness is now something a command can detect, where a hand-copied

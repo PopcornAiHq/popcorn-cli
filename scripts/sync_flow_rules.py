@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Regenerate `popcorn_core.flow_rules` from `GET /customer-flows/schema`.
 
-`template check` needs the DSL's rules — the step union, the reference
+`app validate` needs the DSL's rules — the step union, the reference
 grammar, the `$trigger` key set, the importer's filename and size rules — and
 it needs them with no server and no channel, because that offline contract is
 the whole reason the command exists beside `flow validate`. Before this script
 it got them by hand-copying the values out of backend source, which is a copy
 that drifts in silence: the reference grammar had been wrong for long enough
-that `template check` passed bundles the interpreter rejects.
+that `app validate` passed bundles the interpreter rejects.
 
 So the values are still local, but no longer authored. This fetches the
 endpoint that serves them and writes `src/popcorn_core/flow_rules.py`; the
 checker imports only that module and stays import-pure. A rule change then
 arrives as a reviewable diff in a PR instead of as a divergence nobody sees,
 and every machine gets identical findings for a bundle — which is what
-`template check --strict` in CI has to guarantee and what fetching at check
+`app validate --strict` in CI has to guarantee and what fetching at check
 time would have taken away.
 
     make sync-rules     # fetch and rewrite the module
@@ -273,7 +273,7 @@ by `scripts/sync_flow_rules.py`; run `make sync-rules` to refresh it and
 checker disagree with the platform silently, which is the failure this module
 exists to end.
 
-`popcorn template check` reads its rules from here and nowhere else, which is
+`popcorn app validate` reads its rules from here and nowhere else, which is
 what keeps it offline: no server, no channel, no credentials, and the same
 findings for a bundle on every machine. The trade is that this can go stale —
 but staleness is now something a command can detect, where a hand-copied
@@ -327,7 +327,7 @@ def _lit(value: Any, depth: int = 0) -> str:
     raise TypeError(f"no literal for {type(value).__name__}")
 
 
-# The role vocabulary `template check` knows how to apply. Anything else is a
+# The role vocabulary `app validate` knows how to apply. Anything else is a
 # refusal, not a pass-through: a new `holds` or `side` would otherwise reach the
 # checker as a value it silently matches against nothing.
 ROLE_KEYS = frozenset({"writes_rows", "reads_rows", "column_args", "output_schema_arg"})
@@ -345,7 +345,7 @@ def _check_roles(roles: Any) -> None:
             got = sorted(role) if isinstance(role, dict) else type(role).__name__
             raise ValueError(
                 f"activity_roles.{name} carries {got}, not {sorted(ROLE_KEYS)}. Decide "
-                "whether `template check` consumes the change, then teach this script it."
+                "whether `app validate` consumes the change, then teach this script it."
             )
         if not isinstance(role["writes_rows"], bool) or not isinstance(role["reads_rows"], bool):
             raise ValueError(f"activity_roles.{name}: writes_rows/reads_rows are not booleans")
@@ -365,7 +365,7 @@ def _check_roles(roles: Any) -> None:
                 raise ValueError(
                     f"activity_roles.{name}.column_args.{column_arg['arg']} is "
                     f"holds={column_arg['holds']!r}, side={column_arg['side']!r}; "
-                    f"`template check` reads holds in {sorted(HOLDS)} and side in "
+                    f"`app validate` reads holds in {sorted(HOLDS)} and side in "
                     f"{sorted(SIDES)} only."
                 )
 
@@ -392,7 +392,7 @@ def _check_shape(payload: dict[str, Any]) -> None:
     if unknown:
         raise ValueError(
             f"the endpoint serves {', '.join(unknown)}, which this script does not "
-            "transcribe. Decide whether `template check` consumes it, then add a "
+            "transcribe. Decide whether `app validate` consumes it, then add a "
             "_Field for it or list it in IGNORED_FIELDS."
         )
     bundle = payload.get("bundle")
@@ -409,7 +409,7 @@ def _check_shape(payload: dict[str, Any]) -> None:
             value = _resolve(payload, field.source)
         except KeyError as exc:
             raise ValueError(
-                f"the endpoint no longer serves {exc.args[0]}, which `template check` "
+                f"the endpoint no longer serves {exc.args[0]}, which `app validate` "
                 f"reads as {field.name}"
             ) from exc
         if field.check is not None:

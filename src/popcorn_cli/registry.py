@@ -264,9 +264,24 @@ class Command:
     # It does NOT reach `--help`: that listing is a hand-written epilog in
     # `cli.py — build_parser`, so mark the family there in the same commit.
     deprecated: str | None = None
+    # Parsed and dispatched, but listed nowhere: not in `commands --json`,
+    # the completions, the fuzzy-match candidates or `schema()`. For an old
+    # name kept only so existing callers keep working — advertising it would
+    # teach new callers the name that is going away.
+    hidden: bool = False
 
 
 COMMANDS: list[Command] = []
+
+
+def visible() -> list[Command]:
+    """The families any listing shows: every one not marked `hidden`."""
+    return [c for c in COMMANDS if not c.hidden]
+
+
+def hidden_names() -> set[str]:
+    """Families that parse but are listed nowhere."""
+    return {c.name for c in COMMANDS if c.hidden}
 
 
 def register(command: Command) -> Command:
@@ -375,7 +390,7 @@ def schema() -> list[dict[str, Any]]:
             "description": c.description,
             "subcommands": [_sub_schema(s) for s in c.subcommands],
         }
-        for c in COMMANDS
+        for c in visible()
     ]
 
 
@@ -400,18 +415,18 @@ def completion_groups() -> list[tuple[str, list[str]]]:
                 groups.append((sub.name, sorted(s.name for s in sub.subcommands)))
                 walk(sub.subcommands)
 
-    for cmd in COMMANDS:
+    for cmd in visible():
         groups.append((cmd.name, sorted(s.name for s in cmd.subcommands)))
         walk(cmd.subcommands)
     return groups
 
 
 def descriptions() -> dict[str, str]:
-    return {c.name: c.description for c in COMMANDS}
+    return {c.name: c.description for c in visible()}
 
 
 def categories() -> dict[str, str]:
-    return {c.name: c.category for c in COMMANDS}
+    return {c.name: c.category for c in visible()}
 
 
 def deprecations() -> dict[str, str]:
@@ -421,4 +436,4 @@ def deprecations() -> dict[str, str]:
     `cli.py — _command_deprecations`, the same way categories and
     descriptions are.
     """
-    return {c.name: c.deprecated for c in COMMANDS if c.deprecated}
+    return {c.name: c.deprecated for c in visible() if c.deprecated}

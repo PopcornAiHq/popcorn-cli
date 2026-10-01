@@ -1,7 +1,7 @@
 """`popcorn app` — author an app bundle from a checkout of it.
 
 ```
-app fork → app checkout → edit → template check → app publish
+app fork → app checkout → edit → app validate → app publish
 ```
 
 `apply` is NOT a step in that loop. `publish` starts the install itself and it
@@ -68,7 +68,7 @@ from popcorn_core import flow_rules, operations, schedule_drift
 # `baseline_changelog` is app_checkout's `manifest_changelog`, aliased because
 # app_publish exports a same-named function doing a different job. This one
 # NORMALISES the note, so reflowing a block scalar is not read as an edit, and
-# it is what the baseline records for `template check` to compare against.
+# it is what the baseline records for `app validate` to compare against.
 # app_publish's returns the raw working-copy value, only ever to warn about it.
 from popcorn_core.app_checkout import (
     BASELINE_FILE,
@@ -108,8 +108,9 @@ from popcorn_core.app_publish import (
     unrecognized_code_note,
     unrecognized_code_paths,
 )
-from popcorn_core.errors import APIError, PopcornError
+from popcorn_core.errors import APIError, AuthError, PopcornError
 from popcorn_core.resolve import resolve_conversation
+from popcorn_core.template_check import ERROR, BundleReport, check_bundle
 
 from ..registry import Argument, Command, Subcommand, register
 
@@ -495,7 +496,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
             + "for whoever reads it next. It is not bundle content and does not publish."
         )
     if not historical:
-        lines += ["", f"Next: popcorn template check {directory}"]
+        lines += ["", f"Next: popcorn app validate {directory}"]
     _output(args, data, "\n".join(lines))
 
 
@@ -1440,6 +1441,166 @@ def _app_status(args: argparse.Namespace) -> None:
         raise PopcornError(drift, error_code="validation")
 
 
+# ---------------------------------------------------------------------------
+# `app validate`
+# ---------------------------------------------------------------------------
+
+_LEVEL_LABEL = {"error": "error  ", "warning": "warning"}
+
+
+def _summary_line(report: BundleReport) -> str:
+    flows = len(report.flows)
+    fixtures = len(report.fixtures)
+    manifest = "manifest" if report.manifest is not None else "no manifest"
+    return (
+        f"Checked {report.directory} — {flows} flow{'s' if flows != 1 else ''}, "
+        f"{fixtures} fixture{'s' if fixtures != 1 else ''}, {manifest}."
+    )
+
+
+def _server_line(report: BundleReport) -> str | None:
+    server = report.server
+    if server is None:
+        return None
+    if server.get("status") == "ran":
+        return "server checks: ran"
+    return f"server checks: skipped ({server.get('reason')})"
+
+
+def _render_validate(report: BundleReport) -> str:
+    lines = [_summary_line(report)]
+    if report.flows:
+        lines.append("  flows: " + ", ".join(sorted(f.name for f in report.flows)))
+    server = _server_line(report)
+    if server:
+        lines.append("  " + server)
+    if report.findings:
+        lines.append("")
+    # Errors first — a warning is advisory, an error means the bundle will not
+    # do what it says.
+    ordered = sorted(report.findings, key=lambda f: (f.level != ERROR, f.code, f.where))
+    for finding in ordered:
+        rule = f" ({finding.rule})" if finding.rule else ""
+        lines.append(f"  {_LEVEL_LABEL[finding.level]}  {finding.code}{rule}  [{finding.where}]")
+        lines.append(f"      {finding.message}")
+    lines.append("")
+    errors, warnings = len(report.errors), len(report.warnings)
+    lines.append(
+        f"{errors} error{'s' if errors != 1 else ''}, "
+        f"{warnings} warning{'s' if warnings != 1 else ''}"
+    )
+    return "\n".join(lines)
+
+
+def _run_server_checks(args: argparse.Namespace, directory: Path, report: BundleReport) -> None:
+    """Ask the server whether a publish of this checkout would be accepted.
+
+    The server runs publish's own checks on the same request `app publish`
+    would send, so its rules — the manifest's tables above all — are never
+    copied here. It needs what a publish needs: a fork checkout of the line's
+    head, with edits, a channel on that line (which authorizes the call), and
+    a login. Anything short of that is a skip with the
+    reason, never a failure and never a guess: the offline findings stand.
+    """
+    from ..cli import _get_client
+
+    baseline = read_baseline(directory)
+    if baseline is None:
+        report.skip_server("not an app checkout — publish's checks need the version it came from")
+        return
+    if baseline.kind != "fork":
+        report.skip_server("a product checkout — only a fork line can be published")
+        return
+    if baseline.historical:
+        report.skip_server("a past version — publish is based only on the line's head")
+        return
+    # The channel authorizes the call, as for `flow validate`: the flag, else
+    # the baseline's. The server also requires it to run the checkout's line.
+    conversation = getattr(args, "channel", None) or baseline.conversation_id
+    if not conversation:
+        report.skip_server(
+            f"no channel — {BASELINE_FILE} records none; pass --channel or "
+            "re-run 'popcorn app checkout'"
+        )
+        return
+    try:
+        client = _get_client(args)
+    except AuthError:
+        report.skip_server("not logged in")
+        return
+    try:
+        _, base_hashes = _fetch_base(client, str(conversation), baseline)
+    except APIError as exc:
+        report.skip_server(f"could not read the fork line: {exc}")
+        return
+    except PopcornError as exc:
+        if exc.error_code != "conflict":
+            report.skip_server(f"could not read the fork line: {exc}")
+            return
+        # The line moved past this checkout. Publish refuses a stale base, so
+        # this is a definite answer rather than a skip.
+        report.add_server_findings([{"message": str(exc), "rule": "stale_base"}])
+        return
+    diff = diff_tree_hashes(base_hashes, collect_tree(directory).files)
+    if diff.empty:
+        report.skip_server("no edits since checkout — nothing for a publish to check")
+        return
+    try:
+        result = operations.validate_app_bundle(
+            client, str(conversation), publish_payload(baseline.base_version_id, diff, None)
+        )
+    except AuthError:
+        report.skip_server("not logged in")
+        return
+    except APIError as exc:
+        report.skip_server(f"the server did not answer: {exc}")
+        return
+    report.add_server_findings(result.get("findings") or [])
+
+
+def _app_validate(args: argparse.Namespace) -> None:
+    from ..cli import _output
+
+    directory = Path(args.directory)
+    report = check_bundle(directory)
+    _run_server_checks(args, directory, report)
+    _output(args, report.to_dict(), _render_validate(report))
+
+    if report.errors:
+        raise PopcornError(
+            f"{len(report.errors)} error(s) in {args.directory}",
+            error_code="validation",
+        )
+    # --strict is for CI, where an unreviewed warning is how a bundle drifts.
+    # A skipped server check is not a warning: it is the absence of an answer.
+    if getattr(args, "strict", False) and report.warnings:
+        raise PopcornError(
+            f"{len(report.warnings)} warning(s) in {args.directory} (--strict)",
+            error_code="validation",
+        )
+
+
+# The arguments `template check` took, so the alias stays a pure rename.
+VALIDATE_ARGUMENTS = [
+    Argument(
+        "directory",
+        "Bundle directory",
+        positional=True,
+        flag_alias="--dir",
+    ),
+    Argument(
+        "strict",
+        "Exit non-zero on warnings as well as errors",
+        action="store_true",
+    ),
+    Argument(
+        "channel",
+        "Channel the server checks run against (default: the checkout's "
+        "baseline); it must run the checkout's fork line",
+    ),
+]
+
+
 register(
     Command(
         name="app",
@@ -1548,6 +1709,14 @@ register(
                     ),
                     _CHANNEL_OPT,
                 ],
+            ),
+            Subcommand(
+                "validate",
+                "Check a bundle before publishing: structure offline, and in "
+                "a fork checkout while logged in, the server's publish checks "
+                "too (the manifest's tables among them)",
+                _app_validate,
+                VALIDATE_ARGUMENTS,
             ),
             Subcommand(
                 "apply",

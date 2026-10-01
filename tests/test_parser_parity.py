@@ -66,7 +66,7 @@ def test_parsed_namespace_is_unchanged(case, parser):
 # contain, which is the thing being guarded. Raise a number when you genuinely
 # add rows; never lower one to make a diff pass.
 _MINIMUM_ROWS = {
-    "app": 13,
+    "app": 16,
     "auth": 8,
     "channel": 30,
     "channel-config": 7,

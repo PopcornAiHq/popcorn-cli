@@ -5,7 +5,7 @@ Two different jobs here, and only one of them can run in CI.
 **Pinning the values** is what this file can do offline, and it is what the
 vendored constants never had: every value the checker reads is asserted
 longhand below, so removing or changing one fails a test instead of quietly
-changing what `template check` accepts. Written out rather than derived from
+changing what `app validate` accepts. Written out rather than derived from
 the module under test — a test that loops over the constant it guards passes no
 matter what is deleted from it, which has already bitten this repo three times.
 
@@ -144,7 +144,7 @@ def test_the_trigger_scope_is_a_closed_set_of_eight_keys():
 def test_the_block_nesting_cap_is_three():
     """Counting a flow's own top-level list as 1, so one block inside another
     is the deepest legal shape. Unenforced here until this snapshot landed: a
-    block nested past it passed `template check` and failed at install."""
+    block nested past it passed `app validate` and failed at install."""
     assert flow_rules.MAX_BLOCK_DEPTH == 3
 
 
@@ -177,7 +177,7 @@ def test_the_bundle_layout_rules():
 
 def test_the_code_block_rules():
     """The third classification, and the one the payload carried nothing about
-    until a server-side change — which is why `template check` reported a false
+    until a server-side change — which is why `app validate` reported a false
     `basename-collision` on any bundle with two Python blocks.
 
     `CODE_MIN_PATH_DEPTH` is a floor where `SUBDIR_PATH_DEPTH` is exact: a
@@ -248,7 +248,7 @@ def test_the_render_is_deterministic():
 
 def test_a_newly_served_rule_is_an_error_not_a_silent_skip():
     """The case worth failing on. A rule the endpoint grows and this script
-    ignores is a rule `template check` does not enforce, and nothing else would
+    ignores is a rule `app validate` does not enforce, and nothing else would
     ever say so."""
     payload = _payload()
     payload["when_grammar"] = {"rails": 4}

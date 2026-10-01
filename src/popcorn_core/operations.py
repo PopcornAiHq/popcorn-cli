@@ -1148,7 +1148,7 @@ def get_flow_schema(client: APIClient) -> dict[str, Any]:
     takes and returns. Static and identical for every workspace, so it is
     workspace-member gated with no conversation scope.
 
-    Read by `scripts/sync_flow_rules.py`, not at check time: `template check`
+    Read by `scripts/sync_flow_rules.py`, not at check time: `app validate`
     is offline by contract and reads the generated `popcorn_core.flow_rules`
     snapshot instead, so its findings do not depend on credentials or network.
     """
@@ -1542,6 +1542,27 @@ def publish_channel_app(
     """
     conv_id = resolve_conversation(client, conversation)
     return client.post("/api/apps/publish", payload, {"conversation_id": conv_id})
+
+
+def validate_app_bundle(
+    client: APIClient, conversation: str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Ask whether a publish of `payload` would be accepted, without publishing.
+
+    `payload` is exactly what `publish_channel_app` sends. The server runs
+    publish's own checks and answers `{"ok": bool, "findings": [...]}`, each
+    finding a `message` plus, where the check knows them, `rule`, `table` and
+    `column`. Findings are a 200; a request publish would reject before
+    reading the bundle (an empty diff, a base this workspace cannot see)
+    keeps publish's status.
+
+    `conversation_id` is required as authorization, as for `flow validate`:
+    a workspace admin, or a member of the channel. The channel must run the
+    fork line `base_version_id` is on, or the server answers 409. Nothing is
+    installed on it.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    return client.post("/api/apps/validate", payload, {"conversation_id": conv_id})
 
 
 def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:

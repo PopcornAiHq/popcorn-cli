@@ -2007,7 +2007,7 @@ def _render_zsh_completion() -> str:
     Only the family level is completed, matching the hand-written families in
     the template — zsh keys on `words[1]`, which is the family name.
     """
-    cmds = "".join(f"        '{c.name}:{c.description}'\n" for c in registry.COMMANDS)
+    cmds = "".join(f"        '{c.name}:{c.description}'\n" for c in registry.visible())
     families = "".join(
         f"                {name}) _values 'subcommand' {' '.join(registry.completion_words(name))} ;;\n"
         for name in registry.descriptions()
@@ -2152,8 +2152,11 @@ def cmd_commands(args: argparse.Namespace) -> None:
     deprecations = registry.deprecations()
 
     commands: list[dict[str, Any]] = []
+    hidden = registry.hidden_names()
     if sub_action:
         for name, sub_parser in sub_action.choices.items():
+            if name in hidden:
+                continue
             cmd: dict[str, Any] = {"name": name}
             if name in categories:
                 cmd["category"] = categories[name]
@@ -2292,7 +2295,9 @@ class PopcornParser(argparse.ArgumentParser):
             # The candidates are the commands valid at this point, so a
             # mistyped subcommand is matched against its siblings, and the
             # help pointer is this parser's own (`popcorn message --help`).
-            close = difflib.get_close_matches(bad, list(slot.choices or ()), n=2, cutoff=0.6)
+            # A hidden family still parses, but is never suggested.
+            candidates = [c for c in (slot.choices or ()) if c not in registry.hidden_names()]
+            close = difflib.get_close_matches(bad, candidates, n=2, cutoff=0.6)
             if close:
                 hint = " or ".join(f'"{c}"' for c in close)
                 message = f'unknown command "{bad}". Did you mean {hint}?'
@@ -2404,11 +2409,8 @@ Flows:
                   runs timeline, runs cancel)
   schedule        Scheduled-flow commands (list, get, trigger)
 
-Templates:
-  template        Channel-template commands (check)
-
 Apps:
-  app             App-bundle commands (list, lines, checkout, fork, publish, apply, status)
+  app             App-bundle commands (list, lines, checkout, fork, validate, publish, apply, status)
   channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:

@@ -48,7 +48,7 @@ ci:  ## Non-mutating check for CI — same gates, but fails instead of fixing
 # ── Generated flow rules ─────────────────────────────────────────────
 #
 # `src/popcorn_core/flow_rules.py` is generated from
-# `GET /customer-flows/schema`, which `popcorn template check` reads instead of
+# `GET /customer-flows/schema`, which `popcorn app validate` reads instead of
 # hand-copying the DSL's rules out of backend source. Both targets need
 # workspace-member credentials, which is why neither is part of `make ci` —
 # CI cannot reach the endpoint. Drift is caught here, by hand; by the longhand

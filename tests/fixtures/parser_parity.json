@@ -1711,6 +1711,7 @@
       "#ops"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "#ops",
@@ -2062,6 +2063,74 @@
       "json": false,
       "no_color": false,
       "quiet": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "validate",
+      "--dir",
+      "#ops"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "channel": null,
+      "command": "app",
+      "debug": false,
+      "directory": "#ops",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "validate",
+      "x"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "channel": null,
+      "command": "app",
+      "debug": false,
+      "directory": "x",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": false,
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "validate",
+      "x",
+      "--strict"
+    ],
+    "namespace": {
+      "app_command": "validate",
+      "channel": null,
+      "command": "app",
+      "debug": false,
+      "directory": "x",
+      "env": null,
+      "json": false,
+      "no_color": false,
+      "quiet": false,
+      "strict": true,
       "timeout": null,
       "workspace": null,
       "yes": false
@@ -3384,6 +3453,7 @@
       "x"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "x",
@@ -3406,6 +3476,7 @@
       "--strict"
     ],
     "namespace": {
+      "channel": null,
       "command": "template",
       "debug": false,
       "directory": "x",

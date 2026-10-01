@@ -7,7 +7,7 @@ refused when the line has moved underneath it, and it names the channel so
 `publish`/`apply`/`status` need no `--channel`.
 
 The baseline lives INSIDE the checkout directory but is not bundle content.
-It is a dotfile so `template check`'s globs skip it, and publish must exclude
+It is a dotfile so `app validate`'s globs skip it, and publish must exclude
 dotfiles for the same reason.
 
 `CLAUDE.md` is written beside it for the same "inside the directory, not part
@@ -40,7 +40,7 @@ GUIDE_FILE = "CLAUDE.md"
 # parses — every field is read with a default — and each command degrades to
 # what it can still answer rather than rewriting the file underneath the user:
 # a v1 falls back to an explicit --channel, and a v1/v2 simply has no recorded
-# changelog for `template check` to compare against.
+# changelog for `app validate` to compare against.
 _VERSION = 4
 # The first baseline version that captured the checked-out manifest's
 # `changelog:`. Below it, absence of the field means "not recorded", which is
@@ -63,13 +63,13 @@ version this copy came from.
 **Editing a file here ships nothing on its own.** The loop is:
 
 ```
-edit  →  popcorn template check .  →  popcorn app publish . -m "<what changed>"
+edit  →  popcorn app validate .  →  popcorn app publish . -m "<what changed>"
 ```
 
 `app publish` refuses a manifest whose `version:` has not advanced past the
 checked-out one; `--bump patch` (or `minor`/`major`) writes that bump for you
 on a successful publish. Until a publish lands, the channel still runs the old
-version — a clean `template check` is a check, not a release.
+version — a clean `app validate` is a check, not a release.
 
 ## Posting markdown needs `format: markdown`
 
@@ -85,7 +85,7 @@ carries markdown posts its asterisks and hashes literally:
     format: markdown          # without this the ** ships as literal asterisks
 ```
 
-Nothing in the authoring loop catches the omission: `template check` passes,
+Nothing in the authoring loop catches the omission: `app validate` passes,
 the flow runs green, and the message is wrong only on screen. Read
 `part.format` back with `popcorn message list` after a test run.
 
@@ -193,7 +193,7 @@ class Baseline:
     # accepts either and a UUID survives a channel rename. None in a v1
     # baseline.
     conversation_id: str | None = None
-    # The checked-out manifest's `changelog:`, so `template check` can tell a
+    # The checked-out manifest's `changelog:`, so `app validate` can tell a
     # note rewritten for this version from the previous version's left in
     # place. None means the manifest declared none — NOT that the baseline
     # predates the field; `changelog_recorded` is what separates those.

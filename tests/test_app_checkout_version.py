@@ -179,7 +179,7 @@ class TestCheckoutVersion:
         assert "not the line's head (0.2.0, version 7)" in out["rendered"]
         assert "'app publish' refuses it" in out["rendered"]
         # Nothing to publish from here, so no publish loop is suggested.
-        assert "Next: popcorn template check" not in out["rendered"]
+        assert "Next: popcorn app validate" not in out["rendered"]
 
     def test_the_head_by_id_is_an_ordinary_checkout(self, tmp_path):
         """Naming the head's id is the same checkout a plain one would write,
@@ -192,7 +192,7 @@ class TestCheckoutVersion:
         )
         assert read_baseline(target).historical is False
         assert out["data"]["historical"] is False
-        assert "Next: popcorn template check" in out["rendered"]
+        assert "Next: popcorn app validate" in out["rendered"]
 
     def test_the_baseline_file_marks_it_and_a_plain_one_does_not(self, tmp_path):
         """Written only when true, so a head checkout's file is unchanged."""
@@ -534,7 +534,7 @@ class TestGuide:
         assert f"popcorn app checkout --channel {_CONV} --dir <new-dir>" in text
         assert "popcorn app publish <new-dir> --bump patch" in text
         # The publish loop is exactly what must not be promised here.
-        assert "popcorn template check ." not in text
+        assert "popcorn app validate ." not in text
         assert "snapshot" in out["rendered"]
 
     def test_the_head_by_id_gets_the_normal_guide_byte_for_byte(self, tmp_path):

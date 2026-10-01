@@ -158,7 +158,9 @@ class TestAgentGuide:
     def test_says_an_edit_is_not_a_release(self, tmp_path):
         """The failure it exists for: a good edit that was never published."""
         text = write_agent_guide(tmp_path).read_text()
-        assert "popcorn template check" in text
+        assert "popcorn app validate" in text
+        # The old name still runs, but a checkout must teach the current one.
+        assert "template check" not in text
         assert "popcorn app publish" in text
 
     def test_carries_the_format_rule(self, tmp_path):
@@ -230,7 +232,7 @@ class TestBaseline:
 
 
 class TestBaselineChangelog:
-    """The served manifest's `changelog:`, recorded so `template check` can
+    """The served manifest's `changelog:`, recorded so `app validate` can
     tell this version's note from the previous version's left in place."""
 
     def test_checkout_records_the_served_note(self, tmp_path):
