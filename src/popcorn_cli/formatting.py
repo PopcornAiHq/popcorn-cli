@@ -56,17 +56,47 @@ def format_author(msg: dict[str, Any]) -> str:
     return author.get("display_name") or author.get("username") or author.get("email") or "Unknown"
 
 
+def message_parts(msg: dict[str, Any]) -> list[Any]:
+    """The parts of a message, for every reader of message content.
+
+    The server sends ``content`` as ``{"parts": [...]}``, each part an object
+    keyed on ``type`` — ``text`` keeps its words under ``content``, and an
+    agent's tool calls arrive as an ``s3`` part that carries no text. Iterating
+    ``content`` itself walks the dict's keys, which is how `message threads`
+    crashed on its first message. A bare list or string is tolerated rather
+    than trusted, so a shape change degrades to less text instead of a
+    traceback.
+    """
+    content = msg.get("content")
+    if isinstance(content, dict):
+        parts = content.get("parts")
+        return parts if isinstance(parts, list) else []
+    if isinstance(content, list):
+        return content
+    if isinstance(content, str):
+        return [content]
+    return []
+
+
+def part_text(part: Any) -> str | None:
+    """A part's words, or None for a part that is not text. A string part is text."""
+    if isinstance(part, str):
+        return part
+    if isinstance(part, dict) and part.get("type") == "text":
+        return str(part.get("content") or "")
+    return None
+
+
 def format_message_text(msg: dict[str, Any]) -> str:
     """Extract text content from message content dict."""
-    content = msg.get("content") or {}
-    parts = content.get("parts") or []
     texts = []
-    for part in parts:
-        if isinstance(part, dict):
+    for part in message_parts(msg):
+        text = part_text(part)
+        if text is not None:
+            texts.append(text)
+        elif isinstance(part, dict):
             ptype = part.get("type")
-            if ptype == "text":
-                texts.append(part.get("content", ""))
-            elif ptype == "media":
+            if ptype == "media":
                 fname = part.get("filename") or "file"
                 texts.append(dim(f"[{fname}]"))
             elif ptype in ("file", "integration"):
