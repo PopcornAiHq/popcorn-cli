@@ -671,7 +671,7 @@ class TestChannelTemplates:
 
 
 class TestDataStoreOperations:
-    """The data-store surface at /api/v1/conversations/{id}/data-store/…
+    """The agent-store surface at /api/v1/conversations/{id}/data-store/…
 
     The channel ref is resolved to a conversation UUID and baked into the
     path, so every assertion here pins the resolved path shape.

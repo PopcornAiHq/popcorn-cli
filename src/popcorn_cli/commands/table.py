@@ -183,7 +183,7 @@ register(
         name="table",
         category="tables",
         description=(
-            "Data-store commands (list, schema, rows, row get/patch/delete, "
+            "Agent-store commands (list, schema, rows, row get/patch/delete, "
             "scalar list/get/set, audit)"
         ),
         subcommands=[
@@ -285,7 +285,7 @@ register(
             ),
             Subcommand(
                 "audit",
-                "Recent data-store audit entries",
+                "Recent agent-store audit entries",
                 _table_audit,
                 [
                     _CHANNEL,

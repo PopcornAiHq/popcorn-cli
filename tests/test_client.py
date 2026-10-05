@@ -21,7 +21,7 @@ def _respond(monkeypatch, client: APIClient, resp: httpx.Response) -> None:
 class TestNoContentResponses:
     """204/empty bodies must not be mistaken for malformed JSON.
 
-    The data-store DELETE endpoints (records, scalars) answer 204 with no
+    The agent-store DELETE endpoints (records, scalars) answer 204 with no
     body; `resp.json()` on that raises, so without a guard every delete
     surfaces as "Invalid JSON in response".
     """
