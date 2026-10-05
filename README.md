@@ -117,7 +117,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn schedule trigger <schedule> --channel <conv> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
 | **App bundles** | |
 | `popcorn app validate <dir> [--strict]` | Check a bundle before publishing: its structure offline, and, in a fork checkout while logged in, the server's publish checks — the manifest's tables among them — without publishing. Says when the server checks were skipped and why (exit 1 on errors; `--strict` also on warnings). `popcorn template check` is the old name and still works |
-| **Tables** (channel data-store) | |
+| **Tables** (channel agent store) | |
 | `popcorn table list --channel <conv>` | List tables in a channel |
 | `popcorn table schema <name> --channel <conv>` | Show a table's columns |
 | `popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N] [--cursor C]` | List rows in a table |
@@ -127,7 +127,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn table scalar list --channel <conv> [--limit N]` | List channel scalars |
 | `popcorn table scalar get <key> --channel <conv>` | Read one scalar |
 | `popcorn table scalar set <key> <value> --channel <conv>` | Write one scalar |
-| `popcorn table audit --channel <conv> [--entity-type T] [--entity-id ID] [--since ISO8601] [--limit N] [--cursor C]` | Recent data-store audit entries. The filters are server-side, so `--entity-id` reads one row's whole history rather than the current page's |
+| `popcorn table audit --channel <conv> [--entity-type T] [--entity-id ID] [--since ISO8601] [--limit N] [--cursor C]` | Recent agent-store audit entries. The filters are server-side, so `--entity-id` reads one row's whole history rather than the current page's |
 | **Webhooks** | |
 | `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-name F]` | Create a webhook. The flow binding is fixed here — `update` cannot re-point it |
 | `popcorn webhook list <conv>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
