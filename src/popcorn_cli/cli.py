@@ -2414,7 +2414,7 @@ Apps:
   channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:
-  table           Data-store commands (list, schema, rows, row, scalar, audit)
+  table           Agent-store commands (list, schema, rows, row, scalar, audit)
 
 Webhooks:
   webhook         Webhook commands (create, list, get, update, delete,
