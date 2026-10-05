@@ -90,7 +90,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms] [--include-archived] [--include-hidden]` | List channels or DMs, following the server's cursor to the last page. Archived and hidden conversations are excluded unless asked for |
-| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel; `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
+| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel. `--type` defaults to `workspace_channel` (everyone in the workspace is a member, now and as people join, so `--members` is ignored); `public_channel` is visible to anyone and joined on demand, `private_channel` holds only invited members. `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |
 | `popcorn channel leave <conv>` | Leave a channel |

@@ -17,6 +17,8 @@ a channel in channel x", which is not a thing.
 
 from __future__ import annotations
 
+from popcorn_core.operations import DEFAULT_CHANNEL_TYPE
+
 from ..registry import Argument, Command, Subcommand, register
 from ._late import late_handler
 
@@ -50,11 +52,18 @@ register(
                     Argument("name", "Channel name", positional=True),
                     Argument(
                         "type",
-                        "Conversation type",
-                        choices=["public_channel", "private_channel"],
-                        default="public_channel",
+                        "workspace_channel (default): everyone in the workspace is a member, "
+                        "now and as people join; public_channel: anyone can see and join it; "
+                        "private_channel: only invited members",
+                        choices=["workspace_channel", "public_channel", "private_channel"],
+                        default=DEFAULT_CHANNEL_TYPE,
                     ),
-                    Argument("members", "Comma-separated user IDs", type=str),
+                    Argument(
+                        "members",
+                        "Comma-separated user IDs (ignored for workspace_channel, "
+                        "which already has everyone)",
+                        type=str,
+                    ),
                     Argument(
                         "template",
                         "Install a channel template (see `popcorn channel templates`)",
