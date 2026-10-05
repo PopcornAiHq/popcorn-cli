@@ -10,8 +10,8 @@ from popcorn_core.validation import extract
 
 class TestExtract:
     def test_nested_key_extraction(self):
-        resp = {"conversation": {"id": "c-123", "name": "my-site"}}
-        assert extract(resp, "conversation", "id", label="deploy_create") == "c-123"
+        resp = {"conversation": {"id": "c-123", "name": "example-channel"}}
+        assert extract(resp, "conversation", "id", label="channel_lookup") == "c-123"
 
     def test_single_key_extraction(self):
         resp = {"id": "c-123"}
@@ -19,8 +19,8 @@ class TestExtract:
 
     def test_missing_top_level_key_raises(self):
         resp = {"other": "value"}
-        with pytest.raises(PopcornError, match="deploy_create"):
-            extract(resp, "conversation", label="deploy_create")
+        with pytest.raises(PopcornError, match="channel_lookup"):
+            extract(resp, "conversation", label="channel_lookup")
 
     def test_missing_top_level_key_includes_missing_key_name(self):
         resp = {"other": "value"}
@@ -28,14 +28,14 @@ class TestExtract:
             extract(resp, "conversation", label="test")
 
     def test_missing_nested_key_raises(self):
-        resp = {"conversation": {"name": "my-site"}}
+        resp = {"conversation": {"name": "example-channel"}}
         with pytest.raises(PopcornError, match="missing 'id'"):
-            extract(resp, "conversation", "id", label="deploy_create")
+            extract(resp, "conversation", "id", label="channel_lookup")
 
     def test_non_dict_intermediate_raises(self):
         resp = {"conversation": "not-a-dict"}
         with pytest.raises(PopcornError, match="missing 'id'"):
-            extract(resp, "conversation", "id", label="deploy_create")
+            extract(resp, "conversation", "id", label="channel_lookup")
 
     def test_truncates_long_response_in_error(self):
         resp = {"data": "x" * 500}

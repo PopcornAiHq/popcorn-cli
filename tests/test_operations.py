@@ -278,6 +278,19 @@ class TestConversations:
             "/api/conversations/unarchive", data={"conversation": "conv-id"}
         )
 
+    def test_update_sends_only_the_fields_given(self, mock_client):
+        mock_client.post.return_value = {"ok": True}
+        operations.update_conversation(mock_client, "conv-id", description="Incidents")
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/update",
+            data={"conversation": "conv-id", "description": "Incidents"},
+        )
+
+    def test_update_has_no_site_name(self, mock_client):
+        """Channels no longer have hosted sites; the server ignores the field."""
+        with pytest.raises(TypeError):
+            operations.update_conversation(mock_client, "conv-id", site_name="x")  # type: ignore[call-arg]
+
 
 class TestRawApi:
     def test_raw_api_call_get(self, mock_client):

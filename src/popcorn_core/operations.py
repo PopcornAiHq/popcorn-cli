@@ -397,7 +397,6 @@ def update_conversation(
     name: str = "",
     description: str = "",
     conv_type: str = "",
-    site_name: str = "",
 ) -> dict[str, Any]:
     """Update conversation details."""
     conv_id = resolve_conversation(client, conversation)
@@ -408,8 +407,6 @@ def update_conversation(
         body["description"] = description
     if conv_type:
         body["conversation_type"] = conv_type
-    if site_name:
-        body["site_name"] = site_name
     return client.post("/api/conversations/update", data=body)
 
 
@@ -1228,16 +1225,6 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
         "/api/integrations/check-access",
         data={"provider": "github", "owner": owner, "repo": name},
     )
-
-
-# ---------------------------------------------------------------------------
-# Deploy
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Site status
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
