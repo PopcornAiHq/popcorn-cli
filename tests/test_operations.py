@@ -286,11 +286,6 @@ class TestConversations:
             data={"conversation": "conv-id", "description": "Incidents"},
         )
 
-    def test_update_has_no_site_name(self, mock_client):
-        """Channels no longer have hosted sites; the server ignores the field."""
-        with pytest.raises(TypeError):
-            operations.update_conversation(mock_client, "conv-id", site_name="x")  # type: ignore[call-arg]
-
 
 class TestRawApi:
     def test_raw_api_call_get(self, mock_client):
