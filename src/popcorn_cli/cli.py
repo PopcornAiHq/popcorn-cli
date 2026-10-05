@@ -1284,7 +1284,7 @@ def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> l
     """
     name = conv.get("name", "")
     notes: list[str] = []
-    wanted_type = getattr(args, "type", None) or "public_channel"
+    wanted_type = getattr(args, "type", None) or operations.DEFAULT_CHANNEL_TYPE
     actual_type = conv.get("type")
     if actual_type and actual_type != wanted_type:
         notes.append(f"#{name} is a {actual_type}, not the {wanted_type} requested")
@@ -1294,7 +1294,8 @@ def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> l
         )
     if getattr(args, "template", None):
         notes.append(f"template {args.template} was not installed into the existing channel")
-    if getattr(args, "members", None):
+    # A workspace-channel request was already told its --members are ignored.
+    if getattr(args, "members", None) and wanted_type != "workspace_channel":
         notes.append("--members were not added to the existing channel")
     return notes
 
@@ -1302,12 +1303,23 @@ def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> l
 def cmd_create_channel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if_not_exists = bool(getattr(args, "if_not_exists", False))
+    conv_type = getattr(args, "type", None) or operations.DEFAULT_CHANNEL_TYPE
     member_ids = args.members.split(",") if getattr(args, "members", None) else None
+    if member_ids and conv_type == "workspace_channel":
+        # The server replaces the list with every workspace member, so naming
+        # some is not an error, but it should not look like it did something.
+        print(
+            "Note: --members is ignored for a workspace_channel; everyone in the "
+            "workspace is a member (use --type public_channel or private_channel "
+            "to pick members)",
+            file=sys.stderr,
+        )
+        member_ids = None
     try:
         resp = operations.create_conversation(
             client,
             name=args.name,
-            conv_type=getattr(args, "type", "public_channel") or "public_channel",
+            conv_type=conv_type,
             member_ids=member_ids,
             template=getattr(args, "template", None),
             if_not_exists=if_not_exists,

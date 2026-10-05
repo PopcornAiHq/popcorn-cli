@@ -230,7 +230,7 @@ class TestConversations:
         result = operations.create_conversation(mock_client, "test-channel")
         mock_client.post.assert_called_once_with(
             "/api/conversations/create",
-            data={"name": "test-channel", "conversation_type": "public_channel"},
+            data={"name": "test-channel", "conversation_type": "workspace_channel"},
         )
         assert result["id"] == "c1"
 

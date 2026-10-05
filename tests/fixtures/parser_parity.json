@@ -890,7 +890,7 @@
       "quiet": false,
       "template": null,
       "timeout": null,
-      "type": "public_channel",
+      "type": "workspace_channel",
       "workspace": null,
       "yes": false
     }

@@ -330,10 +330,16 @@ def get_conversation_info(client: APIClient, conversation: str) -> dict[str, Any
     }
 
 
+# What `channel create` makes when no type is named, matching the web client:
+# every workspace member, including anyone who joins later. The server fills
+# the membership itself and ignores `member_ids` for this type.
+DEFAULT_CHANNEL_TYPE = "workspace_channel"
+
+
 def create_conversation(
     client: APIClient,
     name: str,
-    conv_type: str = "public_channel",
+    conv_type: str = DEFAULT_CHANNEL_TYPE,
     member_ids: list[str] | None = None,
     template: str | None = None,
     if_not_exists: bool = False,
