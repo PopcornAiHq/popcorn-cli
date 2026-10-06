@@ -260,6 +260,18 @@ AGENT_SCHEMAS_SUBDIR = "schemas"
 # The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.
 AGENT_SCHEMA_SUFFIX = ".json"
 
+# Directory holding the app's views, one file per view. A FIFTH classification:
+# a view is compiled at install, never seeded as a channel parameter and never
+# read as a flow, though it shares the `.yaml` extension.
+UI_SUBDIR = "ui"
+
+# The extensions that make `ui/<view_id><suffix>` a view. Exact depth: a view file
+# sits directly under UI_SUBDIR, and anything deeper is not one.
+UI_SUFFIXES = (
+    ".yaml",
+    ".yml",
+)
+
 # The zip reader's per-entry cap. The one value here that is not about
 # classification: it is a real ceiling on an uploaded bundle, so a checker
 # should warn before an author hits it.
