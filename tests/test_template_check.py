@@ -1454,6 +1454,34 @@ def test_a_yaml_outside_the_agent_layout_is_still_checked(tmp_path):
     assert "yaml-is-not-a-flow" in codes(root)
 
 
+# ── views ─────────────────────────────────────────────────────────────
+
+
+def test_views_are_not_flows_and_are_published(tmp_path):
+    """A `ui/<view>.yaml` was read as a flow with no steps (an error), a
+    nested flow file whose fix was to move it to the root — which would
+    install it as a flow — and a path `app publish` leaves behind."""
+    root = write_bundle(tmp_path / "b")
+    (root / "ui").mkdir()
+    (root / "ui" / "board.yaml").write_text(yaml.safe_dump({"title": "Board"}))
+    (root / "ui" / "intake.yaml").write_text(yaml.safe_dump({"title": "Intake"}))
+    report = check_bundle(root)
+    assert report.findings == [], [str(f) for f in report.findings]
+    assert {f.name for f in report.flows} == {"intake", "sweep"}
+
+
+def test_a_path_outside_the_view_layout_is_not_published(tmp_path):
+    root = write_bundle(tmp_path / "b")
+    (root / "ui" / "old").mkdir(parents=True)
+    (root / "ui" / "notes.md").write_text("scratch\n")
+    (root / "ui" / "old" / "scratch.txt").write_text("x\n")
+    unpublished = {
+        f.where: f.message for f in check_bundle(root).findings if f.code == "path-not-published"
+    }
+    assert set(unpublished) == {"ui/notes.md", "ui/old/"}
+    assert "ui/<view>.yaml" in unpublished["ui/notes.md"]
+
+
 # ── the checkout baseline ─────────────────────────────────────────────
 #
 # `version:`/`changelog:` are the only checks that need to know where the
