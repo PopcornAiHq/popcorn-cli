@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 _channel_cache: dict[str, tuple[str, float]] = {}
 _user_cache: dict[str, tuple[str, float]] = {}
 CHANNEL_CACHE_TTL = 300  # seconds
-# The server rejects a longer `name=`/`query=` outright, and stores no channel
+# The server rejects a longer `name=`/`query=` outright, and stores no project
 # name longer than this, so a longer ref is a miss rather than a request.
 _MAX_CHANNEL_NAME = 255
 USER_CACHE_TTL = 300  # seconds
@@ -25,7 +25,7 @@ def _is_uuid(ref: str) -> bool:
     """Whether `ref` is already an id, so no lookup is worth paying for.
 
     Shape-only: a caller that hands us a malformed id gets the server's error
-    about that id, which is more use than one invented here about a channel
+    about that id, which is more use than one invented here about a project
     or user name we never looked up.
     """
     return len(ref) == 36 and ref.count("-") == 4
@@ -42,7 +42,7 @@ def _cached(cache: dict[str, tuple[str, float]], key: str, ttl: float) -> str | 
 def _describe(conv_id: str, conv: dict[str, Any], profile: Any) -> str:
     """One candidate, with whatever tells it apart from a same-named one.
 
-    The workspace is the usual difference — a shared-in channel keeps its
+    The workspace is the usual difference — a shared-in project keeps its
     home workspace's id — but only the caller's own workspace has a name the
     CLI knows, so any other is shown by id.
     """
@@ -64,12 +64,12 @@ def _describe(conv_id: str, conv: dict[str, Any], profile: Any) -> str:
 
 
 def _ambiguous(client: APIClient, ref: str, matches: dict[str, dict[str, Any]]) -> PopcornError:
-    """The error for a name that answers to several channels, with a way out.
+    """The error for a name that answers to several projects, with a way out.
 
     The id is the hint that always works: it is unique and never changes.
     The exact name only helps when the candidates differ in case. Switching
     `--workspace` is deliberately not suggested — the listing is every
-    channel the caller is a member of in any workspace, so it would return
+    project the caller is a member of in any workspace, so it would return
     the same candidates.
     """
     profile = getattr(client, "profile", None)
@@ -77,17 +77,17 @@ def _ambiguous(client: APIClient, ref: str, matches: dict[str, dict[str, Any]]) 
     names = [conv.get("name") or "" for conv in matches.values()]
     if len(set(names)) == len(names):
         hint = (
-            "channel names are case-sensitive: pass the exact name, or one of the ids "
+            "project names are case-sensitive: pass the exact name, or one of the ids "
             "above in its place (an id is unique and never changes)"
         )
     else:
         hint = (
             "pass one of the ids above in place of the name (an id is unique and never "
             "changes); --workspace will not narrow it, since the lookup covers every "
-            "channel you are a member of in any workspace"
+            "project you are a member of in any workspace"
         )
     return PopcornError(
-        f"'{ref}' matches more than one channel:\n" + "\n".join(f"   {c}" for c in candidates),
+        f"'{ref}' matches more than one project:\n" + "\n".join(f"   {c}" for c in candidates),
         error_code=ERROR_CODE_VALIDATION,
         hint=hint,
     )
@@ -105,10 +105,10 @@ def _matching(
     The server's filter narrows the listing; `keep` is what decides. They are
     not the same test — `query=` is a substring, the fallback wants equality —
     and re-checking also means a server that ignores the filter yields a slow
-    walk rather than whichever channel sits at the top of an unfiltered page.
+    walk rather than whichever project sits at the top of an unfiltered page.
 
     Keyed by id because the listing cursor is an offset into a list the server
-    recomputes per page, so one channel can surface twice.
+    recomputes per page, so one project can surface twice.
     """
     found: dict[str, dict[str, Any]] = {}
     for page in iter_pages(client, "/api/conversations/list", params, "conversations"):
@@ -127,13 +127,13 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
     """Resolve #channel-name to UUID, or pass through UUIDs.
 
     Asks the server for the exact name first, and only falls back to a
-    case-insensitive match when exactly one channel answers to it. Name
+    case-insensitive match when exactly one project answers to it. Name
     uniqueness is a case-SENSITIVE equality, so "#Ops" and "#ops" can both
-    exist as different channels; picking one of them was a silent wrong
-    answer, and a write command aimed at the wrong channel is worse than an
-    error. The same holds for two channels with the identical name, which a
-    channel shared in from another workspace can produce: the listing is
-    everything the caller is a member of, not one workspace's channels.
+    exist as different projects; picking one of them was a silent wrong
+    answer, and a write command aimed at the wrong project is worse than an
+    error. The same holds for two projects with the identical name, which a
+    project shared in from another workspace can produce: the listing is
+    everything the caller is a member of, not one workspace's projects.
     """
     if _is_uuid(ref):
         return ref
@@ -142,16 +142,16 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
     # The server's exact match is case-sensitive too, so the two agree.
     name = ref.lstrip("#")
     if not name or len(name) > _MAX_CHANNEL_NAME:
-        raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
+        raise PopcornError(f"Project not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
 
     cached = _cached(_channel_cache, name, CHANNEL_CACHE_TTL)
     if cached is not None:
         return cached
 
-    # Archived AND hidden are asked for: a caller naming a channel explicitly
-    # means that channel whatever its visibility, and hidden ones are excluded
-    # by default — which left `channel list --include-hidden` displaying names
-    # every other command then rejected as "Channel not found".
+    # Archived AND hidden are asked for: a caller naming a project explicitly
+    # means that project whatever its visibility, and hidden ones are excluded
+    # by default — which left `project list --include-hidden` displaying names
+    # every other command then rejected as "Project not found".
     visibility = listing_params(include_archived=True, include_hidden=True)
 
     matches = _matching(
@@ -171,7 +171,7 @@ def resolve_conversation(client: APIClient, ref: str) -> str:
             stop_on_match=False,
         )
         if not matches:
-            raise PopcornError(f"Channel not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
+            raise PopcornError(f"Project not found: #{name}", error_code=ERROR_CODE_NOT_FOUND)
         if len(matches) > 1:
             raise _ambiguous(client, ref, matches)
 

@@ -65,6 +65,13 @@ builder. Some families keep their handlers in `cli.py`, late-bound by name
 through `commands/_late.py`; see `docs/architecture-commands.md` before touching
 the registry.
 
+**Projects, not channels; apps, not bundles.** User-facing text says project
+and app. The server still says channel and conversation, so API paths, JSON
+field names, the DSL's `$channel.*` and `foundation.channel.*`, and channel
+type values (`workspace_channel`) keep the old word — don't rename those. The
+old command and flag spellings still work through hidden aliases; see
+`docs/architecture-commands.md` § Renamed families and flags.
+
 The registry does not generate the top-level `popcorn --help` listing — that's a
 hand-written epilog in `cli.py — build_parser`. Update it when you add, remove
 or rename a subcommand.
@@ -97,10 +104,10 @@ The implementation rules that keep it true:
     directory). `-y` deliberately doesn't answer it: agents pass `-y` by reflex
     and can't notice what was lost. A prompt uses one or the other, never both.
   - `app publish` additionally refuses in agent mode without `--yes` even on a
-    TTY, before any request, because a publish reaches every channel on the fork
+    TTY, before any request, because a publish reaches every project on the fork
     line and no server guard asks whether that was meant.
 
-## Channel templates
+## Apps (formerly channel templates)
 
 The authoring guide lives at <https://docs.popcorn.ai/guides/template-authoring.md>;
 `docs/TEMPLATE_AUTHORING.md` is a pointer to it, kept so references resolve

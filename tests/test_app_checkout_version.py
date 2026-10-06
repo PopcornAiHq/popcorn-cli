@@ -30,7 +30,7 @@ from popcorn_core.app_publish import file_sha256
 from popcorn_core.errors import APIError, PopcornError
 
 _CONV = "00000000-0000-4000-8000-000000000001"
-_NOT_A_VERSION = "version 58 is not a version of this channel's alerttracker line"
+_NOT_A_VERSION = "version 58 is not a version of this project's alerttracker line"
 
 
 def _files_response(files: dict[str, str], **over):
@@ -55,7 +55,7 @@ def _head(version_id: int = 7, semver: str = "0.2.0") -> dict:
 
 def _args(**over):
     base = {
-        "channel": "#alerts",
+        "project": "#alerts",
         "directory": None,
         "fork": None,
         "version": 5,
@@ -244,7 +244,7 @@ class TestCheckoutVersion:
         assert str(exc.value) == _NOT_A_VERSION
         assert exc.value.error_code == "not_found"
         hint = exc.value.hint or ""
-        assert "readable only from this channel's own line" in hint
+        assert "readable only from this project's own line" in hint
         assert "app publish" in hint and "app status" in hint
         for guess in ("another workspace", "does not exist", "product"):
             assert guess not in hint
@@ -288,7 +288,7 @@ class TestCheckoutVersion:
         assert read_baseline(target).historical is True
 
     def test_a_product_track_head_is_not_called_a_past_version(self, tmp_path):
-        """A product-bound channel is offered the workspace's release-track
+        """A product-bound project is offered the workspace's release-track
         head, which is NEWER than what it runs. Nothing about that is past."""
         target = tmp_path / "prod"
         out = _run(
@@ -333,17 +333,17 @@ class TestParser:
     def test_version_parses_as_an_int(self):
         from popcorn_cli.cli import build_parser
 
-        ns = build_parser().parse_args(["app", "checkout", "--channel", "x", "--version", "12"])
+        ns = build_parser().parse_args(["app", "checkout", "--project", "x", "--version", "12"])
         assert ns.version == 12
 
     def test_version_and_fork_are_exclusive(self, capsys):
-        """A fork re-binds the channel and then reads its head; a version read
+        """A fork re-binds the project and then reads its head; a version read
         is of one fixed version. Together they have no single meaning."""
         from popcorn_cli.cli import build_parser
 
         with pytest.raises(SystemExit):
             build_parser().parse_args(
-                ["app", "checkout", "--channel", "x", "--fork=line", "--version", "3"]
+                ["app", "checkout", "--project", "x", "--fork=line", "--version", "3"]
             )
         assert "not allowed with" in capsys.readouterr().err
 
@@ -411,7 +411,7 @@ class TestPublishFromHistorical:
         # Not the "line moved" wording, whose hint — check out again — would
         # discard the very tree the author checked out on purpose.
         assert "moved" not in msg
-        assert f"app checkout --channel {_CONV} --dir" in hint and "--bump patch" in hint
+        assert f"app checkout --project {_CONV} --dir" in hint and "--bump patch" in hint
         # A failed publish leaves the working copy as the author left it.
         assert (tmp_path / "manifest.yaml").read_text() == 'version: "0.2.1"\n'
         assert read_baseline(tmp_path).historical is True
@@ -468,7 +468,7 @@ class TestStatusOfHistorical:
                 operations, "get_channel_app_status", return_value={"install": {"state": "current"}}
             ),
         ):
-            mod._app_status(argparse.Namespace(directory=str(tmp_path), channel=None, json=False))
+            mod._app_status(argparse.Namespace(directory=str(tmp_path), project=None, json=False))
 
         # The head's hashes are all status reads; no content is fetched.
         assert files_reads == []
@@ -531,7 +531,7 @@ class TestGuide:
         assert "refuses this directory" in text
         assert "popcorn app status" in text
         # The same recipe `app publish` gives when it refuses this copy.
-        assert f"popcorn app checkout --channel {_CONV} --dir <new-dir>" in text
+        assert f"popcorn app checkout --project {_CONV} --dir <new-dir>" in text
         assert "popcorn app publish <new-dir> --bump patch" in text
         # The publish loop is exactly what must not be promised here.
         assert "popcorn app validate ." not in text
@@ -638,7 +638,7 @@ class TestVersionArgumentType:
         from popcorn_cli.cli import build_parser
 
         with pytest.raises(SystemExit):
-            build_parser().parse_args(["app", "checkout", "--channel", "x", "--version", "0.1.0"])
+            build_parser().parse_args(["app", "checkout", "--project", "x", "--version", "0.1.0"])
         err = capsys.readouterr().err
         assert "takes a version id" in err
         assert "not a semver like '0.1.0'" in err

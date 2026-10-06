@@ -32,7 +32,7 @@ def test_a_directory_sends_only_root_flows(tmp_path):
         sent.append(text)
         return {"valid": True, "steps": []}
 
-    args = argparse.Namespace(path=str(tmp_path), channel="#alerts")
+    args = argparse.Namespace(path=str(tmp_path), project="#alerts")
     with (
         patch("popcorn_cli.cli._get_client", return_value=object()),
         patch("popcorn_cli.cli._output") as output,

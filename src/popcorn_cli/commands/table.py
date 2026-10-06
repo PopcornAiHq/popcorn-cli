@@ -1,4 +1,4 @@
-"""`popcorn table` — the channel's agent-store data (tables, rows, scalars).
+"""`popcorn table` — the project's agent-store data (tables, rows, scalars).
 
 Thin, faithful views over /api/v1/conversations/{id}/data-store. These are the
 observation commands a template author needs: after a flow runs, did the row
@@ -18,7 +18,7 @@ from popcorn_core import operations
 
 from ..registry import Argument, Command, Subcommand, register
 
-_CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
+_PROJECT = Argument("project", "Project name (#general) or UUID", required=True)
 _NAME = Argument("name", "Table name", positional=True)
 _RECORD_ID = Argument("record_id", "Record id", positional=True)
 
@@ -26,9 +26,9 @@ _RECORD_ID = Argument("record_id", "Record id", positional=True)
 def _table_list(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.list_tables(_get_client(args), args.channel)
+    resp = operations.list_tables(_get_client(args), args.project)
     tables = resp.get("tables", [])
-    lines = [f"Tables in {args.channel} ({len(tables)}):"]
+    lines = [f"Tables in {args.project} ({len(tables)}):"]
     for t in tables:
         if isinstance(t, dict):
             lines.append(f"  {t.get('name', '?'):<24} {t.get('record_count', '?')} rows")
@@ -59,7 +59,7 @@ def _column_line(c: dict) -> str:
 def _table_schema(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.get_table(_get_client(args), args.channel, args.name)
+    resp = operations.get_table(_get_client(args), args.project, args.name)
     table = resp.get("table", resp)
     schema_version = table.get("schema_version") or {}
     cols = (schema_version.get("schema_def") or {}).get("columns", [])
@@ -74,7 +74,7 @@ def _table_rows(args: argparse.Namespace) -> None:
     raw_filter = getattr(args, "filter", None)
     resp = operations.list_records(
         _get_client(args),
-        args.channel,
+        args.project,
         args.name,
         filter=_read_json_object(raw_filter, "--filter") if raw_filter else None,
         limit=getattr(args, "limit", None) or 50,
@@ -93,7 +93,7 @@ def _table_rows(args: argparse.Namespace) -> None:
 def _row_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.get_record(_get_client(args), args.channel, args.name, args.record_id)
+    resp = operations.get_record(_get_client(args), args.project, args.name, args.record_id)
     _output(args, resp, json.dumps(resp.get("record", resp), indent=2, default=str))
 
 
@@ -101,7 +101,7 @@ def _row_patch(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output, _read_json_object
 
     data = _read_json_object(args.data, "--data")
-    resp = operations.patch_record(_get_client(args), args.channel, args.name, args.record_id, data)
+    resp = operations.patch_record(_get_client(args), args.project, args.name, args.record_id, data)
     _output(args, resp, f"Patched {args.name} record {args.record_id}")
 
 
@@ -111,7 +111,7 @@ def _row_delete(args: argparse.Namespace) -> None:
     if not _confirm(args, f"Delete {args.name} record {args.record_id}?"):
         _status("Cancelled.")
         return
-    resp = operations.delete_record(_get_client(args), args.channel, args.name, args.record_id)
+    resp = operations.delete_record(_get_client(args), args.project, args.name, args.record_id)
     _output(args, resp, f"Deleted {args.name} record {args.record_id}")
 
 
@@ -120,14 +120,14 @@ def _scalar_list(args: argparse.Namespace) -> None:
 
     resp = operations.list_scalars(
         _get_client(args),
-        args.channel,
+        args.project,
         limit=getattr(args, "limit", None) or 50,
         cursor=getattr(args, "cursor", None),
     )
     scalars = resp.get("scalars", [])
     cursor = resp.get("cursor")
     _attach_pagination(resp, {"cursor": cursor} if resp.get("has_more") and cursor else None)
-    lines = [f"Scalars in {args.channel} ({len(scalars)}):"]
+    lines = [f"Scalars in {args.project} ({len(scalars)}):"]
     for s in scalars:
         if isinstance(s, dict):
             lines.append(f"  {s.get('key', '?'):<28} {str(s.get('value', ''))[:80]}")
@@ -139,7 +139,7 @@ def _scalar_list(args: argparse.Namespace) -> None:
 def _scalar_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.get_scalar(_get_client(args), args.channel, args.key)
+    resp = operations.get_scalar(_get_client(args), args.project, args.key)
     scalar = resp.get("scalar") or {}
     _output(args, resp, str(scalar.get("value", "")))
 
@@ -147,7 +147,7 @@ def _scalar_get(args: argparse.Namespace) -> None:
 def _scalar_set(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.set_scalar(_get_client(args), args.channel, args.key, args.value)
+    resp = operations.set_scalar(_get_client(args), args.project, args.key, args.value)
     _output(args, resp, f"Set {args.key}")
 
 
@@ -159,7 +159,7 @@ def _table_audit(args: argparse.Namespace) -> None:
     # further back would read as "never touched".
     resp = operations.list_store_audit(
         _get_client(args),
-        args.channel,
+        args.project,
         limit=getattr(args, "limit", None) or 50,
         cursor=getattr(args, "cursor", None),
         entity_type=getattr(args, "entity_type", None),
@@ -187,15 +187,15 @@ register(
             "scalar list/get/set, audit)"
         ),
         subcommands=[
-            Subcommand("list", "List tables in a channel", _table_list, [_CHANNEL]),
-            Subcommand("schema", "Show a table's columns", _table_schema, [_NAME, _CHANNEL]),
+            Subcommand("list", "List tables in a project", _table_list, [_PROJECT]),
+            Subcommand("schema", "Show a table's columns", _table_schema, [_NAME, _PROJECT]),
             Subcommand(
                 "rows",
                 "List rows in a table",
                 _table_rows,
                 [
                     _NAME,
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "filter",
                         'Equality map, e.g. \'{"Status":"firing"}\'',
@@ -215,7 +215,7 @@ register(
                 None,
                 [],
                 [
-                    Subcommand("get", "Get one row", _row_get, [_NAME, _RECORD_ID, _CHANNEL]),
+                    Subcommand("get", "Get one row", _row_get, [_NAME, _RECORD_ID, _PROJECT]),
                     Subcommand(
                         "patch",
                         "Patch one row's columns",
@@ -223,7 +223,7 @@ register(
                         [
                             _NAME,
                             _RECORD_ID,
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "data",
                                 "JSON object of columns to set "
@@ -237,13 +237,13 @@ register(
                         "delete",
                         "Delete one row",
                         _row_delete,
-                        [_NAME, _RECORD_ID, _CHANNEL],
+                        [_NAME, _RECORD_ID, _PROJECT],
                     ),
                 ],
             ),
             Subcommand(
                 "scalar",
-                "Channel scalars (list, get, set)",
+                "Project scalars (list, get, set)",
                 None,
                 [],
                 [
@@ -252,7 +252,7 @@ register(
                         "List scalars",
                         _scalar_list,
                         [
-                            _CHANNEL,
+                            _PROJECT,
                             Argument("limit", "Max scalars (default 50)", type=int),
                             Argument(
                                 "cursor",
@@ -265,7 +265,7 @@ register(
                         "get",
                         "Read one scalar",
                         _scalar_get,
-                        [Argument("key", "Scalar key", positional=True), _CHANNEL],
+                        [Argument("key", "Scalar key", positional=True), _PROJECT],
                     ),
                     Subcommand(
                         "set",
@@ -278,7 +278,7 @@ register(
                                 "Scalar value (strings on the wire)",
                                 positional=True,
                             ),
-                            _CHANNEL,
+                            _PROJECT,
                         ],
                     ),
                 ],
@@ -288,7 +288,7 @@ register(
                 "Recent agent-store audit entries",
                 _table_audit,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     # No `choices` on entity-type: the entity taxonomy is the
                     # server's, and a copy here would be a second place to keep
                     # current. An unknown value matches nothing, which reads the

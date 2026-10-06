@@ -8,7 +8,7 @@ What is here is **not** bundle source, and there is no bundle here to copy.
   plausible row rather than failing. No introspection produces any of it. Two
   findings are struck through rather than deleted, because the record of
   having been wrong is part of the evidence.
-- `*/fixtures/*.json` — sample webhook payloads to POST at a channel while
+- `*/fixtures/*.json` — sample webhook payloads to POST at a project while
   testing, including a deliberately malformed one.
 
 ## Where the bundles went
@@ -18,13 +18,13 @@ The two bundles that used to sit here are checker fixtures, at
 `version:`, which a publish requires, and both had drifted from the bundles the
 platform ships.
 
-To get real bundle source, ask the server for it — a checkout is always the
+To get real app source, ask the server for it — a checkout is always the
 deployed version:
 
 ```bash
-popcorn channel create '#scratch' --template alerttracker
-popcorn app fork --channel '#scratch'
-popcorn app checkout --channel '#scratch'
+popcorn project create '#scratch' --app alerttracker
+popcorn app fork --project '#scratch'
+popcorn app checkout --project '#scratch'
 ```
 
 `docs/TEMPLATE_AUTHORING.md` is the guide; §2 covers that loop.

@@ -16,7 +16,7 @@ produced. Re-declaring a family has to reproduce it byte for byte.
 Every family recorded here is now registry-declared, so the fixture has
 outlived its original job of diffing a migration against the parser it
 replaced. It is kept because it still pins parsed VALUES across the whole
-surface: a change to the dual-spelled `--channel` mechanism, or to the
+surface: a change to the dual-spelled `--project` mechanism, or to the
 trailing-positional shift, shows up here as a diff rather than as a bug
 report. (`site` and `vm` were recorded while they were the hand-written
 holdouts; both have since been removed outright.)
@@ -60,6 +60,44 @@ def test_parsed_namespace_is_unchanged(case, parser):
     assert _normalise(parser.parse_args(case["argv"])) == case["namespace"]
 
 
+# Channels became projects and templates apps. The old spellings keep parsing
+# — `channel`/`channel-config` as hidden families, `--channel`/`--template` by
+# rewriting — so every recorded row that uses a new spelling is replayed under
+# the old one and must reach the same values. Only a renamed family's own
+# subcommand dests differ, because argparse derives them from the name typed.
+_RENAMED_FAMILIES = {"project": "channel", "project-config": "channel-config"}
+
+
+def _legacy(case: dict) -> dict | None:
+    argv, ns = list(case["argv"]), dict(case["namespace"])
+    family = argv[0]
+    if family in _RENAMED_FAMILIES:
+        old = _RENAMED_FAMILIES[family]
+        argv[0] = old
+        ns = {
+            (old + k[len(family) :] if k.startswith(family + "_") else k): v for k, v in ns.items()
+        }
+        ns["command"] = old
+        if family == "project":
+            argv = ["--template" if a == "--app" else a for a in argv]
+            if argv[1:2] == ["apps"]:
+                argv[1] = ns["channel_command"] = "templates"
+    elif "--project" not in argv:
+        return None
+    argv = ["--channel" if a == "--project" else a for a in argv]
+    return {"argv": argv, "namespace": dict(sorted(ns.items()))}
+
+
+_LEGACY_CASES = [legacy for legacy in map(_legacy, _CASES) if legacy is not None]
+
+
+@pytest.mark.parametrize(
+    "case", _LEGACY_CASES, ids=lambda c: " ".join(c["argv"][:2]) + f" ({len(c['argv'])})"
+)
+def test_the_old_spelling_parses_the_same(case, parser):
+    assert _normalise(parser.parse_args(case["argv"])) == case["namespace"]
+
+
 # Rows recorded per family, pinned so that deleting coverage is a failure
 # rather than a quieter test run. Hardcoded on purpose: deriving these from the
 # fixture would make the assertion agree with whatever the fixture happens to
@@ -72,6 +110,8 @@ _MINIMUM_ROWS = {
     "channel-config": 7,
     "flow": 11,
     "message": 24,
+    "project": 30,
+    "project-config": 7,
     "schedule": 2,
     "table": 11,
     "template": 3,
@@ -89,7 +129,7 @@ def test_no_family_loses_its_recorded_coverage():
     """
     import collections
 
-    counts = collections.Counter(c["argv"][0] for c in _CASES)
+    counts = collections.Counter(c["argv"][0] for c in [*_CASES, *_LEGACY_CASES])
     thin = {
         family: (counts[family], floor)
         for family, floor in _MINIMUM_ROWS.items()

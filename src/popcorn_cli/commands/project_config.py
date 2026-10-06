@@ -1,10 +1,10 @@
-"""`popcorn channel-config` — read and edit a channel's config.
+"""`popcorn project-config` — read and edit a project's config.
 
 ```
-channel-config show → params set / unset → integrations set / unset
+project-config show → params set / unset → integrations set / unset
 ```
 
-`show` is the useful one: it prints the config next to what the channel's
+`show` is the useful one: it prints the config next to what the project's
 flows actually reference, and the diff between them. That diff is the lint the
 CLI never had for a bundle under iteration — `--strict` turns it into an exit
 code.
@@ -15,7 +15,7 @@ so a per-key edit built on it is a read-modify-write that loses a concurrent
 edit's keys. The PATCH sends only the keys being changed and the server
 merges them under a row lock; see `operations.patch_channel_parameters`.
 
-The config lives on the channel's `channel_app` row, and every command here
+The config lives on the project's `channel_app` row, and every command here
 goes through the endpoints rather than assuming where.
 
 Handlers import `..cli` helpers inside the function body: cli.py imports this
@@ -34,9 +34,9 @@ from popcorn_core.channel_config import (
 )
 from popcorn_core.errors import EXIT_UNHEALTHY
 
-from ..registry import Argument, Command, Subcommand, register
+from ..registry import Argument, Command, Subcommand, register, register_renamed
 
-_CHANNEL = Argument("channel", "Channel name (#alerts) or UUID", required=True)
+_PROJECT = Argument("project", "Project name (#alerts) or UUID", required=True)
 
 
 def _render_show(data: dict) -> str:
@@ -46,7 +46,7 @@ def _render_show(data: dict) -> str:
         lines.append(f"⚠ config is malformed: {data['config_error']}")
         lines.append("")
     elif not data.get("config_found"):
-        lines.append("This channel has no config yet.")
+        lines.append("This project has no config yet.")
         lines.append("")
 
     params = data.get("channel_parameters") or {}
@@ -121,7 +121,7 @@ def _channel_config_show(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = operations.inspect_channel_config(client, args.channel)
+    data = operations.inspect_channel_config(client, args.project)
     fatal = fatal_findings(data.get("comparison") or {})
     _output(args, {**data, "fatal": fatal}, _render_show(data))
 
@@ -138,10 +138,10 @@ def _params_set(args: argparse.Namespace) -> None:
     updates = parse_assignments(args.assignment)
 
     if args.replace:
-        data = operations.replace_channel_parameters(client, args.channel, updates)
+        data = operations.replace_channel_parameters(client, args.project, updates)
         note = "Replaced the parameters section"
     else:
-        data = operations.patch_channel_parameters(client, args.channel, set_=updates)
+        data = operations.patch_channel_parameters(client, args.project, set_=updates)
         note = f"Set {', '.join(sorted(updates))}"
 
     written = parameters_of(data)
@@ -163,7 +163,7 @@ def _params_unset(args: argparse.Namespace) -> None:
     # A key that was not set is not an error: the end state is what was
     # asked for. The response carries the section as written, not what
     # changed, so the CLI cannot say which keys were already absent.
-    data = operations.patch_channel_parameters(client, args.channel, unset=args.key)
+    data = operations.patch_channel_parameters(client, args.project, unset=args.key)
     written = parameters_of(data)
     lines = [
         f"Unset {', '.join(args.key)}",
@@ -177,7 +177,7 @@ def _integrations_set(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = operations.set_channel_integration(client, args.channel, args.name, args.integration_id)
+    data = operations.set_channel_integration(client, args.project, args.name, args.integration_id)
     entry = (data.get("integrations") or {}).get(args.name) or {}
     rendered = "\n".join(
         [
@@ -185,7 +185,7 @@ def _integrations_set(args: argparse.Namespace) -> None:
             f"{entry.get('provider') or 'account'} "
             f"{entry.get('provider_account') or args.integration_id}",
             "",
-            "Next: popcorn channel-config show --channel <channel>",
+            "Next: popcorn project-config show --project <project>",
         ]
     )
     _output(args, data, rendered)
@@ -195,7 +195,7 @@ def _integrations_unset(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = operations.unset_channel_integration(client, args.channel, args.name)
+    data = operations.unset_channel_integration(client, args.project, args.name)
     rendered = "\n".join(
         [
             f"Removed the {args.name} binding",
@@ -224,8 +224,8 @@ def _accounts(args: argparse.Namespace) -> None:
             )
         lines += [
             "",
-            "Use an ID with: popcorn channel-config integrations set "
-            "--channel <channel> --name <name> --integration-id <id>",
+            "Use an ID with: popcorn project-config integrations set "
+            "--project <project> --name <name> --integration-id <id>",
         ]
         rendered = "\n".join(lines)
     _output(args, data, rendered)
@@ -233,18 +233,18 @@ def _accounts(args: argparse.Namespace) -> None:
 
 _NAME = Argument("name", "Integration name, as $channel.integrations.<name>", required=True)
 
-register(
+PROJECT_CONFIG = register(
     Command(
-        name="channel-config",
+        name="project-config",
         category="flows",
-        description="Channel config — inspect it against the flows, and edit it",
+        description="Project config — inspect it against the flows, and edit it",
         subcommands=[
             Subcommand(
                 "show",
                 "Config, the flows' $channel.* usage, and the diff between them",
                 _channel_config_show,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "strict",
                         "Exit 5 when a finding would make a run fail",
@@ -263,7 +263,7 @@ register(
                         "Set key=value, keeping the other parameters",
                         _params_set,
                         [
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "assignment",
                                 "key=value (repeatable); values parse as JSON when they can",
@@ -282,7 +282,7 @@ register(
                         "Remove parameters, keeping the rest",
                         _params_unset,
                         [
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "key",
                                 "Parameter name (repeatable)",
@@ -304,11 +304,11 @@ register(
                         "Point a name at one of YOUR connected accounts",
                         _integrations_set,
                         [
-                            _CHANNEL,
+                            _PROJECT,
                             _NAME,
                             Argument(
                                 "integration-id",
-                                "One of your account ids (see 'channel-config accounts')",
+                                "One of your account ids (see 'project-config accounts')",
                                 required=True,
                             ),
                         ],
@@ -317,7 +317,7 @@ register(
                         "unset",
                         "Remove a named binding (leaves the OAuth grant)",
                         _integrations_unset,
-                        [_CHANNEL, _NAME],
+                        [_PROJECT, _NAME],
                     ),
                 ],
             ),
@@ -327,16 +327,19 @@ register(
                 _accounts,
                 [
                     # Accepted, not used: the list is the caller's own and
-                    # not channel-scoped, but every sibling takes --channel
-                    # and a scripted `channel-config <sub> --channel X` must
+                    # not project-scoped, but every sibling takes --project
+                    # and a scripted `project-config <sub> --project X` must
                     # not fail on this one.
                     Argument(
-                        "channel",
-                        "Ignored — your accounts are not channel-scoped; "
-                        "accepted so every channel-config subcommand takes it",
+                        "project",
+                        "Ignored — your accounts are not project-scoped; "
+                        "accepted so every project-config subcommand takes it",
                     ),
                 ],
             ),
         ],
     )
 )
+
+# The family's name before channels became projects; see `register_renamed`.
+register_renamed(PROJECT_CONFIG, "channel-config")

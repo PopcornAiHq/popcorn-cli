@@ -1,6 +1,6 @@
 # Popcorn CLI
 
-CLI for the [Popcorn](https://popcorn.ai) API. Send messages, search conversations, publish app bundles, and manage your workspace from the terminal.
+CLI for the [Popcorn](https://popcorn.ai) API. Send messages, search projects, publish apps, and manage your workspace from the terminal.
 
 > **Using this from an agent or script?** Set `POPCORN_AGENT=1` to enable agent-friendly defaults (`--json`, `--quiet`, `--no-color`, no upgrade prompts). Every command supports `--json`, which returns a stable envelope (`{"ok": true, "data": ...}`) with machine-readable `error_code` and semantic exit codes. Run `popcorn commands --json` to discover the full schema. For the formal contract, see [SPEC.md](./SPEC.md). Quick overview below.
 
@@ -46,18 +46,18 @@ popcorn message send '#general' "Hello from the CLI!"
 echo "piped message" | popcorn message send '#general'
 popcorn message send '#general' "see attached" --file ./screenshot.png
 
-# Search messages — optionally scoped by channel, author or time
+# Search messages — optionally scoped by project, author or time
 popcorn message search "deployment"
 popcorn message search "deployment" --in '#general' --since 2026-01-01
 popcorn message search --from ana@example.com --in '#general'   # filters, no query
 
-# List channels
-popcorn channel list
+# List projects
+popcorn project list
 
 # Notifications
 popcorn workspace inbox --unread
 
-# Watch a channel live
+# Watch a project live
 popcorn message list '#general' --watch
 ```
 
@@ -65,13 +65,20 @@ popcorn message list '#general' --watch
 
 Run `popcorn commands` for full JSON schema, or `popcorn help` for the help page.
 
-Wherever the table below shows a channel as a positional (`<conv>`, `[channel]`),
-`--channel <name-or-uuid>` does the same thing. That spelling is accepted by
-every command that acts on a channel, including the ones that take it only as a
+A project is what the API calls a channel: one tracker, running one app.
+Wherever the table below shows a project as a positional (`<project>`),
+`--project <name-or-uuid>` does the same thing. That spelling is accepted by
+every command that acts on a project, including the ones that take it only as a
 flag, so it is the form to reach for when you would otherwise have to look up
 which family this command belongs to.
 
-The same holds for the checkout or bundle directory: wherever the table shows
+The old spellings from before projects and apps were named that way —
+`popcorn channel …`, `channel-config`, `channel templates`, `--channel`,
+`--template` — still work and print a note naming the replacement; see
+[SPEC.md](SPEC.md#renamed-spellings). DMs and group DMs are not projects:
+`project list --dms` is deprecated and will be removed.
+
+The same holds for the checkout directory: wherever the table shows
 it as a positional (`[dir]`, `<dir>`), `--dir <path>` does the same thing. On
 `popcorn app checkout` prefer the flag — a bare `--fork` cannot be told apart
 from the directory positional, so `--fork mydir` names the *line* `mydir`.
@@ -79,65 +86,65 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | Command | Purpose |
 |---------|---------|
 | **Messages** | |
-| `popcorn message send <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
-| `popcorn message list <conv> [--thread ID] [--limit N] [--before ID] [--after ID]` | Read message history |
-| `popcorn message threads <conv> [--limit N] [--offset N]` | List threads with reply counts |
+| `popcorn message send <project> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
+| `popcorn message list <project> [--thread ID] [--limit N] [--before ID] [--after ID]` | Read message history |
+| `popcorn message threads <project> [--limit N] [--offset N]` | List threads with reply counts |
 | `popcorn message get <msg_id>` | Get a single message by ID |
-| `popcorn message edit <conv> <msg_id> "content"` | Edit a message |
-| `popcorn message delete <conv> <msg_id>` | Delete a message |
-| `popcorn message react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
-| `popcorn message search [query] [--in CHANNELS] [--from USERS] [--since T] [--until T] [--has WHAT] [--sort ORDER]` | Full-text message search. `--in` and `--from` accept comma-separated names or UUIDs; `--since`/`--until` take ISO 8601 times and `--has` takes `file,images,link,mention,video`. The query may be omitted when at least one filter other than `--sort` is given |
+| `popcorn message edit <project> <msg_id> "content"` | Edit a message |
+| `popcorn message delete <project> <msg_id>` | Delete a message |
+| `popcorn message react <project> <msg_id> <emoji> [--remove]` | Add/remove reaction |
+| `popcorn message search [query] [--in PROJECTS] [--from USERS] [--since T] [--until T] [--has WHAT] [--sort ORDER]` | Full-text message search. `--in` and `--from` accept comma-separated names or UUIDs; `--since`/`--until` take ISO 8601 times and `--has` takes `file,images,link,mention,video`. The query may be omitted when at least one filter other than `--sort` is given |
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
-| **Channels** | |
-| `popcorn channel list [query] [--dms] [--include-archived] [--include-hidden]` | List channels or DMs, following the server's cursor to the last page. Archived and hidden conversations are excluded unless asked for |
-| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel. `--type` defaults to `workspace_channel` (everyone in the workspace is a member, now and as people join, so `--members` is ignored); `public_channel` is visible to anyone and joined on demand, `private_channel` holds only invited members. `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
-| `popcorn channel info <conv>` | Channel details + members |
-| `popcorn channel join <conv>` | Join a channel |
-| `popcorn channel leave <conv>` | Leave a channel |
-| `popcorn channel invite <conv> <user_ids>` | Invite users to a channel |
-| `popcorn channel kick <conv> <user_id>` | Remove a user from a channel |
-| `popcorn channel edit <conv> [--name N] [--description D]` | Update channel name or description |
-| `popcorn channel archive <conv> [--undo]` | Archive/unarchive a channel |
-| `popcorn channel delete <conv>` | Delete a channel |
-| `popcorn channel templates` | List the channel templates the registry can install |
+| **Projects** | |
+| `popcorn project list [query] [--include-archived] [--include-hidden]` | List projects, following the server's cursor to the last page. Archived and hidden projects are excluded unless asked for. `--dms` lists DMs instead, and is deprecated |
+| `popcorn project create <name> [--type TYPE] [--members IDS] [--app A] [--if-not-exists]` | Create a project. `--type` defaults to `workspace_channel` (everyone in the workspace is a member, now and as people join, so `--members` is ignored); `public_channel` is visible to anyone and joined on demand, `private_channel` holds only invited members. `--app` runs that app in it (the only way to install one at creation). `--if-not-exists` returns a project you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
+| `popcorn project info <project>` | Project details + members |
+| `popcorn project join <project>` | Join a project |
+| `popcorn project leave <project>` | Leave a project |
+| `popcorn project invite <project> <user_ids>` | Invite users to a project |
+| `popcorn project kick <project> <user_id>` | Remove a user from a project |
+| `popcorn project edit <project> [--name N] [--description D]` | Update project name or description |
+| `popcorn project archive <project> [--undo]` | Archive/unarchive a project |
+| `popcorn project delete <project>` | Delete a project |
+| `popcorn project apps` | List the apps a project can be created with |
 | **Flows** | |
 | `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
-| `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
-| `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
-| `popcorn flow get <flow_id> --channel <conv> [--no-triggers]` | Get a flow definition and what starts it on the channel (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
-| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded) |
-| `popcorn flow runs list --channel <conv> [--status S] [--flow <name>] [--limit N] [--page-token T]` | List flow runs, each with its flow name; `--flow` narrows to one flow (pass it again with `--page-token`); older runs may be stamped with the flow's id instead of its name, and passing that id lists them |
-| `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on, its inputs and the version it ran) |
-| `popcorn flow runs timeline <workflow_id> --channel <conv> [--run-id R] [--before N] [--limit N]` | List a run's steps (activities, timers, signals) newest first, with outcome, duration and attempt; page with `--before` and `--run-id` from `pagination.next` |
-| `popcorn flow runs cancel <workflow_id> --channel <conv> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |
-| `popcorn flow runs cancel --flow <name> --channel <conv> [--force] [--page-token T]` | Stop every running run of a flow — the brake on a driver like `run_eval` whose launched runs outlive it |
+| `popcorn flow validate <file\|dir> --project <project>` | Statically validate flow YAML without installing (exit 1 if any fail) |
+| `popcorn flow list --project <project> [--limit N] [--offset N]` | List flows in a project |
+| `popcorn flow get <flow_id> --project <project> [--no-triggers]` | Get a flow definition and what starts it on the project (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
+| `popcorn flow run <flow_id> --project <project> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded) |
+| `popcorn flow runs list --project <project> [--status S] [--flow <name>] [--limit N] [--page-token T]` | List flow runs, each with its flow name; `--flow` narrows to one flow (pass it again with `--page-token`); older runs may be stamped with the flow's id instead of its name, and passing that id lists them |
+| `popcorn flow runs get <workflow_id> --project <project> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on, its inputs and the version it ran) |
+| `popcorn flow runs timeline <workflow_id> --project <project> [--run-id R] [--before N] [--limit N]` | List a run's steps (activities, timers, signals) newest first, with outcome, duration and attempt; page with `--before` and `--run-id` from `pagination.next` |
+| `popcorn flow runs cancel <workflow_id> --project <project> [--run-id R] [--force] [--reason S]` | Stop one run (cooperative cancel; `--force` terminates) |
+| `popcorn flow runs cancel --flow <name> --project <project> [--force] [--page-token T]` | Stop every running run of a flow — the brake on a driver like `run_eval` whose launched runs outlive it |
 | **Schedules** | |
-| `popcorn schedule list --channel <conv>` | List a channel's live scheduled flows, with cadence and next run |
-| `popcorn schedule get <schedule> --channel <conv>` | One schedule's cadence, overlap policy, inputs and run counters (`<schedule>` is a slug, flow id or full schedule_id) |
-| `popcorn schedule trigger <schedule> --channel <conv> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
-| **App bundles** | |
-| `popcorn app validate <dir> [--strict]` | Check a bundle before publishing: its structure offline, and, in a fork checkout while logged in, the server's publish checks — the manifest's tables among them — without publishing. Says when the server checks were skipped and why (exit 1 on errors; `--strict` also on warnings). `popcorn template check` is the old name and still works |
-| **Tables** (channel agent store) | |
-| `popcorn table list --channel <conv>` | List tables in a channel |
-| `popcorn table schema <name> --channel <conv>` | Show a table's columns |
-| `popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N] [--cursor C]` | List rows in a table |
-| `popcorn table row get <name> <record_id> --channel <conv>` | Get one row |
-| `popcorn table row patch <name> <record_id> --channel <conv> --data JSON` | Patch one row's columns |
-| `popcorn table row delete <name> <record_id> --channel <conv>` | Delete one row (confirms) |
-| `popcorn table scalar list --channel <conv> [--limit N]` | List channel scalars |
-| `popcorn table scalar get <key> --channel <conv>` | Read one scalar |
-| `popcorn table scalar set <key> <value> --channel <conv>` | Write one scalar |
-| `popcorn table audit --channel <conv> [--entity-type T] [--entity-id ID] [--since ISO8601] [--limit N] [--cursor C]` | Recent agent-store audit entries. The filters are server-side, so `--entity-id` reads one row's whole history rather than the current page's |
+| `popcorn schedule list --project <project>` | List a project's live scheduled flows, with cadence and next run |
+| `popcorn schedule get <schedule> --project <project>` | One schedule's cadence, overlap policy, inputs and run counters (`<schedule>` is a slug, flow id or full schedule_id) |
+| `popcorn schedule trigger <schedule> --project <project> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
+| **Apps** | |
+| `popcorn app validate <dir> [--strict]` | Check an app before publishing: its structure offline, and, in a fork checkout while logged in, the server's publish checks — the manifest's tables among them — without publishing. Says when the server checks were skipped and why (exit 1 on errors; `--strict` also on warnings). `popcorn template check` is the old name and still works |
+| **Tables** (project agent store) | |
+| `popcorn table list --project <project>` | List tables in a project |
+| `popcorn table schema <name> --project <project>` | Show a table's columns |
+| `popcorn table rows <name> --project <project> [--filter JSON] [--limit N] [--cursor C]` | List rows in a table |
+| `popcorn table row get <name> <record_id> --project <project>` | Get one row |
+| `popcorn table row patch <name> <record_id> --project <project> --data JSON` | Patch one row's columns |
+| `popcorn table row delete <name> <record_id> --project <project>` | Delete one row (confirms) |
+| `popcorn table scalar list --project <project> [--limit N]` | List project scalars |
+| `popcorn table scalar get <key> --project <project>` | Read one scalar |
+| `popcorn table scalar set <key> <value> --project <project>` | Write one scalar |
+| `popcorn table audit --project <project> [--entity-type T] [--entity-id ID] [--since ISO8601] [--limit N] [--cursor C]` | Recent agent-store audit entries. The filters are server-side, so `--entity-id` reads one row's whole history rather than the current page's |
 | **Webhooks** | |
-| `popcorn webhook create <conv> <name> [--description D] [--action-mode MODE] [--trigger-flow-name F]` | Create a webhook. The flow binding is fixed here — `update` cannot re-point it |
-| `popcorn webhook list <conv>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
-| `popcorn webhook get <webhook> [--channel <conv>] [--show-url]` | Show one webhook's settings (`<webhook>` is a UUID, or a name with `--channel`) |
+| `popcorn webhook create <project> <name> [--description D] [--action-mode MODE] [--trigger-flow-name F]` | Create a webhook. The flow binding is fixed here — `update` cannot re-point it |
+| `popcorn webhook list <project>` | List webhooks (`--show-url` for the ingest URL, which carries a secret token) |
+| `popcorn webhook get <webhook> [--project <project>] [--show-url]` | Show one webhook's settings (`<webhook>` is a UUID, or a name with `--project`) |
 | `popcorn webhook update <webhook> [--name N] [--description D] [--action-mode MODE] [--activate\|--deactivate] [--enforce-hmac\|--no-enforce-hmac]` | Change a webhook's settings. `--enforce-hmac` only takes effect once the webhook has an HMAC secret |
 | `popcorn webhook delete <webhook>` | Delete a webhook. Prompts; `--yes` to skip |
 | `popcorn webhook override-rules get\|set <webhook> [rules]` | Per-event overrides; `set` replaces the whole set (`@-` reads stdin, `@path` a file) |
-| `popcorn webhook deliveries <conv> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
+| `popcorn webhook deliveries <project> [--limit N] [--since ISO] [--status S]` | List webhook deliveries |
 | `popcorn webhook event-types` | List valid webhook sources and action modes |
-| `popcorn webhook send <target> [payload] [--channel <conv>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |
+| `popcorn webhook send <target> [payload] [--project <project>]` | POST a payload to a webhook (target: ingest URL, webhook UUID, or name) |
 | **Auth & identity** | |
 | `popcorn auth login [--with-token] [--force] [--workspace NAME]` | Log in |
 | `popcorn auth status` | Show auth state |
@@ -187,8 +194,8 @@ export POPCORN_AGENT=1   # implies --json, --quiet, --no-color; suppresses auto-
 $ popcorn whoami --json
 {"ok": true, "data": {"user": {...}, "workspace": {...}, "workspaces": [...]}}
 
-$ popcorn channel info '#nope' --json
-{"ok": false, "error": "Channel not found: #nope",
+$ popcorn project info '#nope' --json
+{"ok": false, "error": "Project not found: #nope",
  "error_code": "not_found", "code": "PopcornError", "retryable": false}   # exit 1
 ```
 
@@ -260,9 +267,9 @@ popcorn message list '#general' --watch --json | while read line; do
 done
 ```
 
-## Conversation References
+## Project References
 
-Channels can be referenced by name (`#general`) or UUID. Names are cached for 5 minutes.
+Projects can be referenced by name (`#general`) or UUID. Names are cached for 5 minutes.
 
 ## Shell Completions
 

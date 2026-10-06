@@ -383,7 +383,7 @@ def _read_text(path: Path) -> str:
         return path.read_bytes().decode("utf-8")
     except UnicodeDecodeError:
         raise PopcornError(
-            f"{path} is not UTF-8 text — a bundle has no binary files",
+            f"{path} is not UTF-8 text — an app has no binary files",
             error_code="validation",
         ) from None
 
@@ -556,16 +556,16 @@ def diff_tree_hashes(base: dict[str, str], local: dict[str, str]) -> TreeDiff:
 
 
 def fork_line_reach(result: dict[str, Any]) -> str:
-    """What a publish changes beyond the channel it was run from.
+    """What a publish changes beyond the project it was run from.
 
     A publish is channel-scoped in permission but workspace-scoped in effect:
-    every other channel on the fork line picks the new head up within a day,
+    every other project on the fork line picks the new head up within a day,
     through its own auto-update schedule. Reported because the line that
-    follows — "Installing on this channel" — is true of the install and false
+    follows — "Installing on this project" — is true of the install and false
     of the publish, and a caller relaying only that tells its reader one
-    channel changed.
+    project changed.
 
-    The server counts only the channels that will actually converge: one that
+    The server counts only the projects that will actually converge: one that
     is archived or has pinned its app is bound to the line but never receives
     the publish.
 
@@ -576,9 +576,9 @@ def fork_line_reach(result: dict[str, Any]) -> str:
     count = result.get("other_channels_converging")
     if not isinstance(count, int) or count <= 0:
         return ""
-    channels = "channel" if count == 1 else "channels"
+    projects = "project" if count == 1 else "projects"
     return (
-        f"{count} other {channels} on this fork line will converge on "
+        f"{count} other {projects} on this fork line will converge on "
         f"{result.get('semver') or 'this version'} within a day."
     )
 
@@ -608,7 +608,7 @@ def require_bump(local_version: str, base_semver: str) -> None:
 
     Compared against the BASELINE's semver, which is the fork line's head
     whenever a publish can succeed at all — the server refuses a base that is
-    not the line's head, and what any channel runs plays no part. When the
+    not the line's head, and what any project runs plays no part. When the
     head has moved on since the checkout the server's 409 is the honest
     answer and this check does not try to predict it.
     """
@@ -616,7 +616,7 @@ def require_bump(local_version: str, base_semver: str) -> None:
         return
     raise PopcornError(
         f"manifest version {local_version} does not advance past the "
-        f"checked-out {base_semver} — bundle versions only ever move forward",
+        f"checked-out {base_semver} — app versions only ever move forward",
         error_code="validation",
         hint=f"bump 'version:' in manifest.yaml past {base_semver}",
     )

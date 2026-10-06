@@ -1,10 +1,10 @@
-"""`popcorn schedule` — a channel's live scheduled flows: read, and run now.
+"""`popcorn schedule` — a project's live scheduled flows: read, and run now.
 
-There is no definition write to wrap. A schedule is app-bundle content: the
+There is no definition write to wrap. A schedule is app content: the
 manifest's `schedules:` list declares it and the installer reconciles the
-channel's Temporal schedules to that list on every install. Changing a
+project's Temporal schedules to that list on every install. Changing a
 cadence therefore means editing the manifest and publishing a version, the
-same path as any other change to what a channel does. The user-token
+same path as any other change to what a project does. The user-token
 `create`/`update`/`delete` this command was once expected to grow into were
 deleted server-side outright, not deprecated. The agent surface keeps a live
 `update` PATCH owned by the `set_app_mode` bundle flow, which the next
@@ -30,7 +30,7 @@ from popcorn_core import operations
 
 from ..registry import Argument, Command, Subcommand, register
 
-_CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
+_PROJECT = Argument("project", "Project name (#general) or UUID", required=True)
 
 
 def _humanize_seconds(seconds: int) -> str:
@@ -62,10 +62,10 @@ def _schedule_list(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    resp = operations.list_scheduled_flows(client, args.channel)
+    resp = operations.list_scheduled_flows(client, args.project)
     items = resp.get("scheduled_flows") or []
     count = resp.get("count", len(items))
-    lines = [f"Schedules in {args.channel} ({count}):"]
+    lines = [f"Schedules in {args.project} ({count}):"]
     for item in items:
         paused = "  [paused]" if item.get("paused") else ""
         next_run = item.get("next_run_at") or "-"
@@ -81,7 +81,7 @@ def _schedule_trigger(args: argparse.Namespace) -> None:
 
     client = _get_client(args)
     resp = operations.trigger_scheduled_flow(
-        client, args.channel, args.schedule, getattr(args, "overlap_policy", None)
+        client, args.project, args.schedule, getattr(args, "overlap_policy", None)
     )
     schedule_id = resp.get("schedule_id") or args.schedule
     workflow_id = resp.get("workflow_id")
@@ -97,7 +97,7 @@ def _schedule_trigger(args: argparse.Namespace) -> None:
             f"  workflow_id  {workflow_id}",
             f"  run_id       {resp.get('run_id') or '-'}",
             "",
-            f"Follow it: popcorn flow runs get {workflow_id} --channel '{args.channel}'",
+            f"Follow it: popcorn flow runs get {workflow_id} --project '{args.project}'",
         ]
     else:
         # Null ids are "not observed", not a failure: a buffer_* policy
@@ -105,7 +105,7 @@ def _schedule_trigger(args: argparse.Namespace) -> None:
         lines = [
             f"Triggered {schedule_id}, but no run was seen starting yet — it may be "
             "deferred behind a running one, or slow to record.",
-            f"Check with: popcorn schedule get {args.schedule} --channel '{args.channel}'",
+            f"Check with: popcorn schedule get {args.schedule} --project '{args.project}'",
         ]
     _output(args, resp, "\n".join(lines))
 
@@ -114,7 +114,7 @@ def _schedule_get(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    resp = operations.get_scheduled_flow(client, args.channel, args.schedule)
+    resp = operations.get_scheduled_flow(client, args.project, args.schedule)
     item = resp.get("scheduled_flow") or {}
     interval = item.get("interval_seconds")
     cadence = _cadence(item)
@@ -127,7 +127,7 @@ def _schedule_get(args: argparse.Namespace) -> None:
         ("timezone", item.get("timezone")),
         ("paused", "yes" if item.get("paused") else "no"),
         # Written by whatever last changed this schedule (`set_app_mode`,
-        # channel archive/unarchive), and usually the only on-the-wire
+        # project archive/unarchive), and usually the only on-the-wire
         # explanation of why a live cadence differs from the manifest's.
         ("note", item.get("note") or "-"),
         ("overlap", item.get("overlap_policy")),
@@ -156,9 +156,9 @@ register(
         subcommands=[
             Subcommand(
                 "list",
-                "List a channel's live scheduled flows",
+                "List a project's live scheduled flows",
                 _schedule_list,
-                [_CHANNEL],
+                [_PROJECT],
             ),
             Subcommand(
                 "get",
@@ -170,7 +170,7 @@ register(
                         "Schedule slug, flow id, or full schedule_id",
                         positional=True,
                     ),
-                    _CHANNEL,
+                    _PROJECT,
                 ],
             ),
             Subcommand(
@@ -183,7 +183,7 @@ register(
                         "Schedule slug, flow id, or full schedule_id",
                         positional=True,
                     ),
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "overlap-policy",
                         "Overlap policy for this run only (default: the schedule's "

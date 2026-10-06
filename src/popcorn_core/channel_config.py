@@ -1,13 +1,13 @@
-"""Parameter parsing and the config lint, for `popcorn channel-config`.
+"""Parameter parsing and the config lint, for `popcorn project-config`.
 
 The one thing to get right about editing: `PUT /channel-config/parameters`
 REPLACES the whole `channel_parameters` section. A `params set tone=crisp`
 sent there as `{"tone": "crisp"}` would delete every other parameter on the
-channel, silently and successfully. Per-key edits therefore go through the
+project, silently and successfully. Per-key edits therefore go through the
 PATCH, which merges on the server; nothing here merges.
 
 The lint is not computed here. `inspect_channel_config` returns the
-`comparison` the server computes between a channel's config and what its
+`comparison` the server computes between a project's config and what its
 flows actually use; this module only decides which of its five fields mean
 "a run will fail" versus "untidy".
 """
@@ -22,7 +22,7 @@ from .errors import PopcornError
 # The three comparison fields that make a run fail. The other two —
 # unused_parameters, unused_integrations — are legal: a config shared across
 # flows carries keys any single flow does not read, so failing on them would
-# make --strict useless on every real channel.
+# make --strict useless on every real project.
 FATAL_COMPARISON_FIELDS = (
     "missing_parameters",
     "missing_integrations",
@@ -46,7 +46,7 @@ def parse_assignments(pairs: list[str]) -> dict[str, Any]:
             raise PopcornError(
                 f"{pair!r} is not key=value",
                 error_code="validation",
-                hint="write: popcorn channel-config params set tone=crisp",
+                hint="write: popcorn project-config params set tone=crisp",
             )
         key, _, raw = pair.partition("=")
         key = key.strip()
@@ -57,7 +57,7 @@ def parse_assignments(pairs: list[str]) -> dict[str, Any]:
             # names the rule instead of surfacing a 400.
             raise PopcornError(
                 f"{key!r} is reserved — named integrations are set with "
-                "'channel-config integrations set'",
+                "'project-config integrations set'",
                 error_code="validation",
             )
         try:

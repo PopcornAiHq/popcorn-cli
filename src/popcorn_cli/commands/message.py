@@ -3,13 +3,13 @@
 Surface-only migration: the nine handlers stay in `cli.py` and are late-bound.
 See `_late.late_handler`.
 
-Most subcommands take the channel as a positional that also answers to
-`--channel`, which is `_CHANNEL` below. `send` is the exception worth reading
-twice: its channel is OPTIONAL (a default channel may be configured) and a
+Most subcommands take the project as a positional that also answers to
+`--project`, which is `_PROJECT` below. `send` is the exception worth reading
+twice: its project is OPTIONAL (a default project may be configured) and a
 second optional positional follows it, so it has to name that follower in
 `trailing`. Without that, argparse — which fills positionals left to right —
-puts the message text in the channel's slot the moment `--channel` is used,
-and `message send --channel '#ops' "hi"` sends nothing to a channel called
+puts the message text in the project's slot the moment `--project` is used,
+and `message send --project '#ops' "hi"` sends nothing to a project called
 "hi". `cli.py — _shift_trailing_positionals` undoes that, but only for
 arguments that declared what follows them.
 """
@@ -21,11 +21,11 @@ from popcorn_core import operations
 from ..registry import Argument, Command, Subcommand, register
 from ._late import late_handler
 
-_CHANNEL = Argument(
-    "conversation",
-    "Channel name (#general) or UUID",
+_PROJECT = Argument(
+    "project",
+    "Project name (#general) or UUID",
     positional=True,
-    flag_alias="--channel",
+    flag_alias="--project",
 )
 _MESSAGE_ID = Argument("message_id", "Message UUID", positional=True)
 
@@ -41,7 +41,7 @@ register(
                 "delete",
                 "Delete a message",
                 late_handler("cmd_delete_message"),
-                [_CHANNEL, _MESSAGE_ID],
+                [_PROJECT, _MESSAGE_ID],
             ),
             Subcommand(
                 "download",
@@ -66,7 +66,7 @@ register(
                 "Edit a message",
                 late_handler("cmd_edit_message"),
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     _MESSAGE_ID,
                     Argument("content", "New message content", positional=True),
                 ],
@@ -82,7 +82,7 @@ register(
                 "Read message history",
                 late_handler("cmd_list_messages"),
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument("thread", "Thread ID to read replies", type=str),
                     Argument("limit", "Max messages (default 25)", type=int),
                     Argument("before", "Message ID — show messages before this", type=str),
@@ -111,7 +111,7 @@ register(
                 "React to a message",
                 late_handler("cmd_react"),
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     _MESSAGE_ID,
                     Argument("emoji", 'Emoji (e.g. "thumbs up")', positional=True),
                     Argument("remove", "Remove reaction instead of adding", action="store_true"),
@@ -130,7 +130,7 @@ register(
                     # in #ops last week" expressible at all.
                     Argument(
                         "in",
-                        "Only search these channels (#general or UUID, comma-separated)",
+                        "Only search these projects (#general or UUID, comma-separated)",
                         type=str,
                     ),
                     Argument(
@@ -162,11 +162,11 @@ register(
                     # Optional (`nargs="?"`), and it names the optional
                     # positional that follows it — see the module docstring.
                     Argument(
-                        "conversation",
-                        "Channel name (#general) or UUID",
+                        "project",
+                        "Project name (#general) or UUID",
                         positional=True,
                         nargs="?",
-                        flag_alias="--channel",
+                        flag_alias="--project",
                         trailing=("message",),
                     ),
                     Argument(
@@ -189,10 +189,10 @@ register(
             ),
             Subcommand(
                 "threads",
-                "List threads in a channel",
+                "List threads in a project",
                 late_handler("cmd_list_threads"),
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument("limit", "Max threads (default 50)", type=int),
                     Argument("offset", "Pagination offset", type=int),
                 ],

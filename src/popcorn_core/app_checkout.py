@@ -3,8 +3,8 @@
 `popcorn app checkout` writes the fork line's head (or, with `--version`, one
 named version of the line) as files plus a `.popcorn-app.json` baseline. The
 baseline is what `app publish` diffs against: it names the version the working copy came from, so a publish can be
-refused when the line has moved underneath it, and it names the channel so
-`publish`/`apply`/`status` need no `--channel`.
+refused when the line has moved underneath it, and it names the project so
+`publish`/`apply`/`status` need no `--project`.
 
 The baseline lives INSIDE the checkout directory but is not bundle content.
 It is a dotfile so `app validate`'s globs skip it, and publish must exclude
@@ -39,7 +39,7 @@ GUIDE_FILE = "CLAUDE.md"
 # but a checkout of the line's head. An older baseline still
 # parses — every field is read with a default — and each command degrades to
 # what it can still answer rather than rewriting the file underneath the user:
-# a v1 falls back to an explicit --channel, and a v1/v2 simply has no recorded
+# a v1 falls back to an explicit --project, and a v1/v2 simply has no recorded
 # changelog for `app validate` to compare against.
 _VERSION = 4
 # The first baseline version that captured the checked-out manifest's
@@ -49,14 +49,14 @@ CHANGELOG_VERSION = 3
 
 _SEMVER_RE = re.compile(r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
 
-# Deliberately not templated with the app or channel — the baseline next to it
+# Deliberately not templated with the app or project — the baseline next to it
 # carries those and stays correct as the line moves, while a name baked in
 # here would be a second copy to go stale. What belongs here is only what is
 # true of every checkout and unreachable from the wording of a request: that
 # this directory publishes, and the one authoring rule that fails silently.
-GUIDE_TEXT = f"""# Popcorn app bundle — working copy
+GUIDE_TEXT = f"""# Popcorn app — working copy
 
-This directory is a **checked-out Popcorn app bundle**, not a folder of YAML.
+This directory is a **checked-out Popcorn app**, not a folder of YAML.
 `{BASELINE_FILE}` beside this file names the app, the fork line, and the
 version this copy came from.
 
@@ -68,7 +68,7 @@ edit  →  popcorn app validate .  →  popcorn app publish . -m "<what changed>
 
 `app publish` refuses a manifest whose `version:` has not advanced past the
 checked-out one; `--bump patch` (or `minor`/`major`) writes that bump for you
-on a successful publish. Until a publish lands, the channel still runs the old
+on a successful publish. Until a publish lands, the project still runs the old
 version — a clean `app validate` is a check, not a release.
 
 ## Posting markdown needs `format: markdown`
@@ -100,8 +100,8 @@ It is local guidance for whoever edits this working copy, so deleting it
 changes nothing about the app — the next checkout writes it again, and a
 re-checkout leaves your edits to it alone unless you pass `--force`.
 
-`AGENT.md` is the opposite and is not interchangeable with this: it is bundle
-content, it publishes, and it travels to every channel that installs the app.
+`AGENT.md` is the opposite and is not interchangeable with this: it is app
+content, it publishes, and it travels to every project that installs the app.
 Instructions for the app's own users go there; instructions about editing and
 shipping this directory go here.
 """
@@ -190,7 +190,7 @@ class Baseline:
     # leaves this None. `app list` is where the real value lives.
     fork_name: str | None = None
     # Resolved UUID, not the "#name" that was typed: resolve_conversation
-    # accepts either and a UUID survives a channel rename. None in a v1
+    # accepts either and a UUID survives a project rename. None in a v1
     # baseline.
     conversation_id: str | None = None
     # The checked-out manifest's `changelog:`, so `app validate` can tell a
@@ -327,12 +327,12 @@ def historical_guide_text(baseline: Baseline) -> str:
     into the refusal. The republish recipe matches that refusal's hint.
     """
     app = baseline.app or "this app"
-    channel = baseline.conversation_id or "<channel>"
-    return f"""# Popcorn app bundle — read-only snapshot of a past version
+    project = baseline.conversation_id or "<project>"
+    return f"""# Popcorn app — read-only snapshot of a past version
 
 This directory is **{app} {baseline.semver} (version {baseline.base_version_id})**,
 checked out with `popcorn app checkout --version`. It is a past version of the
-channel's line, **not its head**, and `{BASELINE_FILE}` beside this file marks
+project's line, **not its head**, and `{BASELINE_FILE}` beside this file marks
 it `historical`.
 
 **Nothing here publishes.** A publish is based on the line's head, so
@@ -351,7 +351,7 @@ it `historical`.
 To make this version's content current again, publish it on top of the head:
 
 ```
-popcorn app checkout --channel {channel} --dir <new-dir>
+popcorn app checkout --project {project} --dir <new-dir>
 # copy this directory's bundle files over <new-dir>, keeping <new-dir>'s own
 # {BASELINE_FILE}, and delete any file there that this version does not have
 popcorn app publish <new-dir> --bump patch -m "<why this content is back>"

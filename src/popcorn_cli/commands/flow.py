@@ -1,4 +1,4 @@
-"""`popcorn flow` — customer flows (Temporal automations per channel).
+"""`popcorn flow` — customer flows (Temporal automations per project).
 
 Handlers import their `..cli` helpers *inside* the function body: cli.py
 imports this package at module load to build the parser, so a module-level
@@ -21,12 +21,12 @@ if TYPE_CHECKING:
 
     from popcorn_core.client import APIClient
 
-_CHANNEL = Argument("channel", "Channel name (#general) or UUID", required=True)
+_PROJECT = Argument("project", "Project name (#general) or UUID", required=True)
 # The same argument where an app checkout can supply it. `flow validate` needs
-# a channel only because the API authorizes against one — the parse and static
-# validation behind it are workspace-free — so making an author name a channel
+# a project only because the API authorizes against one — the parse and static
+# validation behind it are workspace-free — so making an author name a project
 # they already checked out from is friction with nothing behind it.
-_CHANNEL_OPT = Argument("channel", "Channel name or UUID (default: the checkout's)")
+_PROJECT_OPT = Argument("project", "Project name or UUID (default: the checkout's)")
 
 # The server's verdict on a polled run, served as `run.outcome` beside the raw
 # Temporal `status`. `--wait` branches on this and nothing else: a client-side
@@ -69,12 +69,12 @@ def _run_outcome(run: dict[str, Any], workflow_id: str) -> str:
     raise PopcornError(
         f"{detail} whether flow run {workflow_id} has finished (status {status})",
         error_code="validation",
-        hint=f"popcorn flow runs get --channel <conv> {workflow_id}",
+        hint=f"popcorn flow runs get --project <project> {workflow_id}",
     )
 
 
 def _poll_until_closed(
-    client: APIClient, channel: str, workflow_id: str, timeout: int
+    client: APIClient, project: str, workflow_id: str, timeout: int
 ) -> dict[str, Any]:
     """Poll a flow run until the server says it has finished.
 
@@ -89,7 +89,7 @@ def _poll_until_closed(
     while True:
         # No run id: the latest run of the workflow, so a continued-as-new
         # chain is followed rather than stuck on its first link.
-        resp = operations.get_flow_run(client, channel, workflow_id, include_errors=True)
+        resp = operations.get_flow_run(client, project, workflow_id, include_errors=True)
         run = resp.get("run") or resp
         outcome = _run_outcome(run, workflow_id)
         # The server's own spelling, for the caller to read.
@@ -128,20 +128,20 @@ _NOT_A_FLOW = {
 
 
 def _validate_channel(args: argparse.Namespace, target: Path) -> str:
-    """The channel to validate against: the flag, else the checkout's baseline.
+    """The project to validate against: the flag, else the checkout's baseline.
 
     `POST /customer-flows/validate` requires a `conversation_id` purely as
     authorization — declaring the param is what makes a non-admin prove
-    channel membership — so the value is never read by the validation itself.
-    In the fork-and-revise loop the author always has a channel: they checked
+    project membership — so the value is never read by the validation itself.
+    In the fork-and-revise loop the author always has a project: they checked
     the bundle out of one, and `app publish`/`apply`/`status` already read it
     back out of the baseline. This makes validate consistent with them.
     """
     from popcorn_core.app_checkout import BASELINE_FILE, read_baseline
     from popcorn_core.errors import PopcornError
 
-    if getattr(args, "channel", None):
-        return str(args.channel)
+    if getattr(args, "project", None):
+        return str(args.project)
 
     directory = target if target.is_dir() else target.parent
     baseline = read_baseline(directory)
@@ -149,9 +149,9 @@ def _validate_channel(args: argparse.Namespace, target: Path) -> str:
         return baseline.conversation_id
 
     raise PopcornError(
-        f"no --channel given and no {BASELINE_FILE} in {directory}",
+        f"no --project given and no {BASELINE_FILE} in {directory}",
         error_code="validation",
-        hint="pass --channel, or run this from an 'popcorn app checkout' directory",
+        hint="pass --project, or run this from an 'popcorn app checkout' directory",
     )
 
 
@@ -176,13 +176,13 @@ def _flow_validate(args: argparse.Namespace) -> None:
     if not files:
         raise PopcornError(f"No flow YAML found at {args.path}", error_code="validation")
 
-    channel = _validate_channel(args, target)
+    project = _validate_channel(args, target)
 
     results: list[dict[str, Any]] = []
     lines: list[str] = []
     bad = 0
     for path in files:
-        resp = operations.validate_flow_yaml(client, channel, path.read_text())
+        resp = operations.validate_flow_yaml(client, project, path.read_text())
         results.append({"file": str(path), **resp})
         # An invalid flow is a 200 with valid:false — branch on the field.
         if resp.get("valid"):
@@ -290,11 +290,11 @@ def _flow_list(args: argparse.Namespace) -> None:
     client = _get_client(args)
     limit = getattr(args, "limit", None) or 50
     offset = getattr(args, "offset", None) or 0
-    resp = operations.list_flows(client, args.channel, limit=limit, offset=offset)
+    resp = operations.list_flows(client, args.project, limit=limit, offset=offset)
     flows = resp.get("flows", [])
     next_flags = {"offset": str(offset + limit)} if resp.get("has_more") else None
     _attach_pagination(resp, next_flags)
-    lines = [f"Flows in {args.channel} ({len(flows)}):"]
+    lines = [f"Flows in {args.project} ({len(flows)}):"]
     for fl in flows:
         lines.append(f"  {fl.get('id', '?')}  {fl.get('name', '?')} (v{fl.get('version', '?')})")
     _output(args, resp, "\n".join(lines))
@@ -315,7 +315,7 @@ def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[s
     message trigger switched off, and rebuilding it here would put two
     wordings of one fact in circulation.
 
-    "Nothing on this channel starts this flow" is a real and wanted answer — it
+    "Nothing on this project starts this flow" is a real and wanted answer — it
     is how a dead bundle flow gets found — but only when `complete` is true.
     When a source could not be read, an empty list means "none found among the
     sources that answered", so the verdict is withheld and the unread sources
@@ -346,7 +346,7 @@ def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[s
                 f"{n} run-time launcher{'s' if n != 1 else ''} may start it (below)"
             )
         else:
-            lines[-1] = "  Triggers: nothing on this channel starts this flow"
+            lines[-1] = "  Triggers: nothing on this project starts this flow"
     elif not any(t.get("kind") == "schedule" for t in triggers) and not any(
         u.get("source") == "schedules" for u in unread
     ):
@@ -357,7 +357,7 @@ def _render_triggers(report: dict[str, Any] | None, error: str | None) -> list[s
     for trigger in triggers:
         lines.append(f"    {trigger.get('summary') or trigger.get('kind') or '?'}")
     if report.get("agent_runnable"):
-        lines.append("    the channel agent may run it ('flow run', agent_runnable_flows)")
+        lines.append("    the project agent may run it ('flow run', agent_runnable_flows)")
     else:
         lines.append("    not agent-runnable — 'flow run' is operator-only")
     for caller in dynamic:
@@ -372,7 +372,7 @@ def _flow_get(args: argparse.Namespace) -> None:
 
     client = _get_client(args)
     want_triggers = not getattr(args, "no_triggers", False)
-    resp = operations.get_flow(client, args.channel, args.flow_id, include_triggers=want_triggers)
+    resp = operations.get_flow(client, args.project, args.flow_id, include_triggers=want_triggers)
     flow = resp.get("flow") or resp
     lines = [
         f"{flow.get('name', '?')} (v{flow.get('version', '?')})",
@@ -408,7 +408,7 @@ def _flow_run(args: argparse.Namespace) -> None:
     inputs = _read_json_object(raw_inputs, "--inputs") if raw_inputs else None
     # Name->id resolution and the conversation_id default both live in
     # operations.run_flow, which already resolves the conversation.
-    resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
+    resp = operations.run_flow(client, args.project, args.flow_id, inputs=inputs)
     name = resp.get("flow_name", args.flow_id)
     lines = [
         f"Started flow '{name}' (v{resp.get('flow_version', '?')})",
@@ -426,7 +426,7 @@ def _flow_run(args: argparse.Namespace) -> None:
         _status(f"Waiting for {workflow_id}...")
         run = _poll_until_closed(
             client,
-            args.channel,
+            args.project,
             workflow_id,
             timeout=getattr(args, "timeout_run", None) or _DEFAULT_WAIT_SECONDS,
         )
@@ -443,7 +443,7 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
     limit = getattr(args, "limit", None) or 50
     resp = operations.list_flow_runs(
         client,
-        args.channel,
+        args.project,
         status=getattr(args, "status", None),
         limit=limit,
         page_token=getattr(args, "page_token", None),
@@ -456,7 +456,7 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
     _attach_pagination(resp, {"page-token": token} if token else None)
     count = resp.get("count", len(execs))
     scope = f"'{args.flow}' runs" if getattr(args, "flow", None) else "Flow runs"
-    lines = [f"{scope} in {args.channel} ({count}):"]
+    lines = [f"{scope} in {args.project} ({count}):"]
     for e in execs:
         queue = f"  [{e['task_queue']}]" if e.get("task_queue") else ""
         # The flow name goes last so the columns before it keep their
@@ -472,7 +472,7 @@ def _flow_runs_list(args: argparse.Namespace) -> None:
 
 
 def _flow_runs_cancel(args: argparse.Namespace) -> None:
-    """Stop one run, or every running run of a flow, on a channel.
+    """Stop one run, or every running run of a flow, on a project.
 
     The bulk form is what `run_eval` needs: the driver is done in seconds
     and the runs it launched are what must stop. It pages on the same
@@ -484,7 +484,7 @@ def _flow_runs_cancel(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.cancel_flow_runs(
         client,
-        args.channel,
+        args.project,
         workflow_id=getattr(args, "workflow_id", None),
         run_id=getattr(args, "run_id", None),
         flow_name=getattr(args, "flow", None),
@@ -505,7 +505,7 @@ def _flow_runs_cancel(args: argparse.Namespace) -> None:
         action = str(c.get("action") or "?")
         tally[action] = tally.get(action, 0) + 1
     summary = ", ".join(f"{n} {action}" for action, n in tally.items()) or "nothing to stop"
-    lines = [f"{target} in {args.channel}: {summary}"]
+    lines = [f"{target} in {args.project}: {summary}"]
     for c in cancelled:
         lines.append(
             f"  {(c.get('action') or '?'):<17} {c.get('workflow_id', '?')}  {c.get('status', '')}"
@@ -652,7 +652,7 @@ def _flow_runs_timeline(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.get_flow_run_timeline(
         client,
-        args.channel,
+        args.project,
         args.workflow_id,
         run_id=getattr(args, "run_id", None),
         before=getattr(args, "before", None),
@@ -678,7 +678,7 @@ def _flow_runs_get(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.get_flow_run(
         client,
-        args.channel,
+        args.project,
         args.workflow_id,
         run_id=getattr(args, "run_id", None),
         include_errors=getattr(args, "include_errors", False),
@@ -738,16 +738,16 @@ register(
                 "Validate flow YAML without installing",
                 _flow_validate,
                 [
-                    Argument("path", "Flow YAML file, or a bundle directory", positional=True),
-                    _CHANNEL_OPT,
+                    Argument("path", "Flow YAML file, or an app directory", positional=True),
+                    _PROJECT_OPT,
                 ],
             ),
             Subcommand(
                 "list",
-                "List flows in a channel",
+                "List flows in a project",
                 _flow_list,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument("limit", "Max results (default 50)", type=int),
                     Argument("offset", "Pagination offset", type=int),
                 ],
@@ -758,10 +758,10 @@ register(
                 _flow_get,
                 [
                     Argument("flow_id", "Flow name (as `flow list` prints it)", positional=True),
-                    _CHANNEL,
+                    _PROJECT,
                     # On by default: "what makes this run" is the question
                     # asked of a flow. The opt-out is for a caller looping
-                    # over every flow in a channel, where the server would
+                    # over every flow in a project, where the server would
                     # re-read the whole bundle and its live state per flow.
                     Argument(
                         "no-triggers",
@@ -776,7 +776,7 @@ register(
                 _flow_run,
                 [
                     Argument("flow_id", "Flow name (as `flow list` prints it)", positional=True),
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "inputs",
                         "JSON object of flow inputs (use '@-' for stdin, '@path' for a file)",
@@ -802,10 +802,10 @@ register(
                 [
                     Subcommand(
                         "list",
-                        "List flow runs in a channel",
+                        "List flow runs in a project",
                         _flow_runs_list,
                         [
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "status",
                                 "Filter by run status (default all)",
@@ -814,7 +814,7 @@ register(
                             ),
                             Argument(
                                 "flow",
-                                "Flow name: list only that flow's runs on the channel "
+                                "Flow name: list only that flow's runs on the project "
                                 "(older runs may be stamped with the flow's id instead; "
                                 "pass the id to list those)",
                                 type=str,
@@ -833,7 +833,7 @@ register(
                         _flow_runs_get,
                         [
                             Argument("workflow_id", "Temporal workflow ID", positional=True),
-                            _CHANNEL,
+                            _PROJECT,
                             Argument("run-id", "Specific run ID (optional)", type=str),
                             Argument(
                                 "include-errors",
@@ -848,7 +848,7 @@ register(
                         _flow_runs_timeline,
                         [
                             Argument("workflow_id", "Temporal workflow ID", positional=True),
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "run-id",
                                 "Specific run ID (default: the latest; pass it on later pages)",
@@ -873,10 +873,10 @@ register(
                                 positional=True,
                                 nargs="?",
                             ),
-                            _CHANNEL,
+                            _PROJECT,
                             Argument(
                                 "flow",
-                                "Flow name: stop every running run of it on the channel",
+                                "Flow name: stop every running run of it on the project",
                                 type=str,
                             ),
                             Argument("run-id", "Specific run ID (optional)", type=str),

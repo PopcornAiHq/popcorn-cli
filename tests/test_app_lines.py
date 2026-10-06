@@ -2,7 +2,7 @@
 
 Two halves of that feature are NOT here because the API cannot support them,
 and the tests say so rather than leaving it to a reader to notice: there is no
-endpoint that deletes a fork line, and none that reports how many channels
+endpoint that deletes a fork line, and none that reports how many projects
 ride one. `TestStatedGaps` holds the command to admitting both, so a later
 backend change has to come back through here.
 """
@@ -18,7 +18,7 @@ from popcorn_core import operations
 
 def _args(**over):
     base = {
-        "channel": "#alerts",
+        "project": "#alerts",
         "app": None,
         "json": False,
         "quiet": True,
@@ -161,7 +161,7 @@ class TestListing:
 class TestNoChannelIsSent:
     def test_the_inventory_is_read_without_a_channel(self):
         """The lines are the workspace's and the API serves them without a
-        channel, so none is sent — not even one passed on the command line,
+        project, so none is sent — not even one passed on the command line,
         which would cost a name lookup and change nothing listed."""
         from popcorn_cli.commands import app as mod
 
@@ -176,28 +176,28 @@ class TestNoChannelIsSent:
             patch("popcorn_cli.cli._output"),
             patch.object(operations, "list_channel_apps", _list),
         ):
-            mod._app_lines(_args(channel=None))
-            mod._app_lines(_args(channel="#somewhere-else"))
+            mod._app_lines(_args(project=None))
+            mod._app_lines(_args(project="#somewhere-else"))
         assert calls == [None, None]
 
     def test_json_still_carries_the_channel_key(self):
-        """`--json` keys are add-only: `channel` stays, echoing what was
+        """`--json` keys are add-only: `project` stays, echoing what was
         passed, or null when nothing was."""
         listing = _listing(("claimcoordinator", "default", "1.14.0"))
-        assert _run(_args(channel=None), listing)["data"]["channel"] is None
-        assert _run(_args(channel="#alerts"), listing)["data"]["channel"] == "#alerts"
+        assert _run(_args(project=None), listing)["data"]["channel"] is None
+        assert _run(_args(project="#alerts"), listing)["data"]["channel"] == "#alerts"
 
     def test_channel_is_optional_on_the_command_line(self):
         from popcorn_cli.registry import COMMANDS
 
         app = next(c for c in COMMANDS if c.name == "app")
         for sub in (s for s in app.subcommands if s.name in ("list", "lines")):
-            channel = next(a for a in sub.arguments if a.name == "channel")
-            assert not channel.required, sub.name
+            project = next(a for a in sub.arguments if a.name == "project")
+            assert not project.required, sub.name
 
 
 class TestAppList:
-    def _render(self, listing, channel):
+    def _render(self, listing, project):
         from popcorn_cli.commands import app as mod
 
         captured = {}
@@ -215,17 +215,17 @@ class TestAppList:
             ),
             patch.object(operations, "list_channel_apps", _list),
         ):
-            mod._app_list(_args(channel=channel))
+            mod._app_list(_args(project=project))
         return calls, captured["rendered"]
 
     def test_without_a_channel_it_lists_the_workspace_inventory(self):
         calls, rendered = self._render(_listing(("claimcoordinator", "demo914", "1.22.0")), None)
         assert calls == [None]
         assert "demo914" in rendered
-        # A null binding here means no channel was asked about, not that one
+        # A null binding here means no project was asked about, not that one
         # runs nothing.
-        assert "does not run an app bundle" not in rendered
-        assert "--channel" in rendered
+        assert "does not run an app" not in rendered
+        assert "--project" in rendered
 
     def test_with_a_channel_it_reports_that_channels_binding(self):
         listing = _listing()
@@ -237,11 +237,11 @@ class TestAppList:
         }
         calls, rendered = self._render(listing, "#alerts")
         assert calls == ["#alerts"]
-        assert "This channel runs claimcoordinator 1.40.0" in rendered
+        assert "This project runs claimcoordinator 1.40.0" in rendered
 
     def test_a_named_channel_running_nothing_says_so(self):
         _, rendered = self._render(_listing(), "#alerts")
-        assert "This channel does not run an app bundle." in rendered
+        assert "This project does not run an app." in rendered
 
 
 class TestStatedGaps:
@@ -249,7 +249,7 @@ class TestStatedGaps:
 
     def test_it_says_the_channel_count_is_missing(self):
         out = _run(_args(), _listing(("claimcoordinator", "default", "1.14.0")))
-        assert "no per-line channel count" in out["rendered"]
+        assert "no per-line project count" in out["rendered"]
         assert out["data"]["channel_counts_available"] is False
 
     def test_it_says_deleting_a_line_is_not_possible(self):
@@ -265,8 +265,8 @@ class TestStatedGaps:
         assert "delete" not in completion_words("app")
 
     def test_the_channel_count_is_not_guessed_from_a_channel_sweep(self):
-        """Approximating it by reading every reachable channel's binding would
-        under-count — it sees only channels the caller can reach — and an
+        """Approximating it by reading every reachable project's binding would
+        under-count — it sees only projects the caller can reach — and an
         undercount is the dangerous direction for a "safe to delete?" number.
         One request, no sweep."""
         from popcorn_cli.commands import app as mod

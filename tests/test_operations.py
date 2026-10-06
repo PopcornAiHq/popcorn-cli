@@ -14,7 +14,7 @@ from popcorn_core.errors import APIError, PopcornError
 
 @pytest.fixture(autouse=True)
 def _patch_resolve():
-    """Bypass channel resolution — tests pass UUIDs directly."""
+    """Bypass project resolution — tests pass UUIDs directly."""
     with patch("popcorn_core.operations.resolve_conversation", side_effect=lambda _c, ref: ref):
         yield
 
@@ -481,7 +481,7 @@ class TestWebhookSendResolution:
         """The only lookup is conversation-scoped, so say that, not 'usage'."""
         with pytest.raises(PopcornError) as exc:
             operations.resolve_webhook_url(mock_client, "Intake", None)
-        assert "channel" in str(exc.value).lower()
+        assert "project" in str(exc.value).lower()
         assert exc.value.error_code == "validation"
         mock_client.get.assert_not_called()
 
@@ -681,7 +681,7 @@ class TestChannelTemplates:
 class TestDataStoreOperations:
     """The agent-store surface at /api/v1/conversations/{id}/data-store/…
 
-    The channel ref is resolved to a conversation UUID and baked into the
+    The project ref is resolved to a conversation UUID and baked into the
     path, so every assertion here pins the resolved path shape.
     """
 

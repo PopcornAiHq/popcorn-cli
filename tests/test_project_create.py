@@ -1,6 +1,6 @@
-"""`popcorn channel create --if-not-exists` — the server decides "already exists".
+"""`popcorn project create --if-not-exists` — the server decides "already exists".
 
-The flag used to be approximated client-side: list every channel, compare
+The flag used to be approximated client-side: list every project, compare
 names after re-deriving the server's space-to-hyphen rule, and catch the
 duplicate error for the race in between. Each of those was a copy of a rule the
 server owns and could drift from it. The create route now takes the flag
@@ -66,7 +66,7 @@ class TestRequest:
             patch("popcorn_core.operations.search_channels") as search,
             patch("popcorn_core.operations.create_conversation", return_value=_created()) as create,
         ):
-            _run(parser, ["channel", "create", "example-fresh", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-fresh", "--if-not-exists"])
 
         assert create.call_args.kwargs["if_not_exists"] is True
         search.assert_not_called()
@@ -76,7 +76,7 @@ class TestRequest:
         with patch(
             "popcorn_core.operations.create_conversation", return_value=_created()
         ) as create:
-            _run(parser, ["channel", "create", "example-fresh"])
+            _run(parser, ["project", "create", "example-fresh"])
 
         assert create.call_args.kwargs["if_not_exists"] is False
 
@@ -85,7 +85,7 @@ class TestRequest:
         with patch(
             "popcorn_core.operations.create_conversation", return_value=_created("example-a-b")
         ) as create:
-            _run(parser, ["channel", "create", "example-a b", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-a b", "--if-not-exists"])
 
         assert create.call_args.kwargs["name"] == "example-a b"
 
@@ -102,7 +102,7 @@ class TestRequest:
 class TestAlreadyExisted:
     def test_it_is_reported_as_existing_not_created(self, parser, client, capsys):
         with patch("popcorn_core.operations.create_conversation", return_value=_existing()):
-            _run(parser, ["channel", "create", "example-my channel", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-my project", "--if-not-exists"])
 
         captured = capsys.readouterr()
         assert "Already exists" in captured.out
@@ -112,7 +112,7 @@ class TestAlreadyExisted:
 
     def test_json_passes_the_servers_answer_through(self, parser, client, capsys):
         with patch("popcorn_core.operations.create_conversation", return_value=_existing()):
-            _run(parser, ["--json", "channel", "create", "example-my-channel", "--if-not-exists"])
+            _run(parser, ["--json", "project", "create", "example-my-channel", "--if-not-exists"])
 
         out = json.loads(capsys.readouterr().out)
         payload = out["data"]
@@ -128,7 +128,7 @@ class TestAlreadyExisted:
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-my-channel",
                     "--type",
@@ -146,7 +146,7 @@ class TestAlreadyExisted:
             "popcorn_core.operations.create_conversation",
             return_value=_existing(is_archived=True),
         ):
-            _run(parser, ["channel", "create", "example-my-channel", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-my-channel", "--if-not-exists"])
 
         captured = capsys.readouterr()
         assert "archived" in captured.err
@@ -157,10 +157,10 @@ class TestAlreadyExisted:
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-my-channel",
-                    "--template",
+                    "--app",
                     "example-template",
                     "--if-not-exists",
                 ],
@@ -176,7 +176,7 @@ class TestAlreadyExisted:
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-my-channel",
                     "--type",
@@ -191,12 +191,12 @@ class TestAlreadyExisted:
 
     def test_workspace_channel_members_are_noted_once(self, parser, client, capsys):
         """The up-front "ignored" note already covers an existing workspace
-        channel; a second "not added" note would say the same thing twice."""
+        project; a second "not added" note would say the same thing twice."""
         with patch("popcorn_core.operations.create_conversation", return_value=_existing()):
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-my-channel",
                     "--members",
@@ -210,15 +210,15 @@ class TestAlreadyExisted:
         assert "--members were not added" not in err
 
     def test_a_newly_created_channel_gets_no_notes(self, parser, client, capsys):
-        """The notes describe an existing channel; a fresh create did apply them."""
+        """The notes describe an existing project; a fresh create did apply them."""
         with patch("popcorn_core.operations.create_conversation", return_value=_created()):
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-fresh",
-                    "--template",
+                    "--app",
                     "example-template",
                     "--if-not-exists",
                 ],
@@ -233,7 +233,7 @@ class TestAlreadyExisted:
             "popcorn_core.operations.create_conversation",
             return_value=_existing(is_archived=True),
         ):
-            _run(parser, ["--json", "channel", "create", "example-my-channel", "--if-not-exists"])
+            _run(parser, ["--json", "project", "create", "example-my-channel", "--if-not-exists"])
 
         captured = capsys.readouterr()
         json.loads(captured.out)
@@ -241,9 +241,9 @@ class TestAlreadyExisted:
 
 
 class TestDefaultType:
-    """With no `--type`, a channel is a workspace channel, as the web client
+    """With no `--type`, a project is a workspace project, as the web client
     makes it: every workspace member is in it, including anyone who joins
-    later. It used to be a public channel, which held only its creator."""
+    later. It used to be a public project, which held only its creator."""
 
     MEMBER = "00000000-0000-4000-8000-000000000003"
 
@@ -251,7 +251,7 @@ class TestDefaultType:
         with patch(
             "popcorn_core.operations.create_conversation", return_value=_created()
         ) as create:
-            _run(parser, ["channel", "create", "example-fresh"])
+            _run(parser, ["project", "create", "example-fresh"])
 
         assert create.call_args.kwargs["conv_type"] == "workspace_channel"
 
@@ -265,7 +265,7 @@ class TestDefaultType:
         with patch(
             "popcorn_core.operations.create_conversation", return_value=_created()
         ) as create:
-            _run(parser, ["channel", "create", "example-fresh", "--type", conv_type])
+            _run(parser, ["project", "create", "example-fresh", "--type", conv_type])
 
         assert create.call_args.kwargs["conv_type"] == conv_type
 
@@ -275,7 +275,7 @@ class TestDefaultType:
         with patch(
             "popcorn_core.operations.create_conversation", return_value=_created()
         ) as create:
-            _run(parser, ["channel", "create", "example-fresh", "--members", self.MEMBER])
+            _run(parser, ["project", "create", "example-fresh", "--members", self.MEMBER])
 
         captured = capsys.readouterr()
         assert create.call_args.kwargs["member_ids"] is None
@@ -286,7 +286,7 @@ class TestDefaultType:
         with patch("popcorn_core.operations.create_conversation", return_value=_created()):
             _run(
                 parser,
-                ["--json", "channel", "create", "example-fresh", "--members", self.MEMBER],
+                ["--json", "project", "create", "example-fresh", "--members", self.MEMBER],
             )
 
         captured = capsys.readouterr()
@@ -301,7 +301,7 @@ class TestDefaultType:
             _run(
                 parser,
                 [
-                    "channel",
+                    "project",
                     "create",
                     "example-fresh",
                     "--type",
@@ -317,7 +317,7 @@ class TestDefaultType:
 
 class TestDuplicate:
     def test_a_name_held_elsewhere_fails_and_says_why(self, parser, client):
-        """The server returns only a channel the caller is a member of; any
+        """The server returns only a project the caller is a member of; any
         other holder of the name is still a duplicate."""
         with (
             patch(
@@ -326,7 +326,7 @@ class TestDuplicate:
             ),
             pytest.raises(APIError) as exc,
         ):
-            _run(parser, ["channel", "create", "example-my-channel", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-my-channel", "--if-not-exists"])
 
         assert exc.value.status_code == 400
         assert exc.value.hint and "not a member" in exc.value.hint
@@ -339,7 +339,7 @@ class TestDuplicate:
             ),
             pytest.raises(APIError) as exc,
         ):
-            _run(parser, ["channel", "create", "example-fresh", "--if-not-exists"])
+            _run(parser, ["project", "create", "example-fresh", "--if-not-exists"])
 
         assert exc.value.hint is None
 
@@ -351,6 +351,6 @@ class TestDuplicate:
             ),
             pytest.raises(APIError) as exc,
         ):
-            _run(parser, ["channel", "create", "example-my-channel"])
+            _run(parser, ["project", "create", "example-my-channel"])
 
         assert exc.value.hint is None

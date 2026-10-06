@@ -297,7 +297,7 @@ class TestOperations:
         mock_client.get.assert_called_once_with("/api/apps/list", {"conversation_id": _CONV})
 
     def test_list_without_a_channel_sends_none(self, mock_client):
-        """The inventory is workspace-scoped; omitting the channel is a
+        """The inventory is workspace-scoped; omitting the project is a
         supported read, not a missing argument."""
         mock_client.get.return_value = {"apps": [], "channel": None}
         operations.list_channel_apps(mock_client)
@@ -305,7 +305,7 @@ class TestOperations:
 
     def test_files_reads_the_line_head_by_default(self, mock_client):
         """A checkout is what a publish is based on, and a publish must be
-        based on the fork line's head — not on whatever the channel runs. A
+        based on the fork line's head — not on whatever the project runs. A
         server-side change made that the supported behaviour."""
         mock_client.get.return_value = _files_response({})
         operations.get_channel_app_files(mock_client, _CONV)
@@ -330,7 +330,7 @@ class TestOperations:
         )
 
     def test_tree_can_ask_for_the_line_head(self, mock_client):
-        """`app status --channel` needs the head alongside the binding, and
+        """`app status --project` needs the head alongside the binding, and
         the tree read is the cheapest response carrying both."""
         mock_client.get.return_value = {"paths": []}
         operations.get_channel_app_tree(mock_client, _CONV, ref="head")
@@ -353,7 +353,7 @@ class TestOperations:
 
 def _args(**over):
     base = {
-        "channel": "#alerts",
+        "project": "#alerts",
         "directory": None,
         "fork": None,
         "force": False,
@@ -383,10 +383,10 @@ class TestCheckoutCommand:
         return captured
 
     def test_notes_when_the_channel_is_behind_the_head(self, tmp_path):
-        """The deadlock case: the head's install failed, the channel still
+        """The deadlock case: the head's install failed, the project still
         runs the previous version. The checkout is the head (what a publish
         needs) and says so, rather than silently handing over a tree the
-        channel does not run."""
+        project does not run."""
         files = {"manifest.yaml": "version: '0.2.0'\n"}
         out = self._run(
             _files_response(
@@ -401,8 +401,8 @@ class TestCheckoutCommand:
             _args(directory=str(tmp_path / "out")),
         )
         assert (
-            "Note: this channel still runs alerttracker 0.1.0; 0.2.0 is the fork "
-            "line's head — edits publish on top of the head and the channel moves "
+            "Note: this project still runs alerttracker 0.1.0; 0.2.0 is the fork "
+            "line's head — edits publish on top of the head and the project moves "
             "straight to the new version." in out["rendered"]
         )
         assert out["data"]["base_version_id"] == 7
@@ -545,7 +545,7 @@ class TestCheckoutFork:
             _args(directory=str(tmp_path / "out"), fork="experiment"),
         )
         assert out["forks"] == [(_CONV, "experiment")]
-        # The read must come second: a fork re-binds the channel, so the other
+        # The read must come second: a fork re-binds the project, so the other
         # order checks out the product tree the publish would then refuse.
         assert out["order"] == ["fork", "files"]
         assert (tmp_path / "out" / "manifest.yaml").exists()
@@ -574,7 +574,7 @@ class TestCheckoutFork:
         assert out["order"] == ["list", "fork", "files"]
 
     def test_no_fork_flag_still_records_a_product_checkout(self, tmp_path):
-        """Reading what a channel runs without touching it stays a legitimate
+        """Reading what a project runs without touching it stays a legitimate
         use — it is how a shipped bundle gets read."""
         out = self._run(
             _files_response({"manifest.yaml": "v: 1\n"}),

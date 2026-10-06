@@ -26,23 +26,23 @@ def parser():
 
 class TestFlowFamilyParsesFromRegistry:
     def test_flow_list_requires_channel(self, parser):
-        args = parser.parse_args(["flow", "list", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "list", "--project", "#ops"])
         assert args.command == "flow"
         assert args.flow_command == "list"
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
 
     def test_flow_list_without_channel_is_rejected(self, parser):
         with pytest.raises(SystemExit):
             parser.parse_args(["flow", "list"])
 
     def test_flow_run_takes_inputs(self, parser):
-        args = parser.parse_args(["flow", "run", "abc", "--channel", "#ops", "--inputs", "{}"])
+        args = parser.parse_args(["flow", "run", "abc", "--project", "#ops", "--inputs", "{}"])
         assert args.flow_id == "abc"
         assert args.inputs == "{}"
 
     def test_flow_runs_get_nested_subcommand(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "get", "wid-1", "--channel", "#ops", "--include-errors"]
+            ["flow", "runs", "get", "wid-1", "--project", "#ops", "--include-errors"]
         )
         assert args.flow_runs_command == "get"
         assert args.workflow_id == "wid-1"
@@ -50,11 +50,11 @@ class TestFlowFamilyParsesFromRegistry:
 
     def test_flow_runs_list_status_choices_are_enforced(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "list", "--channel", "#ops", "--status", "failed"]
+            ["flow", "runs", "list", "--project", "#ops", "--status", "failed"]
         )
         assert args.status == "failed"
         with pytest.raises(SystemExit):
-            parser.parse_args(["flow", "runs", "list", "--channel", "#ops", "--status", "bogus"])
+            parser.parse_args(["flow", "runs", "list", "--project", "#ops", "--status", "bogus"])
 
 
 class TestDerivedSurfaces:
@@ -245,7 +245,7 @@ class TestDispatchIsWired:
             return {"flows": [{"id": "flow-1", "name": "ingest", "version": 2}]}
 
         monkeypatch.setattr(operations, "list_flows", fake_list_flows)
-        self._run(monkeypatch, ["flow", "list", "--channel", "#ops", "--limit", "7"])
+        self._run(monkeypatch, ["flow", "list", "--project", "#ops", "--limit", "7"])
 
         assert seen == {"conversation": "#ops", "limit": 7}
         assert "flow-1" in capsys.readouterr().out
@@ -263,7 +263,7 @@ class TestDispatchIsWired:
         monkeypatch.setattr(operations, "get_flow_run", fake_get_flow_run)
         self._run(
             monkeypatch,
-            ["flow", "runs", "get", "wid-9", "--channel", "#ops", "--include-errors"],
+            ["flow", "runs", "get", "wid-9", "--project", "#ops", "--include-errors"],
         )
 
         assert seen == {"workflow_id": "wid-9", "include_errors": True}
@@ -298,7 +298,7 @@ class TestFlowActivities:
 
     def test_activities_does_not_require_channel(self, parser):
         args = parser.parse_args(["flow", "activities"])
-        assert getattr(args, "channel", None) is None
+        assert getattr(args, "project", None) is None
 
     def test_activities_rejects_an_unknown_tier(self, parser):
         with pytest.raises(SystemExit):
@@ -409,7 +409,7 @@ class TestTableFamily:
                 "table",
                 "rows",
                 "alerts",
-                "--channel",
+                "--project",
                 "#ops",
                 "--filter",
                 '{"Status":"firing"}',
@@ -430,7 +430,7 @@ class TestTableFamily:
                 "patch",
                 "alerts",
                 "7",
-                "--channel",
+                "--project",
                 "#ops",
                 "--data",
                 '{"Status":"acked"}',
@@ -441,11 +441,11 @@ class TestTableFamily:
 
     def test_row_patch_requires_data(self, parser):
         with pytest.raises(SystemExit):
-            parser.parse_args(["table", "row", "patch", "alerts", "7", "--channel", "#ops"])
+            parser.parse_args(["table", "row", "patch", "alerts", "7", "--project", "#ops"])
 
     def test_scalar_set_takes_value(self, parser):
         args = parser.parse_args(
-            ["table", "scalar", "set", "alerts_summary", "3 firing", "--channel", "#ops"]
+            ["table", "scalar", "set", "alerts_summary", "3 firing", "--project", "#ops"]
         )
         assert args.table_scalar_command == "set"
         assert args.key == "alerts_summary"
@@ -475,7 +475,7 @@ class TestTableHandlersRenderTheRealShapes:
         monkeypatch.setattr(operations, "list_records", fake)
         TestDispatchIsWired()._run(
             monkeypatch,
-            ["table", "rows", "alerts", "--channel", "#ops", "--filter", '{"Status":"firing"}'],
+            ["table", "rows", "alerts", "--project", "#ops", "--filter", '{"Status":"firing"}'],
         )
         out = capsys.readouterr().out
         assert seen == {"name": "alerts", "filter": {"Status": "firing"}, "limit": 50}
@@ -490,7 +490,7 @@ class TestTableHandlersRenderTheRealShapes:
             lambda *a, **kw: {"records": [], "cursor": "cur-2", "has_more": True},
         )
         TestDispatchIsWired()._run(
-            monkeypatch, ["table", "rows", "alerts", "--channel", "#ops", "--json"]
+            monkeypatch, ["table", "rows", "alerts", "--project", "#ops", "--json"]
         )
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
@@ -505,7 +505,7 @@ class TestTableHandlersRenderTheRealShapes:
             lambda *a, **kw: {"records": [], "cursor": None, "has_more": False},
         )
         TestDispatchIsWired()._run(
-            monkeypatch, ["table", "rows", "alerts", "--channel", "#ops", "--json"]
+            monkeypatch, ["table", "rows", "alerts", "--project", "#ops", "--json"]
         )
         payload = json.loads(capsys.readouterr().out)
         assert payload["data"]["pagination"]["next"] is None
@@ -531,7 +531,7 @@ class TestTableHandlersRenderTheRealShapes:
                 }
             },
         )
-        TestDispatchIsWired()._run(monkeypatch, ["table", "schema", "alerts", "--channel", "#ops"])
+        TestDispatchIsWired()._run(monkeypatch, ["table", "schema", "alerts", "--project", "#ops"])
         out = capsys.readouterr().out
         assert "2 columns" in out
         assert "Alarm" in out and "required" in out
@@ -546,7 +546,7 @@ class TestTableHandlersRenderTheRealShapes:
             lambda *a, **kw: {"scalar": {"key": "alerts_summary", "value": "3 firing"}},
         )
         TestDispatchIsWired()._run(
-            monkeypatch, ["table", "scalar", "get", "alerts_summary", "--channel", "#ops"]
+            monkeypatch, ["table", "scalar", "get", "alerts_summary", "--project", "#ops"]
         )
         assert capsys.readouterr().out.strip() == "3 firing"
 
@@ -568,7 +568,7 @@ class TestTableHandlersRenderTheRealShapes:
                 "has_more": False,
             },
         )
-        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--channel", "#ops"])
+        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--project", "#ops"])
         out = capsys.readouterr().out
         assert "Audit (1)" in out
         assert "update" in out and "record" in out
@@ -590,7 +590,7 @@ class TestTableHandlersRenderTheRealShapes:
             [
                 "table",
                 "audit",
-                "--channel",
+                "--project",
                 "#ops",
                 "--entity-type",
                 "record",
@@ -605,7 +605,7 @@ class TestTableHandlersRenderTheRealShapes:
         assert seen["since"] == "2026-09-01T00:00:00Z"
 
         seen.clear()
-        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--channel", "#ops"])
+        TestDispatchIsWired()._run(monkeypatch, ["table", "audit", "--project", "#ops"])
         assert seen["entity_type"] is None
         assert seen["entity_id"] is None
         assert seen["since"] is None
@@ -620,14 +620,14 @@ class TestTableHandlersRenderTheRealShapes:
         monkeypatch.setattr(operations, "delete_record", lambda *a, **kw: called.append(a) or {})
         with pytest.raises(SystemExit) as exc:
             TestDispatchIsWired()._run(
-                monkeypatch, ["table", "row", "delete", "alerts", "7", "--channel", "#ops"]
+                monkeypatch, ["table", "row", "delete", "alerts", "7", "--project", "#ops"]
             )
         assert exc.value.code == EXIT_VALIDATION
         assert called == [], "deleted without confirmation"
 
         TestDispatchIsWired()._run(
             monkeypatch,
-            ["table", "row", "delete", "alerts", "7", "--channel", "#ops", "--yes"],
+            ["table", "row", "delete", "alerts", "7", "--project", "#ops", "--yes"],
         )
         assert len(called) == 1
 
@@ -665,7 +665,7 @@ class TestPaginationIsDeclared:
             operation,
             lambda *a, **kw: {payload_key: [], "cursor": "cur-9", "has_more": True},
         )
-        TestDispatchIsWired()._run(monkeypatch, [*argv, "--channel", "#ops", "--json"])
+        TestDispatchIsWired()._run(monkeypatch, [*argv, "--project", "#ops", "--json"])
         payload = json.loads(capsys.readouterr().out)
         assert payload["data"]["pagination"]["next"] == {"cursor": "cur-9"}
 
@@ -673,7 +673,7 @@ class TestPaginationIsDeclared:
 class TestFlowRunWait:
     def test_run_takes_wait_and_timeout(self, parser):
         args = parser.parse_args(
-            ["flow", "run", "abc", "--channel", "#ops", "--wait", "--timeout-run", "60"]
+            ["flow", "run", "abc", "--project", "#ops", "--wait", "--timeout-run", "60"]
         )
         assert args.wait is True
         assert args.timeout_run == 60
@@ -684,7 +684,7 @@ class TestFlowRunWait:
         from popcorn_cli.cli import _hoist_global_flags
 
         argv = _hoist_global_flags(
-            ["flow", "run", "abc", "--channel", "#ops", "--wait", "--timeout-run", "60"]
+            ["flow", "run", "abc", "--project", "#ops", "--wait", "--timeout-run", "60"]
         )
         assert argv[0] == "flow", "--timeout-run must not be hoisted as a global flag"
         args = parser.parse_args(argv)
@@ -692,7 +692,7 @@ class TestFlowRunWait:
         assert args.timeout is None
 
         args = parser.parse_args(
-            _hoist_global_flags(["flow", "run", "abc", "--channel", "#ops", "--timeout", "5"])
+            _hoist_global_flags(["flow", "run", "abc", "--project", "#ops", "--timeout", "5"])
         )
         assert args.timeout == 5.0
         assert getattr(args, "timeout_run", None) is None
@@ -705,7 +705,7 @@ class TestFlowRunWait:
             operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1", "run_id": "r-1"}
         )
         monkeypatch.setattr(operations, "get_flow_run", lambda *a, **kw: polled.append(1) or {})
-        TestDispatchIsWired()._run(monkeypatch, ["flow", "run", "abc", "--channel", "#ops"])
+        TestDispatchIsWired()._run(monkeypatch, ["flow", "run", "abc", "--project", "#ops"])
         assert polled == []
         assert "wid-1" in capsys.readouterr().out
 
@@ -725,7 +725,7 @@ class TestFlowRunWait:
             },
         )
         TestDispatchIsWired()._run(
-            monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait", "--json"]
+            monkeypatch, ["flow", "run", "abc", "--project", "#ops", "--wait", "--json"]
         )
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
@@ -745,7 +745,7 @@ class TestFlowRunWait:
         )
         with pytest.raises(SystemExit) as exc:
             TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
+                monkeypatch, ["flow", "run", "abc", "--project", "#ops", "--wait"]
             )
         assert exc.value.code == EXIT_VALIDATION
         err = capsys.readouterr().err
@@ -759,14 +759,14 @@ class TestFlowRunWait:
         monkeypatch.setattr(operations, "run_flow", lambda *a, **kw: {"flow_name": "ingest"})
         with pytest.raises(SystemExit):
             TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait"]
+                monkeypatch, ["flow", "run", "abc", "--project", "#ops", "--wait"]
             )
         assert "no workflow_id" in capsys.readouterr().err
 
 
 class TestFlowValidate:
     def test_validate_takes_a_path(self, parser):
-        args = parser.parse_args(["flow", "validate", "alert_webhook.yaml", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "validate", "alert_webhook.yaml", "--project", "#ops"])
         assert args.flow_command == "validate"
         assert args.path == "alert_webhook.yaml"
 
@@ -793,7 +793,7 @@ class TestFlowValidate:
         from popcorn_cli.commands.flow import _validate_channel
 
         self._checkout(tmp_path)
-        args = _argparse.Namespace(channel=None)
+        args = _argparse.Namespace(project=None)
         assert _validate_channel(args, tmp_path) == "conv-uuid"
 
     def test_channel_baseline_is_found_from_a_single_file(self, tmp_path):
@@ -806,7 +806,7 @@ class TestFlowValidate:
         self._checkout(tmp_path)
         flow = tmp_path / "alert_webhook.yaml"
         flow.write_text("name: x\n")
-        args = _argparse.Namespace(channel=None)
+        args = _argparse.Namespace(project=None)
         assert _validate_channel(args, flow) == "conv-uuid"
 
     def test_explicit_channel_beats_the_baseline(self, tmp_path):
@@ -815,11 +815,11 @@ class TestFlowValidate:
         from popcorn_cli.commands.flow import _validate_channel
 
         self._checkout(tmp_path)
-        args = _argparse.Namespace(channel="#ops")
+        args = _argparse.Namespace(project="#ops")
         assert _validate_channel(args, tmp_path) == "#ops"
 
     def test_no_channel_and_no_checkout_names_both_ways_out(self, tmp_path):
-        """The error has to say what to do: neither "pass --channel" nor "run
+        """The error has to say what to do: neither "pass --project" nor "run
         checkout" alone is the whole answer, and which one applies depends on
         where the author is."""
         import argparse as _argparse
@@ -829,16 +829,16 @@ class TestFlowValidate:
         from popcorn_cli.commands.flow import _validate_channel
         from popcorn_core.errors import PopcornError
 
-        args = _argparse.Namespace(channel=None)
+        args = _argparse.Namespace(project=None)
         with _pytest.raises(PopcornError) as excinfo:
             _validate_channel(args, tmp_path)
         assert ".popcorn-app.json" in str(excinfo.value)
-        assert "--channel" in (excinfo.value.hint or "")
+        assert "--project" in (excinfo.value.hint or "")
         assert "checkout" in (excinfo.value.hint or "")
 
     def test_a_v1_baseline_without_a_channel_still_asks(self, tmp_path):
         """popcorn-cli 0.19.0 wrote no conversation_id. Falling through to the
-        error is right — guessing would validate against the wrong channel."""
+        error is right — guessing would validate against the wrong project."""
         import argparse as _argparse
 
         import pytest as _pytest
@@ -847,16 +847,16 @@ class TestFlowValidate:
         from popcorn_core.errors import PopcornError
 
         self._checkout(tmp_path, conversation_id=None)
-        args = _argparse.Namespace(channel=None)
+        args = _argparse.Namespace(project=None)
         with _pytest.raises(PopcornError):
             _validate_channel(args, tmp_path)
 
     def test_validate_channel_is_optional(self, parser):
         """It defaults to the app checkout's baseline — the API needs a
-        channel only to authorize against, and in the fork-and-revise loop
+        project only to authorize against, and in the fork-and-revise loop
         the author checked the bundle out of one."""
         args = parser.parse_args(["flow", "validate", "x.yaml"])
-        assert args.channel is None
+        assert args.project is None
 
     def _stub(self, monkeypatch, by_name):
         """Stub the operation, keyed on a marker inside each file's text."""
@@ -881,7 +881,7 @@ class TestFlowValidate:
             monkeypatch,
             {"ok_flow": {"valid": True, "issues": [], "steps": [{"id": "say_hello"}]}},
         )
-        TestDispatchIsWired()._run(monkeypatch, ["flow", "validate", str(f), "--channel", "#ops"])
+        TestDispatchIsWired()._run(monkeypatch, ["flow", "validate", str(f), "--project", "#ops"])
         out = capsys.readouterr().out
         assert "0 invalid" in out
         assert "say_hello" in out
@@ -903,7 +903,7 @@ class TestFlowValidate:
         )
         with pytest.raises(SystemExit) as exc:
             TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "validate", str(f), "--channel", "#ops"]
+                monkeypatch, ["flow", "validate", str(f), "--project", "#ops"]
             )
         assert exc.value.code == EXIT_VALIDATION
         out = capsys.readouterr()
@@ -924,7 +924,7 @@ class TestFlowValidate:
         ok = {"valid": True, "issues": [], "steps": []}
         seen = self._stub(monkeypatch, {"flow_a": ok, "flow_b": ok})
         TestDispatchIsWired()._run(
-            monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+            monkeypatch, ["flow", "validate", str(tmp_path), "--project", "#ops"]
         )
         assert len(seen) == 2, f"validated {len(seen)} files, expected just a.yaml + b.yml"
         assert "Validated 2 flow(s), 0 invalid" in capsys.readouterr().out
@@ -941,7 +941,7 @@ class TestFlowValidate:
         )
         with pytest.raises(SystemExit):
             TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+                monkeypatch, ["flow", "validate", str(tmp_path), "--project", "#ops"]
             )
         assert "Validated 2 flow(s), 1 invalid" in capsys.readouterr().out
 
@@ -950,7 +950,7 @@ class TestFlowValidate:
 
         with pytest.raises(SystemExit) as exc:
             TestDispatchIsWired()._run(
-                monkeypatch, ["flow", "validate", str(tmp_path), "--channel", "#ops"]
+                monkeypatch, ["flow", "validate", str(tmp_path), "--project", "#ops"]
             )
         assert exc.value.code == EXIT_VALIDATION
         assert "No flow YAML found" in capsys.readouterr().err
@@ -960,7 +960,7 @@ class TestFlowValidate:
         f.write_text("name: ok_flow\n")
         self._stub(monkeypatch, {"ok_flow": {"valid": True, "issues": [], "steps": []}})
         TestDispatchIsWired()._run(
-            monkeypatch, ["flow", "validate", str(f), "--channel", "#ops", "--json"]
+            monkeypatch, ["flow", "validate", str(f), "--project", "#ops", "--json"]
         )
         payload = json.loads(capsys.readouterr().out)
         assert payload["ok"] is True
@@ -1055,7 +1055,7 @@ class TestLateBoundHandlers:
 
     Its limit is worth knowing, because the surface-only convention leans on
     it: this proves a name RESOLVES, never that it is the right one. Binding
-    `message delete` to `cmd_delete_channel` would pass here. Only reading the
+    `message delete` to `cmd_delete_project` would pass here. Only reading the
     declaration against the handler catches that.
     """
 
@@ -1081,7 +1081,7 @@ class TestLateBoundHandlers:
 class TestHoistedGlobalFlags:
     """A subcommand must not redeclare a flag that `_hoist_global_flags` moves.
 
-    `popcorn --workspace W channel list` and `popcorn channel list --workspace W`
+    `popcorn --workspace W project list` and `popcorn project list --workspace W`
     are the same invocation because the hoist rewrites the second into the
     first before argparse runs. That only holds while the root parser is the
     only one declaring the flag. Redeclare it on a subcommand and argparse
@@ -1131,8 +1131,8 @@ class TestHoistedGlobalFlags:
         [
             ["auth", "login", "--workspace", "W1"],
             ["--workspace", "W1", "auth", "login"],
-            ["channel", "list", "--workspace", "W1"],
-            ["--workspace", "W1", "channel", "list"],
+            ["project", "list", "--workspace", "W1"],
+            ["--workspace", "W1", "project", "list"],
         ],
         ids=lambda a: " ".join(a),
     )

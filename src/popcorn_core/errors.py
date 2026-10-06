@@ -51,7 +51,7 @@ ERROR_CODES: list[dict[str, str]] = [
         "code": ERROR_CODE_UNHEALTHY,
         "description": (
             "The command succeeded but the thing it checked is unhealthy "
-            "(`channel-config show --strict` with fatal findings)"
+            "(`project-config show --strict` with fatal findings)"
         ),
     },
     {

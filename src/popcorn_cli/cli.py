@@ -13,44 +13,44 @@ Usage:
     popcorn workspace switch [name]
     popcorn workspace users [query]
     popcorn whoami
-    popcorn message delete <conversation> <message_id>
+    popcorn message delete <project> <message_id>
     popcorn message download <file_key> [-o PATH]
-    popcorn message edit <conversation> <message_id> "content"
+    popcorn message edit <project> <message_id> "content"
     popcorn message get <message_id>
-    popcorn message list <conversation> [--thread ID] [--limit N]
-    popcorn message react <conversation> <message_id> <emoji> [--remove]
+    popcorn message list <project> [--thread ID] [--limit N]
+    popcorn message react <project> <message_id> <emoji> [--remove]
     popcorn message search <query>
-    popcorn message send <conversation> "message" [--thread ID] [--file PATH]
-    popcorn message threads <conversation> [--limit] [--offset]
-    popcorn channel archive <conversation> [--undo]
-    popcorn channel create <name> [--type] [--members] [--template T] [--if-not-exists]
-    popcorn channel delete <conversation>
-    popcorn channel edit <conversation> [--name] [--description]
-    popcorn channel info <conversation>
-    popcorn channel invite <conversation> <user_ids>
-    popcorn channel join <conversation>
-    popcorn channel kick <conversation> <user_id>
-    popcorn channel leave <conversation>
-    popcorn channel list [query] [--dms]
-    popcorn channel templates
+    popcorn message send <project> "message" [--thread ID] [--file PATH]
+    popcorn message threads <project> [--limit] [--offset]
+    popcorn project apps
+    popcorn project archive <project> [--undo]
+    popcorn project create <name> [--type] [--members] [--app A] [--if-not-exists]
+    popcorn project delete <project>
+    popcorn project edit <project> [--name] [--description]
+    popcorn project info <project>
+    popcorn project invite <project> <user_ids>
+    popcorn project join <project>
+    popcorn project kick <project> <user_id>
+    popcorn project leave <project>
+    popcorn project list [query]
     popcorn flow activities [--tier T] [--status S] [--category C]
-    popcorn flow validate <file|dir> --channel <conv>
-    popcorn flow list --channel <conv>
-    popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]
-    popcorn flow runs list --channel <conv>
-    popcorn flow runs timeline <workflow_id> --channel <conv> [--before N]
-    popcorn table list --channel <conv>
-    popcorn table schema <name> --channel <conv>
-    popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N]
-    popcorn table row get|patch|delete <name> <record_id> --channel <conv>
-    popcorn table scalar list|get|set --channel <conv>
-    popcorn table audit --channel <conv>
+    popcorn flow validate <file|dir> --project <proj>
+    popcorn flow list --project <proj>
+    popcorn flow run <flow_id> --project <proj> [--inputs JSON] [--wait] [--timeout-run N]
+    popcorn flow runs list --project <proj>
+    popcorn flow runs timeline <workflow_id> --project <proj> [--before N]
+    popcorn table list --project <proj>
+    popcorn table schema <name> --project <proj>
+    popcorn table rows <name> --project <proj> [--filter JSON] [--limit N]
+    popcorn table row get|patch|delete <name> <record_id> --project <proj>
+    popcorn table scalar list|get|set --project <proj>
+    popcorn table audit --project <proj>
     popcorn commands --json
     popcorn completion bash|zsh
     popcorn upgrade
     popcorn version [--check]
     popcorn doctor
-    echo "msg" | popcorn message send <conversation>
+    echo "msg" | popcorn message send <project>
     cat batch.ndjson | popcorn message send --batch --json
 
 For agents and scripts:
@@ -69,10 +69,11 @@ For agents and scripts:
 
 Flags: --json (JSON output), -q/--quiet (suppress status), --timeout N,
        -e/--env, --no-color, --workspace UUID, -y/--yes (skip prompts)
-Conversations can be specified as #channel-name or UUID. Wherever a command
-takes one positionally it also accepts --channel <name-or-uuid>; that spelling
-works on every channel-taking command, so it is the one to reach for when you
-do not want to remember which family this command belongs to.
+Projects can be specified as #project-name or UUID. Wherever a command takes
+one positionally it also accepts --project <name-or-uuid>; that spelling works
+on every project-taking command, so it is the one to reach for when you do not
+want to remember which family this command belongs to. (A project is what the
+API calls a channel; the old `channel` command names and --channel still work.)
 
 `popcorn api` --data supports @-/@file (curl/gh-style):
     echo '{...}' | popcorn api /path -X POST -d @-
@@ -909,13 +910,23 @@ def cmd_whoami(args: argparse.Namespace) -> None:
     print(formatted)
 
 
-def cmd_channel_list(args: argparse.Namespace) -> None:
+# DMs and group DMs are not projects, and the CLI is moving to projects only.
+# `--dms` still works, so a script that lists them does not break on upgrade,
+# but it says it is going.
+_DMS_DEPRECATION = (
+    "Note: project list --dms is deprecated; DMs and group DMs are not projects, "
+    "and listing them will be removed in a future release"
+)
+
+
+def cmd_project_list(args: argparse.Namespace) -> None:
     client = _get_client(args)
     query = getattr(args, "query", "") or ""
     include_archived = getattr(args, "include_archived", False)
     include_hidden = getattr(args, "include_hidden", False)
 
     if getattr(args, "dms", False):
+        print(_DMS_DEPRECATION, file=sys.stderr)
         resp = operations.search_dms(
             client, query, include_archived=include_archived, include_hidden=include_hidden
         )
@@ -927,9 +938,9 @@ def cmd_channel_list(args: argparse.Namespace) -> None:
         )
         convs = resp.get("conversations", [])
         fmt = (
-            "Channels:\n" + "\n".join(fmt_conversation(c) for c in convs)
+            "Projects:\n" + "\n".join(fmt_conversation(c) for c in convs)
             if convs
-            else "No channels found."
+            else "No projects found."
         )
     _output(args, resp, fmt)
 
@@ -1021,7 +1032,7 @@ def cmd_list_messages(args: argparse.Namespace) -> None:
     after = getattr(args, "after", "") or ""
     resp = operations.read_messages(
         client,
-        args.conversation,
+        args.project,
         thread,
         args.limit or 25,
         latest=getattr(args, "before", "") or "",
@@ -1049,7 +1060,7 @@ def cmd_list_threads(args: argparse.Namespace) -> None:
     client = _get_client(args)
     limit = args.limit or 50
     offset = getattr(args, "offset", 0) or 0
-    resp = operations.list_threads(client, args.conversation, limit=limit, offset=offset)
+    resp = operations.list_threads(client, args.project, limit=limit, offset=offset)
     threads = resp.get("threads", [])
 
     # Backend doesn't return has_more for threads — use a safe heuristic:
@@ -1083,7 +1094,7 @@ def cmd_list_threads(args: argparse.Namespace) -> None:
 
 def cmd_info(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.get_conversation_info(client, args.conversation)
+    resp = operations.get_conversation_info(client, args.project)
     conv = resp.get("conversation", {})
     members = resp.get("members", [])
 
@@ -1119,9 +1130,9 @@ def cmd_send_message(args: argparse.Namespace) -> None:
 
     client = _get_client(args)
 
-    if not getattr(args, "conversation", None):
-        e = PopcornError("conversation is required (or use --batch for NDJSON stdin)")
-        e.hint = 'popcorn send-message <#channel> "message"'
+    if not getattr(args, "project", None):
+        e = PopcornError("project is required (or use --batch for NDJSON stdin)")
+        e.hint = 'popcorn message send <#project> "message"'
         raise e
 
     message = getattr(args, "message", None)
@@ -1131,17 +1142,17 @@ def cmd_send_message(args: argparse.Namespace) -> None:
     file_path = getattr(args, "file", None)
     if not message and not file_path:
         e = PopcornError("Provide a message, --file, or pipe text via stdin")
-        e.hint = 'popcorn send-message <#channel> "message"'
+        e.hint = 'popcorn message send <#project> "message"'
         raise e
 
     file_parts = []
     if file_path:
         _status(f"Uploading {file_path}...")
-        file_parts.append(operations.upload_file(client, args.conversation, file_path))
+        file_parts.append(operations.upload_file(client, args.project, file_path))
         _status("Uploaded.")
 
     resp = operations.send_message(
-        client, args.conversation, message or "", args.thread or "", file_parts
+        client, args.project, message or "", args.thread or "", file_parts
     )
     msg = resp.get("message", {})
     _output(args, resp, f"Sent (id: {msg.get('id', '?')})")
@@ -1203,22 +1214,22 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
 def cmd_react(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if args.remove:
-        resp = operations.remove_reaction(client, args.conversation, args.message_id, args.emoji)
+        resp = operations.remove_reaction(client, args.project, args.message_id, args.emoji)
         _output(args, resp, f"Removed {args.emoji}")
     else:
-        resp = operations.add_reaction(client, args.conversation, args.message_id, args.emoji)
+        resp = operations.add_reaction(client, args.project, args.message_id, args.emoji)
         _output(args, resp, f"Added {args.emoji}")
 
 
 def cmd_edit_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.edit_message(client, args.conversation, args.message_id, args.content)
+    resp = operations.edit_message(client, args.project, args.message_id, args.content)
     _output(args, resp, f"Edited (id: {args.message_id})")
 
 
 def cmd_delete_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.delete_message(client, args.conversation, args.message_id)
+    resp = operations.delete_message(client, args.project, args.message_id)
     _output(args, resp, f"Deleted (id: {args.message_id})")
 
 
@@ -1274,12 +1285,12 @@ def _is_duplicate_name(err: APIError) -> bool:
     return isinstance(detail, dict) and detail.get("error") == "already_exists"
 
 
-def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> list[str]:
-    """What the caller asked for that the existing channel returned does not have.
+def _existing_project_notes(conv: dict[str, Any], args: argparse.Namespace) -> list[str]:
+    """What the caller asked for that the existing project returned does not have.
 
     The server's idempotent create matches on name alone, and returns the
-    channel as it stands: archived or not, of whatever type, and without
-    installing a template or adding members. Each of those is a request that
+    project as it stands: archived or not, of whatever type, and without
+    installing an app or adding members. Each of those is a request that
     succeeded without being carried out, so say so rather than let it pass.
     """
     name = conv.get("name", "")
@@ -1290,17 +1301,17 @@ def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> l
         notes.append(f"#{name} is a {actual_type}, not the {wanted_type} requested")
     if conv.get("is_archived"):
         notes.append(
-            f"#{name} is archived (unarchive: popcorn channel archive {conv.get('id', name)} --undo)"
+            f"#{name} is archived (unarchive: popcorn project archive {conv.get('id', name)} --undo)"
         )
-    if getattr(args, "template", None):
-        notes.append(f"template {args.template} was not installed into the existing channel")
+    if getattr(args, "app", None):
+        notes.append(f"app {args.app} was not installed into the existing project")
     # A workspace-channel request was already told its --members are ignored.
     if getattr(args, "members", None) and wanted_type != "workspace_channel":
-        notes.append("--members were not added to the existing channel")
+        notes.append("--members were not added to the existing project")
     return notes
 
 
-def cmd_create_channel(args: argparse.Namespace) -> None:
+def cmd_create_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if_not_exists = bool(getattr(args, "if_not_exists", False))
     conv_type = getattr(args, "type", None) or operations.DEFAULT_CHANNEL_TYPE
@@ -1321,100 +1332,100 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
             name=args.name,
             conv_type=conv_type,
             member_ids=member_ids,
-            template=getattr(args, "template", None),
+            template=getattr(args, "app", None),
             if_not_exists=if_not_exists,
         )
     except APIError as e:
-        # The server resolves a taken name only to a channel the caller is a
+        # The server resolves a taken name only to a project the caller is a
         # member of. Any other holder is still a duplicate, which reads as the
         # flag not working unless it says why.
         if if_not_exists and _is_duplicate_name(e):
             e.hint = (
-                "the name is held by a channel you are not a member of; "
+                "the name is held by a project you are not a member of; "
                 "pick another name, or ask a member to invite you"
             )
         raise
     conv = resp.get("conversation", resp)
     label = f"{conv.get('name', '')} (id: {conv.get('id', '?')})"
     if resp.get("already_existed"):
-        for note in _existing_channel_notes(conv, args):
+        for note in _existing_project_notes(conv, args):
             print(f"Note: {note}", file=sys.stderr)
         _output(args, resp, f"Already exists: {label}")
         return
     _output(args, resp, f"Created: {label}")
 
 
-def cmd_join_channel(args: argparse.Namespace) -> None:
+def cmd_join_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.join_conversation(client, args.conversation)
-    _output(args, resp, f"Joined {args.conversation}")
+    resp = operations.join_conversation(client, args.project)
+    _output(args, resp, f"Joined {args.project}")
 
 
-def cmd_leave_channel(args: argparse.Namespace) -> None:
+def cmd_leave_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
     try:
-        resp = operations.leave_conversation(client, args.conversation)
+        resp = operations.leave_conversation(client, args.project)
     except APIError as e:
         # Backend returns 404 with "Member" in the message when not a member.
         # Don't swallow 404s for missing conversations — only for membership.
         if e.status_code == 404 and "member" in str(e).lower():
             resp = {"ok": True, "already_left": True}
-            _output(args, resp, f"Already not a member of {args.conversation}")
+            _output(args, resp, f"Already not a member of {args.project}")
             return
         raise
-    _output(args, resp, f"Left {args.conversation}")
+    _output(args, resp, f"Left {args.project}")
 
 
-def cmd_archive_channel(args: argparse.Namespace) -> None:
+def cmd_archive_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
     if getattr(args, "undo", False):
-        resp = operations.unarchive_conversation(client, args.conversation)
-        _output(args, resp, f"Unarchived {args.conversation}")
+        resp = operations.unarchive_conversation(client, args.project)
+        _output(args, resp, f"Unarchived {args.project}")
     else:
-        resp = operations.archive_conversation(client, args.conversation)
-        _output(args, resp, f"Archived {args.conversation}")
+        resp = operations.archive_conversation(client, args.project)
+        _output(args, resp, f"Archived {args.project}")
 
 
 def cmd_invite(args: argparse.Namespace) -> None:
     client = _get_client(args)
     user_ids = [uid.strip() for uid in args.user_ids.split(",")]
-    resp = operations.invite_to_conversation(client, args.conversation, user_ids)
-    _output(args, resp, f"Invited {len(user_ids)} user(s) to {args.conversation}")
+    resp = operations.invite_to_conversation(client, args.project, user_ids)
+    _output(args, resp, f"Invited {len(user_ids)} user(s) to {args.project}")
 
 
 def cmd_kick(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.kick_from_conversation(client, args.conversation, args.user_id)
-    _output(args, resp, f"Removed {args.user_id} from {args.conversation}")
+    resp = operations.kick_from_conversation(client, args.project, args.user_id)
+    _output(args, resp, f"Removed {args.user_id} from {args.project}")
 
 
-def cmd_edit_channel(args: argparse.Namespace) -> None:
+def cmd_edit_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.update_conversation(
         client,
-        args.conversation,
+        args.project,
         name=getattr(args, "name", "") or "",
         description=getattr(args, "description", "") or "",
     )
-    _output(args, resp, f"Updated {args.conversation}")
+    _output(args, resp, f"Updated {args.project}")
 
 
-def cmd_delete_channel(args: argparse.Namespace) -> None:
+def cmd_delete_project(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.delete_conversation(client, args.conversation)
-    _output(args, resp, f"Deleted {args.conversation}")
+    resp = operations.delete_conversation(client, args.project)
+    _output(args, resp, f"Deleted {args.project}")
 
 
 # ---------------------------------------------------------------------------
-# Channel templates
+# Project apps
 # ---------------------------------------------------------------------------
 
 
-def cmd_channel_templates(args: argparse.Namespace) -> None:
+def cmd_project_apps(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.list_channel_templates(client)
     templates = resp if isinstance(resp, list) else resp.get("templates", [])
-    lines = [f"Channel templates ({len(templates)}):"]
+    lines = [f"Apps ({len(templates)}):"]
     for t in templates:
         name = t.get("display_name") or t.get("name", "?")
         flows = t.get("flow_count")
@@ -1863,7 +1874,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
     seen = 0
     start = time.monotonic()
 
-    resp = operations.read_messages(client, args.conversation, limit=1)
+    resp = operations.read_messages(client, args.project, limit=1)
     last_seen_id, last_seen_at = _watch_anchor(resp.get("messages", []))
 
     _status(f"Watching... (Ctrl+C to stop, polling every {interval}s)")
@@ -1883,17 +1894,17 @@ def cmd_watch(args: argparse.Namespace) -> None:
             # cursor fell off the page", and reads the second as a page full
             # of new messages.
             if last_seen_id is None:
-                # The channel was empty when the watch started, so anything
+                # The project was empty when the watch started, so anything
                 # it holds now arrived since.
-                page = operations.read_messages(
-                    client, args.conversation, limit=WATCH_PAGE_LIMIT
-                ).get("messages", [])
+                page = operations.read_messages(client, args.project, limit=WATCH_PAGE_LIMIT).get(
+                    "messages", []
+                )
                 new_msgs = page
             else:
                 try:
                     page = operations.read_messages(
                         client,
-                        args.conversation,
+                        args.project,
                         limit=WATCH_PAGE_LIMIT,
                         oldest=last_seen_id,
                     ).get("messages", [])
@@ -1905,7 +1916,7 @@ def cmd_watch(args: argparse.Namespace) -> None:
                     # on current history so the watch keeps running instead of
                     # failing this poll and every one after it.
                     page = operations.read_messages(
-                        client, args.conversation, limit=WATCH_PAGE_LIMIT
+                        client, args.project, limit=WATCH_PAGE_LIMIT
                     ).get("messages", [])
                     new_msgs = _watch_newer_than(page, last_seen_at)
 
@@ -2072,10 +2083,10 @@ def _describe_subcommands(parser: argparse.ArgumentParser) -> list[dict[str, Any
 def _introspect_parser(parser: argparse.ArgumentParser) -> list[dict[str, Any]]:
     """Extract argument metadata from an argparse parser."""
     args_out: list[dict[str, Any]] = []
-    # A channel positional is declared `nargs="?"` only so `--channel` can
+    # A project positional is declared `nargs="?"` only so `--project` can
     # stand in for it; whether a caller may leave it out entirely is the
     # spec's answer, not argparse's. Reporting argparse's would tell an agent
-    # the channel is optional on commands that cannot run without one.
+    # the project is optional on commands that cannot run without one.
     dual_spelled = {
         spec.dest: spec for spec in (parser.get_default(registry.DUAL_SPELLED_DEST) or ())
     }
@@ -2325,51 +2336,74 @@ class PopcornParser(argparse.ArgumentParser):
         `main`, the tests — sees the same namespace, so a handler can never be
         reached with an argument still split across two attributes.
         """
-        parsed = super().parse_args(args, namespace)
+        argv = list(sys.argv[1:] if args is None else args)
+        parsed = super().parse_args(_rewrite_legacy_flags(argv), namespace)
         _fold_dual_spelled_arguments(parsed)
         return parsed
 
 
+# --- Renamed-away flags -----------------------------------------------------
+#
+# A channel is now a project and a template an app. The old flag spellings
+# keep working because skills, the eval harness and people's scripts pass
+# them, but they are rewritten before argparse sees them rather than declared
+# as aliases: an alias would appear in every `--help`, every completion and
+# `commands --json`, which is how new callers would keep learning the old
+# name. The renamed families (`channel`, `channel-config`) are hidden
+# registry families instead; see `commands/project.py`.
+_LEGACY_FLAGS = {"--channel": "--project", "--template": "--app"}
+
+
+def _rewrite_legacy_flags(argv: list[str]) -> list[str]:
+    """Replace each renamed-away flag with its new spelling, noting each once.
+
+    Only whole tokens (`--channel`, `--channel=x`) before a `--` are touched,
+    so a value or a message that merely contains the text is left alone.
+    """
+    out: list[str] = []
+    noted: set[str] = set()
+    for i, token in enumerate(argv):
+        if token == "--":
+            out.extend(argv[i:])
+            break
+        flag, eq, value = token.partition("=")
+        new = _LEGACY_FLAGS.get(flag)
+        if new is None:
+            out.append(token)
+            continue
+        if flag not in noted:
+            noted.add(flag)
+            print(f"Note: {flag} is deprecated; use {new}", file=sys.stderr)
+        out.append(f"{new}{eq}{value}")
+    return out
+
+
 # --- Arguments with two spellings -------------------------------------------
 #
-# Every command that acts on a channel accepts `--channel`. The families that
-# grew up taking it positionally (message, channel, webhook) keep that
+# Every command that acts on a project accepts `--project`. The families that
+# grew up taking it positionally (message, project, webhook) keep that
 # spelling — the plugin skills, the eval harness and people's scripts are all
 # written that way — so the flag is an additional spelling, never a
-# replacement. The families declared in the registry (app, channel-config,
-# flow, schedule, table) already take `--channel` and gain no positional: they
-# put the channel behind other positionals (`table rows <name>`), where an
-# optional leading positional could not be told apart from the ones after it.
+# replacement. The other families (app, project-config, flow, schedule, table)
+# take only `--project`: they put the project behind other positionals
+# (`table rows <name>`), where an optional leading positional could not be
+# told apart from the ones after it.
 #
 # The same applies to the directory a checkout lives in, which `--dir` now
 # spells on the registry-declared commands that took it positionally.
 
 
-def _add_channel_argument(
-    parser: argparse.ArgumentParser,
-    dest: str,
-    help_text: str,
-    *,
-    required: bool = True,
-    trailing: tuple[str, ...] = (),
-) -> None:
-    """Declare a command's channel as a positional and as `--channel`."""
-    registry.add_dual_spelled_argument(
-        parser, dest, help_text, flag="--channel", required=required, trailing=trailing
-    )
-
-
 def _shift_trailing_positionals(
     args: argparse.Namespace, spec: registry.DualSpelledArgument
 ) -> bool:
-    """Move each positional along one slot, out of the channel's. False if full.
+    """Move each positional along one slot, out of the project's. False if full.
 
-    argparse fills positionals left to right, so when `--channel` is given and
-    every positional after the channel is optional too, the first value lands
-    in the channel's slot: `message send --channel '#a' TEXT` parses TEXT as
-    the channel. Shifting restores the grammar the caller meant. Where the last
+    argparse fills positionals left to right, so when `--project` is given and
+    every positional after the project is optional too, the first value lands
+    in the project's slot: `message send --project '#a' TEXT` parses TEXT as
+    the project. Shifting restores the grammar the caller meant. Where the last
     trailing slot is already occupied there is nowhere to shift to, and the
-    channel really was given twice.
+    project really was given twice.
     """
     if not spec.trailing or getattr(args, spec.trailing[-1], None) is not None:
         return False
@@ -2380,10 +2414,10 @@ def _shift_trailing_positionals(
 
 
 def _fold_dual_spelled_arguments(args: argparse.Namespace) -> None:
-    """Resolve the two spellings of the channel down to the positional's dest.
+    """Resolve the two spellings of the project down to the positional's dest.
 
     Handlers read one attribute and never learn which spelling produced it.
-    Failures go through `parser.error`, so a missing or doubled channel stays
+    Failures go through `parser.error`, so a missing or doubled project stays
     an argparse-style usage error — same exit code as before this argument
     grew a second spelling.
     """
@@ -2408,8 +2442,8 @@ def build_parser() -> PopcornParser:
 Messages:
   message         Message commands (delete, download, edit, get, list, react, search, send, threads)
 
-Channels:
-  channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
+Projects:
+  project         Project commands (apps, archive, create, delete, edit, info, invite, join, kick, leave, list)
 
 Flows:
   flow            Flow commands (activities, validate, list, get, run, runs list, runs get,
@@ -2417,8 +2451,8 @@ Flows:
   schedule        Scheduled-flow commands (list, get, trigger)
 
 Apps:
-  app             App-bundle commands (list, lines, checkout, fork, validate, publish, apply, status)
-  channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
+  app             App commands (list, lines, checkout, fork, validate, publish, apply, status)
+  project-config  Project config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:
   table           Agent-store commands (list, schema, rows, row, scalar, audit)

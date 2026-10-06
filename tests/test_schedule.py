@@ -25,7 +25,7 @@ def _patch_resolve():
 
 def _item(**over):
     base = {
-        "schedule_id": "channel:conv-1:flow:claim_tick:claim-tick",
+        "schedule_id": "project:conv-1:flow:claim_tick:claim-tick",
         "conversation_id": "conv-1",
         "flow_id": "claim_tick",
         "slug": "claim-tick",
@@ -65,13 +65,13 @@ class TestOperations:
         assert mock_client.get.call_args.args[0] == "/api/customer-scheduled-flows/get"
         assert (
             mock_client.get.call_args.args[1]["schedule_id"]
-            == "channel:conv-1:flow:claim_tick:claim-tick"
+            == "project:conv-1:flow:claim_tick:claim-tick"
         )
 
     def test_a_full_schedule_id_is_not_looked_up(self, mock_client):
         """The composite passes through, so `get` costs one request, not two."""
         mock_client.get.return_value = {"scheduled_flow": _item()}
-        operations.get_scheduled_flow(mock_client, "conv-1", "channel:conv-1:flow:f:s")
+        operations.get_scheduled_flow(mock_client, "conv-1", "project:conv-1:flow:f:s")
         assert mock_client.get.call_count == 1
 
     def test_flow_id_resolves_when_it_differs_from_the_slug(self, mock_client):
@@ -82,20 +82,20 @@ class TestOperations:
         operations.get_scheduled_flow(mock_client, "conv-1", "claim_tick")
         assert (
             mock_client.get.call_args.args[1]["schedule_id"]
-            == "channel:conv-1:flow:claim_tick:claim-tick"
+            == "project:conv-1:flow:claim_tick:claim-tick"
         )
 
     def test_slug_wins_over_flow_id_on_a_cross_match(self, mock_client):
         """A ref matching one schedule's slug and another's flow_id takes the
         slug — the slug is the schedule's own name, the flow_id is shared by
         every schedule running that flow."""
-        other = _item(slug="claim_tick", flow_id="other_flow", schedule_id="channel:c:flow:o:x")
+        other = _item(slug="claim_tick", flow_id="other_flow", schedule_id="project:c:flow:o:x")
         mock_client.get.side_effect = [
             {"scheduled_flows": [_item(), other], "count": 2},
             {"scheduled_flow": other},
         ]
         operations.get_scheduled_flow(mock_client, "conv-1", "claim_tick")
-        assert mock_client.get.call_args.args[1]["schedule_id"] == "channel:c:flow:o:x"
+        assert mock_client.get.call_args.args[1]["schedule_id"] == "project:c:flow:o:x"
 
     def test_an_unknown_ref_names_what_is_there(self, mock_client):
         mock_client.get.return_value = {"scheduled_flows": [_item()], "count": 1}
@@ -124,7 +124,7 @@ class TestCadence:
         assert _cadence(_item(interval_seconds=None, cron_expr=None)) == "no cadence"
 
 
-_SID = "channel:conv-1:flow:claim_tick:claim-tick"
+_SID = "project:conv-1:flow:claim_tick:claim-tick"
 
 
 class TestTriggerOperation:
@@ -156,7 +156,7 @@ class TestTriggerRendering:
     def _render(self, resp, overlap=None):
         captured = {}
         args = argparse.Namespace(
-            channel="#ops", schedule="claim-tick", overlap_policy=overlap, json=False
+            project="#ops", schedule="claim-tick", overlap_policy=overlap, json=False
         )
         with (
             patch("popcorn_cli.cli._get_client", return_value=MagicMock()),
@@ -181,7 +181,7 @@ class TestTriggerRendering:
             }
         )
         assert "wf-1" in out["text"] and "run-1" in out["text"]
-        assert "popcorn flow runs get wf-1 --channel '#ops'" in out["text"]
+        assert "popcorn flow runs get wf-1 --project '#ops'" in out["text"]
 
     def test_an_overlap_skip_is_not_reported_as_triggered(self):
         out = self._render(
@@ -216,7 +216,7 @@ class TestRendering:
     def _render(self, items):
         captured = {}
         client = MagicMock()
-        args = argparse.Namespace(channel="#ops", json=False)
+        args = argparse.Namespace(project="#ops", json=False)
         with (
             patch("popcorn_cli.cli._get_client", return_value=client),
             patch(

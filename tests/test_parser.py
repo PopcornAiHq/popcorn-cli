@@ -207,7 +207,7 @@ class TestAssumeYes:
     def test_yes_flag_hoisted(self):
         from popcorn_cli.cli import _hoist_global_flags
 
-        result = _hoist_global_flags(["channel", "delete", "#old", "--yes"])
+        result = _hoist_global_flags(["project", "delete", "#old", "--yes"])
         assert result[0] == "--yes"
 
 
@@ -457,7 +457,7 @@ class TestReadingCommands:
         args = parser.parse_args(["message", "list", "#general", "--limit", "10"])
         assert args.command == "message"
         assert args.message_command == "list"
-        assert args.conversation == "#general"
+        assert args.project == "#general"
         assert args.limit == 10
 
     def test_list_messages_thread(self, parser):
@@ -476,7 +476,7 @@ class TestReadingCommands:
         args = parser.parse_args(["message", "threads", "#general"])
         assert args.command == "message"
         assert args.message_command == "threads"
-        assert args.conversation == "#general"
+        assert args.project == "#general"
 
     def test_list_threads_with_limit(self, parser):
         args = parser.parse_args(["message", "threads", "#general", "--limit", "10"])
@@ -507,12 +507,12 @@ class TestReadingCommands:
         assert args.max_wait == 30.0
 
     def test_channel_list(self, parser):
-        args = parser.parse_args(["channel", "list"])
-        assert args.command == "channel"
-        assert args.channel_command == "list"
+        args = parser.parse_args(["project", "list"])
+        assert args.command == "project"
+        assert args.project_command == "list"
 
     def test_channel_list_dms(self, parser):
-        args = parser.parse_args(["channel", "list", "--dms"])
+        args = parser.parse_args(["project", "list", "--dms"])
         assert args.dms is True
 
     def test_users_list(self, parser):
@@ -526,13 +526,13 @@ class TestWritingCommands:
         args = parser.parse_args(["message", "send", "#general", "hello world"])
         assert args.command == "message"
         assert args.message_command == "send"
-        assert args.conversation == "#general"
+        assert args.project == "#general"
         assert args.message == "hello world"
 
     def test_send_message_batch(self, parser):
         args = parser.parse_args(["message", "send", "--batch"])
         assert args.batch is True
-        assert args.conversation is None
+        assert args.project is None
 
     def test_react(self, parser):
         args = parser.parse_args(["message", "react", "#general", "msg-1", "thumbsup"])
@@ -553,25 +553,25 @@ class TestWritingCommands:
 
 class TestChannelManagement:
     def test_create_channel(self, parser):
-        args = parser.parse_args(["channel", "create", "new-channel"])
-        assert args.command == "channel"
-        assert args.channel_command == "create"
+        args = parser.parse_args(["project", "create", "new-channel"])
+        assert args.command == "project"
+        assert args.project_command == "create"
         assert args.name == "new-channel"
 
     def test_create_channel_private(self, parser):
-        args = parser.parse_args(["channel", "create", "secret", "--type", "private_channel"])
+        args = parser.parse_args(["project", "create", "secret", "--type", "private_channel"])
         assert args.type == "private_channel"
 
     def test_join_channel(self, parser):
-        args = parser.parse_args(["channel", "join", "#general"])
-        assert args.conversation == "#general"
+        args = parser.parse_args(["project", "join", "#general"])
+        assert args.project == "#general"
 
     def test_archive_channel_undo(self, parser):
-        args = parser.parse_args(["channel", "archive", "#general", "--undo"])
+        args = parser.parse_args(["project", "archive", "#general", "--undo"])
         assert args.undo is True
 
     def test_invite(self, parser):
-        args = parser.parse_args(["channel", "invite", "#general", "u1,u2"])
+        args = parser.parse_args(["project", "invite", "#general", "u1,u2"])
         assert args.user_ids == "u1,u2"
 
 
@@ -675,7 +675,7 @@ class TestWebhook:
     def test_webhook_deliveries(self, parser):
         args = parser.parse_args(["webhook", "deliveries", "#general", "--limit", "10"])
         assert args.webhook_command == "deliveries"
-        assert args.conversation == "#general"
+        assert args.project == "#general"
         assert args.limit == 10
 
     def test_webhook_deliveries_include(self, parser):
@@ -698,16 +698,16 @@ class TestWebhookSend:
     """`webhook send` resolves a target, then POSTs to the ingest host."""
 
     def test_parses_target_payload_and_channel(self, parser):
-        args = parser.parse_args(["webhook", "send", "Intake", '{"a": 1}', "--channel", "#ops"])
+        args = parser.parse_args(["webhook", "send", "Intake", '{"a": 1}', "--project", "#ops"])
         assert args.webhook_command == "send"
         assert args.target == "Intake"
         assert args.payload == '{"a": 1}'
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
 
     def test_payload_and_channel_are_optional(self, parser):
         args = parser.parse_args(["webhook", "send", "https://hooks.popcorn.ai/ingest/tok"])
         assert args.payload is None
-        assert args.channel is None
+        assert args.project is None
 
     def test_url_target_sends_without_a_client(self, parser):
         """An ingest URL needs no lookup and no credentials."""
@@ -721,7 +721,7 @@ class TestWebhookSend:
         assert send.call_args[0] == ("https://hooks.popcorn.ai/ingest/tok", {})
 
     def test_payload_defaults_to_empty_object(self, parser):
-        args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
+        args = parser.parse_args(["webhook", "send", "Intake", "--project", "#ops"])
         with (
             patch("popcorn_cli.cli._get_client"),
             patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1"),
@@ -731,7 +731,7 @@ class TestWebhookSend:
         assert send.call_args[0][1] == {}
 
     def test_name_target_is_resolved_through_the_channel(self, parser):
-        args = parser.parse_args(["webhook", "send", "Intake", "--channel", "#ops"])
+        args = parser.parse_args(["webhook", "send", "Intake", "--project", "#ops"])
         with (
             patch("popcorn_cli.cli._get_client"),
             patch("popcorn_core.operations.resolve_webhook_url", return_value="u/1") as resolve,
@@ -797,7 +797,7 @@ class TestWebhookSend:
         args = parser.parse_args(["webhook", "send", "Intake"])
         with patch("popcorn_cli.cli._get_client"), pytest.raises(PopcornError) as exc:
             dispatch(args)
-        assert "--channel" in str(exc.value) or "channel" in str(exc.value).lower()
+        assert "--project" in str(exc.value) or "project" in str(exc.value).lower()
         assert exc.value.error_code == "validation"
 
     def test_non_2xx_exits_non_zero_with_the_body(self, parser):
@@ -814,69 +814,69 @@ class TestWebhookSend:
 
 class TestChannelTemplates:
     def test_templates(self, parser):
-        args = parser.parse_args(["channel", "templates"])
-        assert args.command == "channel"
-        assert args.channel_command == "templates"
+        args = parser.parse_args(["project", "apps"])
+        assert args.command == "project"
+        assert args.project_command == "apps"
 
 
 class TestFlowCommands:
     def test_flow_list(self, parser):
-        args = parser.parse_args(["flow", "list", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "list", "--project", "#ops"])
         assert args.command == "flow"
         assert args.flow_command == "list"
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
 
     def test_flow_list_requires_channel(self, parser):
         with pytest.raises(SystemExit):
             parser.parse_args(["flow", "list"])
 
     def test_flow_get(self, parser):
-        args = parser.parse_args(["flow", "get", "flow-1", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "get", "flow-1", "--project", "#ops"])
         assert args.flow_command == "get"
         assert args.flow_id == "flow-1"
 
     def test_flow_run(self, parser):
-        args = parser.parse_args(["flow", "run", "flow-1", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "run", "flow-1", "--project", "#ops"])
         assert args.flow_command == "run"
         assert args.flow_id == "flow-1"
         assert args.inputs is None
 
     def test_flow_run_inputs(self, parser):
         args = parser.parse_args(
-            ["flow", "run", "flow-1", "--channel", "#ops", "--inputs", '{"x":1}']
+            ["flow", "run", "flow-1", "--project", "#ops", "--inputs", '{"x":1}']
         )
         assert args.inputs == '{"x":1}'
 
     def test_flow_runs_list(self, parser):
-        args = parser.parse_args(["flow", "runs", "list", "--channel", "#ops"])
+        args = parser.parse_args(["flow", "runs", "list", "--project", "#ops"])
         assert args.flow_command == "runs"
         assert args.flow_runs_command == "list"
 
     def test_flow_runs_list_status(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "list", "--channel", "#ops", "--status", "running"]
+            ["flow", "runs", "list", "--project", "#ops", "--status", "running"]
         )
         assert args.status == "running"
 
     def test_flow_runs_list_status_invalid(self, parser):
         with pytest.raises(SystemExit):
-            parser.parse_args(["flow", "runs", "list", "--channel", "#ops", "--status", "bogus"])
+            parser.parse_args(["flow", "runs", "list", "--project", "#ops", "--status", "bogus"])
 
     def test_flow_runs_list_flow(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "list", "--channel", "#ops", "--flow", "claim_turn"]
+            ["flow", "runs", "list", "--project", "#ops", "--flow", "claim_turn"]
         )
         assert args.flow == "claim_turn"
 
     def test_flow_runs_list_page_token(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "list", "--channel", "#ops", "--page-token", "tok"]
+            ["flow", "runs", "list", "--project", "#ops", "--page-token", "tok"]
         )
         assert args.page_token == "tok"
 
     def test_flow_runs_get(self, parser):
         args = parser.parse_args(
-            ["flow", "runs", "get", "wf-1", "--channel", "#ops", "--include-errors"]
+            ["flow", "runs", "get", "wf-1", "--project", "#ops", "--include-errors"]
         )
         assert args.flow_runs_command == "get"
         assert args.workflow_id == "wf-1"
@@ -885,22 +885,22 @@ class TestFlowCommands:
 
 class TestScheduleCommands:
     def test_schedule_list(self, parser):
-        args = parser.parse_args(["schedule", "list", "--channel", "#ops"])
+        args = parser.parse_args(["schedule", "list", "--project", "#ops"])
         assert args.schedule_command == "list"
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
 
     def test_schedule_list_requires_a_channel(self, parser):
         with pytest.raises(SystemExit):
             parser.parse_args(["schedule", "list"])
 
     def test_schedule_get(self, parser):
-        args = parser.parse_args(["schedule", "get", "claim-tick", "--channel", "#ops"])
+        args = parser.parse_args(["schedule", "get", "claim-tick", "--project", "#ops"])
         assert args.schedule_command == "get"
         assert args.schedule == "claim-tick"
 
     def test_schedule_get_requires_a_ref(self, parser):
         with pytest.raises(SystemExit):
-            parser.parse_args(["schedule", "get", "--channel", "#ops"])
+            parser.parse_args(["schedule", "get", "--project", "#ops"])
 
     def test_schedule_trigger(self, parser):
         args = parser.parse_args(
@@ -908,7 +908,7 @@ class TestScheduleCommands:
                 "schedule",
                 "trigger",
                 "claim-tick",
-                "--channel",
+                "--project",
                 "#ops",
                 "--overlap-policy",
                 "allow_all",
@@ -919,7 +919,7 @@ class TestScheduleCommands:
         assert args.overlap_policy == "allow_all"
 
     def test_schedule_trigger_overlap_defaults_to_the_schedules_own(self, parser):
-        args = parser.parse_args(["schedule", "trigger", "claim-tick", "--channel", "#ops"])
+        args = parser.parse_args(["schedule", "trigger", "claim-tick", "--project", "#ops"])
         assert args.overlap_policy is None
 
     def test_schedule_trigger_requires_a_channel(self, parser):
@@ -979,7 +979,7 @@ class TestInvalidChoiceOnAFlag:
     def test_flag_value_keeps_argparses_message(self, capsys):
         parser = build_parser()
         with pytest.raises(SystemExit):
-            parser.parse_args(["channel", "create", "example-channel", "--type", "publik"])
+            parser.parse_args(["project", "create", "example-channel", "--type", "publik"])
         err = capsys.readouterr().err
         assert "unknown command" not in err
         assert "--type" in err
@@ -1056,7 +1056,7 @@ class TestCommands:
         assert "commands" in schema
         # All top-level commands are present
         cmd_names = [c["name"] for c in schema["commands"]]
-        for expected in ["message", "channel", "app", "auth", "commands"]:
+        for expected in ["message", "project", "app", "auth", "commands"]:
             assert expected in cmd_names
 
     def test_commands_has_subcommands_for_auth(self, capsys):
@@ -1090,7 +1090,7 @@ class TestCommands:
         # send subcommand should have arguments
         send_sub = next(s for s in msg_cmd["subcommands"] if s["name"] == "send")
         arg_names = [a.get("name") or a.get("flags", [None])[0] for a in send_sub["arguments"]]
-        assert "conversation" in arg_names
+        assert "project" in arg_names
 
     def test_commands_have_categories(self, capsys):
         import json
@@ -1101,8 +1101,8 @@ class TestCommands:
         cmd_commands(args)
         out = capsys.readouterr().out
         schema = json.loads(out)
-        chan_cmd = next(c for c in schema["commands"] if c["name"] == "channel")
-        assert chan_cmd["category"] == "channels"
+        project_cmd = next(c for c in schema["commands"] if c["name"] == "project")
+        assert project_cmd["category"] == "projects"
         msg_cmd = next(c for c in schema["commands"] if c["name"] == "message")
         assert msg_cmd["category"] == "messages"
         auth_cmd = next(c for c in schema["commands"] if c["name"] == "auth")
@@ -1125,7 +1125,7 @@ class TestNewFlags:
         assert args.fail_fast is True
 
     def test_if_not_exists_flag(self, parser):
-        args = parser.parse_args(["channel", "create", "test-ch", "--if-not-exists"])
+        args = parser.parse_args(["project", "create", "test-ch", "--if-not-exists"])
         assert args.if_not_exists is True
 
 
@@ -1144,7 +1144,7 @@ class TestWebhookListUrl:
     """The ingest URL was reachable only through `--json`.
 
     The token in that URL is the credential — holding it is enough to post to
-    the channel — so the decision here was to keep it out of default human
+    the project — so the decision here was to keep it out of default human
     output and make it opt-in, rather than printing it for everyone who lists
     their webhooks in a shared terminal.
     """
@@ -1227,48 +1227,48 @@ class TestAppSurfaceListings:
         assert missing == [], f"app subcommands missing from the epilog: {missing}"
 
     def test_lines_is_dispatchable(self, parser):
-        args = parser.parse_args(["app", "lines", "--channel", "#ops"])
+        args = parser.parse_args(["app", "lines", "--project", "#ops"])
         assert args.command == "app"
         assert args.app_command == "lines"
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
 
     def test_status_takes_a_channel_without_a_directory(self, parser):
-        args = parser.parse_args(["app", "status", "--channel", "#ops"])
+        args = parser.parse_args(["app", "status", "--project", "#ops"])
         assert args.app_command == "status"
-        assert args.channel == "#ops"
+        assert args.project == "#ops"
         assert args.directory is None
 
 
-# The channel a command acts on, spelled both ways. The pairs are the survey
+# The project a command acts on, spelled both ways. The pairs are the survey
 # behind the dual-spelling work: every command in the message/channel/webhook
 # families
-# that names a channel, and for each the positional form callers already use
-# alongside the `--channel` form that now works everywhere.
+# that names a project, and for each the positional form callers already use
+# alongside the `--project` form that now works everywhere.
 _CHANNEL_SPELLINGS = [
-    (["message", "delete", "#c", "m-1"], ["message", "delete", "--channel", "#c", "m-1"]),
+    (["message", "delete", "#c", "m-1"], ["message", "delete", "--project", "#c", "m-1"]),
     (
         ["message", "edit", "#c", "m-1", "new text"],
-        ["message", "edit", "--channel", "#c", "m-1", "new text"],
+        ["message", "edit", "--project", "#c", "m-1", "new text"],
     ),
-    (["message", "list", "#c"], ["message", "list", "--channel", "#c"]),
+    (["message", "list", "#c"], ["message", "list", "--project", "#c"]),
     (
         ["message", "react", "#c", "m-1", "tada"],
-        ["message", "react", "--channel", "#c", "m-1", "tada"],
+        ["message", "react", "--project", "#c", "m-1", "tada"],
     ),
-    (["message", "send", "#c"], ["message", "send", "--channel", "#c"]),
-    (["message", "send", "#c", "hi"], ["message", "send", "--channel", "#c", "hi"]),
-    (["message", "threads", "#c"], ["message", "threads", "--channel", "#c"]),
-    (["channel", "archive", "#c"], ["channel", "archive", "--channel", "#c"]),
-    (["channel", "delete", "#c"], ["channel", "delete", "--channel", "#c"]),
-    (["channel", "edit", "#c"], ["channel", "edit", "--channel", "#c"]),
-    (["channel", "info", "#c"], ["channel", "info", "--channel", "#c"]),
-    (["channel", "invite", "#c", "u-1,u-2"], ["channel", "invite", "--channel", "#c", "u-1,u-2"]),
-    (["channel", "join", "#c"], ["channel", "join", "--channel", "#c"]),
-    (["channel", "kick", "#c", "u-1"], ["channel", "kick", "--channel", "#c", "u-1"]),
-    (["channel", "leave", "#c"], ["channel", "leave", "--channel", "#c"]),
-    (["webhook", "create", "#c", "hook"], ["webhook", "create", "--channel", "#c", "hook"]),
-    (["webhook", "deliveries", "#c"], ["webhook", "deliveries", "--channel", "#c"]),
-    (["webhook", "list", "#c"], ["webhook", "list", "--channel", "#c"]),
+    (["message", "send", "#c"], ["message", "send", "--project", "#c"]),
+    (["message", "send", "#c", "hi"], ["message", "send", "--project", "#c", "hi"]),
+    (["message", "threads", "#c"], ["message", "threads", "--project", "#c"]),
+    (["project", "archive", "#c"], ["project", "archive", "--project", "#c"]),
+    (["project", "delete", "#c"], ["project", "delete", "--project", "#c"]),
+    (["project", "edit", "#c"], ["project", "edit", "--project", "#c"]),
+    (["project", "info", "#c"], ["project", "info", "--project", "#c"]),
+    (["project", "invite", "#c", "u-1,u-2"], ["project", "invite", "--project", "#c", "u-1,u-2"]),
+    (["project", "join", "#c"], ["project", "join", "--project", "#c"]),
+    (["project", "kick", "#c", "u-1"], ["project", "kick", "--project", "#c", "u-1"]),
+    (["project", "leave", "#c"], ["project", "leave", "--project", "#c"]),
+    (["webhook", "create", "#c", "hook"], ["webhook", "create", "--project", "#c", "hook"]),
+    (["webhook", "deliveries", "#c"], ["webhook", "deliveries", "--project", "#c"]),
+    (["webhook", "list", "#c"], ["webhook", "list", "--project", "#c"]),
 ]
 
 
@@ -1289,8 +1289,8 @@ _DIRECTORY_SPELLINGS = [
     (["app", "apply", "/tmp/co"], ["app", "apply", "--dir", "/tmp/co"]),
     (["template", "check", "/tmp/co"], ["template", "check", "--dir", "/tmp/co"]),
     (
-        ["app", "checkout", "--channel", "#c", "/tmp/co"],
-        ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co"],
+        ["app", "checkout", "--project", "#c", "/tmp/co"],
+        ["app", "checkout", "--project", "#c", "--dir", "/tmp/co"],
     ),
 ]
 
@@ -1298,9 +1298,9 @@ _DIRECTORY_SPELLINGS = [
 class TestDirectoryArgument:
     """One directory, two spellings, one namespace attribute.
 
-    The channel half of this shipped first; this is the remainder. The
+    The project half of this shipped first; this is the remainder. The
     machinery is shared — `registry.add_dual_spelled_argument` — so these
-    guard the wiring and the cases the channel's own tests cannot reach: a
+    guard the wiring and the cases the project's own tests cannot reach: a
     REQUIRED positional (`template check`), and the `--fork` collision.
     """
 
@@ -1349,17 +1349,17 @@ class TestDirectoryArgument:
         LINE. Spelling the directory as a flag removes the collision instead
         of working around it."""
         args = parser.parse_args(
-            ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co", "--fork"]
+            ["app", "checkout", "--project", "#c", "--dir", "/tmp/co", "--fork"]
         )
         assert (args.directory, args.fork) == ("/tmp/co", "")
 
 
 class TestChannelArgument:
-    """One channel, two spellings, one namespace attribute.
+    """One project, two spellings, one namespace attribute.
 
-    The message/channel/webhook families take the channel positionally and
-    the registry families take `--channel`; the split is an artifact of the
-    order they were written. `--channel` now works on all of them, and the
+    The message/channel/webhook families take the project positionally and
+    the registry families take `--project`; the split is an artifact of the
+    order they were written. `--project` now works on all of them, and the
     positional keeps working because skills, scripts and the eval harness are
     written that way.
     """
@@ -1380,52 +1380,52 @@ class TestChannelArgument:
     def test_every_channel_positional_also_accepts_the_flag(self, parser):
         """The guard for the next command someone adds.
 
-        A leaf declaring a bare `conversation`/`channel` positional instead of
-        going through `_add_channel_argument` reintroduces exactly the split
+        A leaf declaring a bare `project` (or `conversation`/`channel`)
+        positional instead of declaring `flag_alias` reintroduces exactly the split
         this ticket closed, and nothing else would notice.
         """
         missing = []
         for path, leaf in _leaf_parsers(parser):
             positionals = {a.dest for a in leaf._actions if not a.option_strings}
             options = {opt for a in leaf._actions for opt in a.option_strings}
-            if positionals & {"conversation", "channel"} and "--channel" not in options:
+            if positionals & {"project", "conversation", "channel"} and "--project" not in options:
                 missing.append(" ".join(path))
-        assert missing == [], f"channel positional without a --channel spelling: {missing}"
+        assert missing == [], f"project positional without a --project spelling: {missing}"
 
     def test_the_flag_fills_a_genuinely_optional_channel(self, parser):
         """Where neither form is required, the flag still lands on the dest.
 
-        `message send` declares its channel `nargs="?"`, so the positional can
+        `message send` declares its project `nargs="?"`, so the positional can
         be absent — and the fold has to put the flag's value on the positional's
         dest anyway. This was covered through `site status` until that family
         was removed.
         """
-        assert parser.parse_args(["message", "send"]).conversation is None
-        assert parser.parse_args(["message", "send", "--channel", "#c"]).conversation == "#c"
+        assert parser.parse_args(["message", "send"]).project is None
+        assert parser.parse_args(["message", "send", "--project", "#c"]).project == "#c"
 
     def test_a_required_channel_is_still_required(self, parser):
         """`nargs="?"` moved the requirement out of argparse; it has to survive."""
         with pytest.raises(SystemExit):
             parser.parse_args(["message", "list"])
         with pytest.raises(SystemExit):
-            parser.parse_args(["channel", "info"])
+            parser.parse_args(["project", "info"])
 
     def test_giving_the_channel_twice_is_a_usage_error(self, parser):
         with pytest.raises(SystemExit):
-            parser.parse_args(["message", "list", "#a", "--channel", "#b"])
+            parser.parse_args(["message", "list", "#a", "--project", "#b"])
 
     def test_a_trailing_positional_is_not_swallowed_by_the_flag(self, parser):
-        """argparse fills positionals left to right, so `--channel` plus an
-        all-optional tail would otherwise land the tail in the channel slot."""
-        args = parser.parse_args(["message", "send", "--channel", "#c", "hi"])
-        assert (args.conversation, args.message) == ("#c", "hi")
+        """argparse fills positionals left to right, so `--project` plus an
+        all-optional tail would otherwise land the tail in the project slot."""
+        args = parser.parse_args(["message", "send", "--project", "#c", "hi"])
+        assert (args.project, args.message) == ("#c", "hi")
 
     def test_the_schema_still_reports_the_channel_as_required(self):
         """`commands --json` is what an agent reads instead of `--help`.
 
         The positional is `nargs="?"` only so the flag can stand in for it —
         reporting argparse's answer would tell an agent `message list` runs
-        without a channel.
+        without a project.
         """
         from popcorn_cli.cli import _introspect_parser
 
@@ -1434,15 +1434,15 @@ class TestChannelArgument:
             a.get("name") or a["flags"][0]: a
             for a in _introspect_parser(leaves[("message", "list")])
         }
-        assert by_name["conversation"]["required"] is True
-        assert by_name["--channel"]["required"] is False
-        # A leaf whose channel really is optional reports it that way, so the
+        assert by_name["project"]["required"] is True
+        assert by_name["--project"]["required"] is False
+        # A leaf whose project really is optional reports it that way, so the
         # required flag is computed per leaf rather than hardcoded by name.
         optional = {
             a.get("name") or a["flags"][0]: a
             for a in _introspect_parser(leaves[("message", "send")])
         }
-        assert optional["conversation"]["required"] is False
+        assert optional["project"]["required"] is False
 
 
 class TestVersionUpdateNotice:

@@ -1,4 +1,4 @@
-"""`popcorn app` — author an app bundle from a checkout of it.
+"""`popcorn app` — author an app from a checkout of it.
 
 ```
 app fork → app checkout → edit → app validate → app publish
@@ -6,19 +6,19 @@ app fork → app checkout → edit → app validate → app publish
 
 `apply` is NOT a step in that loop. `publish` starts the install itself and it
 converges on its own; `apply` is the retry for the cases where it did not —
-the channel was locked, another install held it, or the install failed. Run it
-when `app status` says the channel is still behind its line, not by habit.
+the project was locked, another install held it, or the install failed. Run it
+when `app status` says the project is still behind its line, not by habit.
 
 `fork` leads even though a checkout is what you edit: publishing needs a
 checkout of a version this workspace OWNS, so `publish` from a product
 checkout cannot work (`PublishBaseNotForkError`). `checkout --fork` does both
 in one command, since the pair is almost always run together; `fork` stays a
 command of its own, and a checkout WITHOUT it stays the way to read what a
-channel runs without touching it.
+project runs without touching it.
 
-A checkout is the fork line's HEAD, not what the channel happens to run. A
+A checkout is the fork line's HEAD, not what the project happens to run. A
 publish is a line operation and must be based on the head; the two differ
-only while the channel lags its line — a head whose
+only while the project lags its line — a head whose
 install has not landed, or failed — and that is the case where a checkout of
 the bound tree used to leave the line stuck. `checkout` says so when it
 happens; `status` shows both versions.
@@ -30,19 +30,19 @@ versions. Its baseline is marked `historical` unless N is the head, and
 
 Two groups of commands, split by what they act on:
 
-- `fork` acts on a CHANNEL, so it takes `--channel`. `list` and `lines`
+- `fork` acts on a PROJECT, so it takes `--project`. `list` and `lines`
   report the WORKSPACE's apps and fork lines, which the API serves without a
-  channel; `--channel` on `list` adds what that channel runs, and `lines`
+  project; `--project` on `list` adds what that project runs, and `lines`
   needs none.
 - `checkout`, `publish`, `apply` and `status` act on a checkout DIRECTORY and
-  read the channel out of its baseline. `--channel` stays accepted there for
+  read the project out of its baseline. `--project` stays accepted there for
   baselines written by 0.19.0, which predate the field.
 
 `status` is the one command in both groups: with a checkout it compares the
-working copy against the line and the channel, and with `--channel` outside
+working copy against the line and the project, and with `--project` outside
 one it answers "has my publish landed here?" from server state alone.
 
-Either way it also checks the channel's live schedules against the ones its
+Either way it also checks the project's live schedules against the ones its
 bound manifest declares. Most differences there are deliberate —
 `set_app_mode` retunes cadences off prod, and a plain daily cron is moved off
 its declared minute by the de-peak offset, which the server reports per
@@ -114,9 +114,9 @@ from popcorn_core.template_check import ERROR, BundleReport, check_bundle
 
 from ..registry import Argument, Command, Subcommand, register
 
-_CHANNEL = Argument("channel", "Channel name (#alerts) or UUID", required=True)
+_PROJECT = Argument("project", "Project name (#alerts) or UUID", required=True)
 # The same argument where the baseline supplies a default.
-_CHANNEL_OPT = Argument("channel", "Channel to act on (default: the checkout's baseline)")
+_PROJECT_OPT = Argument("project", "Project to act on (default: the checkout's baseline)")
 _DIRECTORY = Argument(
     "directory",
     "Checkout directory (default: .)",
@@ -127,14 +127,14 @@ _DIRECTORY = Argument(
 
 
 def _render_list(data: dict, named_channel: bool = True) -> str:
-    """`named_channel` separates "this channel runs nothing" from "no channel
+    """`named_channel` separates "this project runs nothing" from "no project
     was asked about" — the response's `channel` is null for both."""
     apps = data.get("apps") or []
-    channel = data.get("channel")
+    project = data.get("channel")
 
     lines: list[str] = []
     if not apps:
-        lines.append("No app bundles visible to this workspace.")
+        lines.append("No apps visible to this workspace.")
     else:
         lines.append(f"{'APP':<24} {'KIND':<8} {'LINE':<12} {'VERSION':<10} FLOWS")
         for item in apps:
@@ -148,16 +148,16 @@ def _render_list(data: dict, named_channel: bool = True) -> str:
             )
 
     lines.append("")
-    if channel:
-        line = channel.get("fork_name") or "—"
+    if project:
+        line = project.get("fork_name") or "—"
         lines.append(
-            f"This channel runs {channel.get('app')} "
-            f"{channel.get('semver')} ({channel.get('kind')}, line {line})"
+            f"This project runs {project.get('app')} "
+            f"{project.get('semver')} ({project.get('kind')}, line {line})"
         )
     elif named_channel:
-        lines.append("This channel does not run an app bundle.")
+        lines.append("This project does not run an app.")
     else:
-        lines.append("Pass --channel to also see what one channel runs.")
+        lines.append("Pass --project to also see what one project runs.")
     return "\n".join(lines)
 
 
@@ -165,23 +165,23 @@ def _app_list(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    channel = getattr(args, "channel", None)
-    data = operations.list_channel_apps(client, channel)
-    _output(args, data, _render_list(data, named_channel=bool(channel)))
+    project = getattr(args, "project", None)
+    data = operations.list_channel_apps(client, project)
+    _output(args, data, _render_list(data, named_channel=bool(project)))
 
 
-# How many channels ride each line is the safety information `app lines`
+# How many projects ride each line is the safety information `app lines`
 # exists to give, and the API does not carry it: `/apps/list` returns lineage
 # heads only, and the count the server keeps for itself lives behind
-# `publish` and is exposed nowhere. The CLI could approximate it by listing channels and reading each
-# one's binding, and deliberately does not: that enumerates only the channels
+# `publish` and is exposed nowhere. The CLI could approximate it by listing projects and reading each
+# one's binding, and deliberately does not: that enumerates only the projects
 # the CALLER can see, so it under-counts exactly when the answer matters and
-# would report "no channels" for a line another member's channel is bound to.
+# would report "no projects" for a line another member's project is bound to.
 # An undercount presented as a safety check is worse than an honest gap, so
 # the command names the gap instead, and closing it needs a server-side count.
 _NO_CHANNEL_COUNT = (
-    "How many channels ride each line is not shown: the API reports lineage "
-    "heads only, with no per-line channel count."
+    "How many projects ride each line is not shown: the API reports lineage "
+    "heads only, with no per-line project count."
 )
 
 # Deleting a fork line has no API behind it either — the whole `/apps`
@@ -200,7 +200,7 @@ def _render_lines(lines_data: list[dict]) -> str:
         return (
             "This workspace owns no fork lines.\n"
             "\n"
-            "'popcorn app checkout --channel <channel> --fork' makes the first one."
+            "'popcorn app checkout --project <project> --fork' makes the first one."
         )
 
     rendered = [f"{'LINE':<30} {'APP':<24} {'HEAD':<10} PUBLISHED"]
@@ -222,16 +222,16 @@ def _render_lines(lines_data: list[dict]) -> str:
 
 
 def _app_lines(args: argparse.Namespace) -> None:
-    """This workspace's fork lines, across apps — not this channel's.
+    """This workspace's fork lines, across apps — not this project's.
 
     `app list` answers what the workspace could install (and, with
-    `--channel`, what that channel runs) and buries the line inventory in it,
+    `--project`, what that project runs) and buries the line inventory in it,
     one row per line mixed with product entries and each row's flow list. Six
     throwaway lines in one workspace is a routine afternoon and nothing listed
     them on their own.
 
-    No channel is sent: the inventory is workspace-scoped and the API serves
-    it without one. `--channel` is still accepted so scripts written when the
+    No project is sent: the inventory is workspace-scoped and the API serves
+    it without one. `--project` is still accepted so scripts written when the
     API required it keep working, and it changes nothing that is listed.
     """
     from ..cli import _get_client, _output
@@ -250,7 +250,7 @@ def _app_lines(args: argparse.Namespace) -> None:
     payload = {
         # Echoed as passed (null when omitted): `--json` keys are add-only,
         # even for an argument that no longer scopes anything.
-        "channel": getattr(args, "channel", None),
+        "channel": getattr(args, "project", None),
         "lines": lines_data,
         # Stated on the wire too, so a script reading --json is told the count
         # is absent rather than inferring zero from a missing key.
@@ -265,7 +265,7 @@ def _app_lines(args: argparse.Namespace) -> None:
 # the 404 hint and the publish refusal's wording so the two cannot disagree.
 _WHERE_VERSION_IDS_ARE = (
     "'app publish' prints each version's id as it publishes it, 'app status' "
-    f"shows the line's head and what the channel runs, and a checkout's "
+    f"shows the line's head and what the project runs, and a checkout's "
     f"{BASELINE_FILE} records its base_version_id; no command lists a line's "
     "past versions"
 )
@@ -295,10 +295,10 @@ def _read_version(client, conv_id: str, version_id: int) -> dict:
     """The files of one named version, with the server's refusal made usable.
 
     The 404 is deliberately one answer for every unreadable id — nonexistent,
-    another workspace's, another line's, a product version the channel is not
+    another workspace's, another line's, a product version the project is not
     offered — so the hint says where valid ids come from and nothing about
     which of those this was. Matched on the message so that a DIFFERENT 404
-    (a channel that runs no app) keeps its own text and gains no hint that
+    (a project that runs no app) keeps its own text and gains no hint that
     would misdirect.
     """
     try:
@@ -306,7 +306,7 @@ def _read_version(client, conv_id: str, version_id: int) -> dict:
     except APIError as exc:
         if exc.status_code == 404 and "is not a version of" in str(exc):
             exc.hint = (
-                "a version id is readable only from this channel's own line — "
+                "a version id is readable only from this project's own line — "
                 + _WHERE_VERSION_IDS_ARE
             )
         raise
@@ -329,16 +329,16 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # Resolved here rather than inside the operation because the baseline
     # stores it. resolve_conversation caches, so naming it twice is one
     # request, and it passes a UUID straight through.
-    conv_id = resolve_conversation(client, args.channel)
+    conv_id = resolve_conversation(client, args.project)
 
-    # Before the read, not after: the fork re-binds the channel, so a checkout
+    # Before the read, not after: the fork re-binds the project, so a checkout
     # taken first would be of the product tree and the baseline would record
     # `kind: product` — the very state `publish` refuses.
     #
     # `is not None` rather than truthiness: `--fork` with no value parses to
     # the const "", which means "fork, infer the line" and must not read as
     # "no --fork". Absent, it stays None and this whole branch is skipped —
-    # a fork-less checkout is a legitimate read of what a channel runs.
+    # a fork-less checkout is a legitimate read of what a project runs.
     # argparse keeps `--fork` and `--version` apart, so this never runs for a
     # version checkout.
     forked = None
@@ -359,7 +359,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
         # makes the copy historical — the safe direction — where the other
         # order could mark a superseded version publishable.
         #
-        # Fork lines only. A product-bound channel is offered the version it
+        # Fork lines only. A product-bound project is offered the version it
         # runs and the workspace's release-track head, which is NEWER than
         # what it runs, so "past version" would be simply wrong there; and a
         # product checkout needs no flag, since publish refuses it already.
@@ -368,7 +368,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
     files = files_from_response(resp)
     if not files:
         raise PopcornError(
-            f"{resp.get('app') or 'this channel'} returned no files to check out",
+            f"{resp.get('app') or 'this project'} returned no files to check out",
             error_code="not_found",
         )
     historical = head is not None and head.get("version_id") != resp.get("version_id")
@@ -389,10 +389,10 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # `_confirm_force`, not `_confirm`: this overwrites files the author may
     # be the only holder of, and `-y` must not be enough to lose them.
     if occupied(directory) and not _confirm_force(
-        args, f"{directory} is not empty — overwrite its bundle files?"
+        args, f"{directory} is not empty — overwrite its app files?"
     ):
         raise PopcornError(
-            f"{directory} is not empty — its bundle files were left as they are",
+            f"{directory} is not empty — its app files were left as they are",
             error_code="validation",
             hint="pass --force to overwrite them",
         )
@@ -421,7 +421,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
     # wrote from one the author added, and deleting the author's is the loss
     # `_confirm_force` exists to prevent.
     stale = sorted(rel for rel, _ in classify_tree(directory)[0] if rel not in files)
-    # What the channel runs, alongside what was served. An older API sends
+    # What the project runs, alongside what was served. An older API sends
     # neither field; then the served version IS the bound one and there is
     # nothing to note.
     channel_id = resp.get("bound_version_id", baseline.base_version_id)
@@ -456,7 +456,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
         assert head is not None
         lines.append(
             f"This is version {baseline.base_version_id}, not the line's head "
-            f"({head.get('semver')}, version {head.get('version_id')}); the channel "
+            f"({head.get('semver')}, version {head.get('version_id')}); the project "
             f"runs {channel_semver} (version {channel_id}). It is a copy to read "
             "and diff — 'app publish' refuses it, and says how to republish its "
             "content on top of the head."
@@ -464,14 +464,14 @@ def _app_checkout(args: argparse.Namespace) -> None:
     elif version_id is not None and baseline.kind != "fork":
         lines.append(
             f"This is a {baseline.kind} version (version {baseline.base_version_id}); "
-            f"the channel runs {channel_semver} (version {channel_id}). A publish "
+            f"the project runs {channel_semver} (version {channel_id}). A publish "
             "needs a fork line — 'popcorn app checkout --fork' makes one."
         )
     elif channel_id != baseline.base_version_id:
         lines.append(
-            f"Note: this channel still runs {baseline.app} {channel_semver}; "
+            f"Note: this project still runs {baseline.app} {channel_semver}; "
             f"{baseline.semver} is the fork line's head — edits publish on top of "
-            "the head and the channel moves straight to the new version."
+            "the head and the project moves straight to the new version."
         )
     lines += [
         *(f"  {p}" for p in written),
@@ -493,7 +493,7 @@ def _app_checkout(args: argparse.Namespace) -> None:
                 if historical
                 else "how to edit and publish this directory, "
             )
-            + "for whoever reads it next. It is not bundle content and does not publish."
+            + "for whoever reads it next. It is not app content and does not publish."
         )
     if not historical:
         lines += ["", f"Next: popcorn app validate {directory}"]
@@ -516,27 +516,27 @@ def _require_baseline(directory: Path) -> Baseline:
             f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
             error_code="not_found",
             # No "run:" prefix — the renderer supplies the verb.
-            hint="popcorn app checkout --channel '#your-channel'",
+            hint="popcorn app checkout --project '#your-project'",
         )
     return baseline
 
 
 def _channel_of(args: argparse.Namespace, baseline: Baseline) -> str:
-    """The channel to act on: the flag if given, else the baseline's.
+    """The project to act on: the flag if given, else the baseline's.
 
-    A v1 baseline (popcorn-cli 0.19.0) has no channel in it, which is the one
-    case that still needs the flag — named as such, because "pass --channel"
+    A v1 baseline (popcorn-cli 0.19.0) has no project in it, which is the one
+    case that still needs the flag — named as such, because "pass --project"
     without the reason reads like a missing feature.
     """
-    if getattr(args, "channel", None):
-        return str(args.channel)
+    if getattr(args, "project", None):
+        return str(args.project)
     if baseline.conversation_id:
         return baseline.conversation_id
     raise PopcornError(
-        f"{BASELINE_FILE} records no channel — it was written by an older "
+        f"{BASELINE_FILE} records no project — it was written by an older "
         "popcorn (0.19.0 or earlier)",
         error_code="validation",
-        hint="pass --channel, or re-run 'popcorn app checkout' to refresh it",
+        hint="pass --project, or re-run 'popcorn app checkout' to refresh it",
     )
 
 
@@ -567,7 +567,7 @@ def _fetch_base(client, conversation: str, baseline: Baseline) -> tuple[dict, di
 
     The diff is computed against this tree, so it must be the one the
     checkout came from — and the head is what a publish must be based on.
-    What the CHANNEL runs plays no part: a channel
+    What the PROJECT runs plays no part: a project
     still behind its line (a head whose install has not landed, or failed)
     publishes fine from a checkout of that head. A head past the baseline
     means someone else published on the line; the server would refuse the
@@ -592,8 +592,8 @@ def _inferred_fork_line(client, conversation: str) -> dict | None:
     `fork_channel_app` posts `{}` and the 0/1/2+ decision is the server's, so
     the only way to know which line is about to be adopted is to ask: one
     `kind: "fork"` entry per line comes back from `app list`. Filtered to the
-    app the channel actually runs, because a workspace can own fork lines of
-    apps this channel has nothing to do with.
+    app the project actually runs, because a workspace can own fork lines of
+    apps this project has nothing to do with.
 
     None for both the 0 case (the server mints `default`, nothing to disclose)
     and the 2+ case (the server refuses and lists them — a good message, and
@@ -673,9 +673,9 @@ def _fork_lines(data: dict) -> list[str]:
         rendered.append(
             # `app list` was the old answer and is a bad one: it prints the
             # binding inside a prose line, so callers grepped a semver out of
-            # it. `status --channel` reports the same thing as a field.
-            "The install is asynchronous — 'popcorn app status --channel "
-            "<channel>' says when the channel has moved."
+            # it. `status --project` reports the same thing as a field.
+            "The install is asynchronous — 'popcorn app status --project "
+            "<project>' says when the project has moved."
         )
     return rendered
 
@@ -684,9 +684,9 @@ def _app_fork(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    data = _fork(args, client, args.channel, args.name)
+    data = _fork(args, client, args.project, args.name)
 
-    rendered = [*_fork_lines(data), "", "Next: popcorn app checkout --channel <channel>"]
+    rendered = [*_fork_lines(data), "", "Next: popcorn app checkout --project <project>"]
     _output(args, data, "\n".join(rendered))
 
 
@@ -772,14 +772,14 @@ def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
     copy of the head in front of the author when it happens, where `app
     status` and the diff summary show what is being undone.
     """
-    channel = baseline.conversation_id or "<channel>"
+    project = baseline.conversation_id or "<project>"
     raise PopcornError(
         f"{directory} is a checkout of {baseline.app} {baseline.semver} "
         f"(version {baseline.base_version_id}), a past version rather than its "
         "line's head — a publish is based on the head, so it cannot start here",
         error_code="conflict",
-        hint="to republish this content: 'popcorn app checkout --channel "
-        f"{channel} --dir <new-dir>' for the head, copy these bundle files over it (leave its "
+        hint="to republish this content: 'popcorn app checkout --project "
+        f"{project} --dir <new-dir>' for the head, copy these app files over it (leave its "
         f"{BASELINE_FILE}) and delete any file there this version lacks — "
         "or the publish keeps everything added since — then 'popcorn app publish <new-dir> --bump patch -m "
         '"..."\' — the diff it prints is what reverts',
@@ -791,7 +791,7 @@ def _refuse_missing_app_type(files: dict[str, str], baseline: Baseline) -> None:
 
     Advisory: the server is the authority and refuses the same publish, but
     only after the reads and the confirmation prompt, and a version it did
-    accept would install untyped and clear every channel's app_type. The
+    accept would install untyped and clear every project's app_type. The
     line's app is the value to restore — the server rejects any other.
     """
     name, doc = manifest_file(files)
@@ -799,7 +799,7 @@ def _refuse_missing_app_type(files: dict[str, str], baseline: Baseline) -> None:
         return
     raise PopcornError(
         f"{name} declares no 'app_type:' — a publish without one is refused, "
-        "because installing it would clear the app_type of every channel on "
+        "because installing it would clear the app_type of every project on "
         f"{_line_label(baseline)}",
         error_code="validation",
         hint=f"restore 'app_type: {baseline.app or '<app>'}' in {name}",
@@ -816,7 +816,7 @@ def _refuse_unconfirmable_publish(args: argparse.Namespace, baseline: Baseline) 
 
     Every server-side guard on a publish is about validity — admin, a
     non-empty payload, a current base, a tree that installs — and none asks
-    whether the author meant to change every channel on the fork line. So a
+    whether the author meant to change every project on the fork line. So a
     publish confirms, and a caller that cannot answer a prompt must say so
     up front with ``--yes`` (or ``POPCORN_ASSUME_YES=1``), exactly as
     `_confirm` asks of every other destructive command.
@@ -837,7 +837,7 @@ def _refuse_unconfirmable_publish(args: argparse.Namespace, baseline: Baseline) 
     who = "in agent mode (POPCORN_AGENT)" if agent else "in non-interactive mode"
     raise PopcornError(
         f"refusing to publish {who} without --yes — a publish changes every "
-        f"channel on {_line_label(baseline)}, not only this one",
+        f"project on {_line_label(baseline)}, not only this one",
         error_code="validation",
         hint="re-run with --yes (or set POPCORN_ASSUME_YES=1) once that reach is intended",
     )
@@ -846,7 +846,7 @@ def _refuse_unconfirmable_publish(args: argparse.Namespace, baseline: Baseline) 
 def _confirm_publish(args: argparse.Namespace, baseline: Baseline, version: str) -> None:
     """Ask before a publish, naming who it reaches. Raises on "no".
 
-    The count of channels on the line is not asked for, because nothing
+    The count of projects on the line is not asked for, because nothing
     before a publish serves it — `/apps/list` returns lineage heads only
     (see `_NO_CHANNEL_COUNT`) and the server reports the count only in the
     publish response. The prompt names the line instead of guessing a number.
@@ -856,7 +856,7 @@ def _confirm_publish(args: argparse.Namespace, baseline: Baseline, version: str)
     line = _line_label(baseline)
     if not _confirm(
         args,
-        f"Publish {baseline.app} {version} to {line}? Every channel on that "
+        f"Publish {baseline.app} {version} to {line}? Every project on that "
         "line converges on it within a day, not only this one — how many is "
         "reported only after the publish.",
     ):
@@ -880,7 +880,7 @@ def _app_publish(args: argparse.Namespace) -> None:
             f"{baseline.app} {baseline.semver} is a PRODUCT version — a "
             "publish lands on a fork line this workspace owns",
             error_code="conflict",
-            hint="re-run 'popcorn app checkout --channel <channel> --fork' — "
+            hint="re-run 'popcorn app checkout --project <project> --fork' — "
             "one command forks and checks out the line's head",
         )
     if baseline.historical:
@@ -941,7 +941,7 @@ def _app_publish(args: argparse.Namespace) -> None:
     # The working copy now corresponds to the PUBLISHED version — the line's
     # new head — so the baseline moves with it; otherwise the next edit needs
     # a fresh checkout, which is the loop this command exists to close. The
-    # channel catches up when the install lands, and that is its business:
+    # project catches up when the install lands, and that is its business:
     # the next publish is based on the head either way.
     published = Baseline(
         app=str(result.get("app") or baseline.app),
@@ -988,7 +988,7 @@ def _app_publish(args: argparse.Namespace) -> None:
 
 
 def _install_lines(result: dict) -> list[str]:
-    """How the install onto this channel went, from `install_status`.
+    """How the install onto this project went, from `install_status`.
 
     The version is published whatever the status says; every value but
     "started" is about the INSTALL half, and `app apply` is the retry for all
@@ -1003,21 +1003,21 @@ def _install_lines(result: dict) -> list[str]:
         # presenting it as a mandatory step is what made the loop read as
         # more manual than it is.
         return [
-            f"Installing on this channel: {workflow_id}",
+            f"Installing on this project: {workflow_id}",
             "It converges on its own — 'popcorn app status' confirms it landed.",
         ]
     if status == "blocked_app_updates_locked":
         return [
-            "Not applied to this channel: app updates are locked here — ask a "
-            "channel admin or a workspace admin to unlock them, then run "
+            "Not applied to this project: app updates are locked here — ask a "
+            "project admin or a workspace admin to unlock them, then run "
             "'popcorn app apply'",
         ]
     if status == "blocked_install_in_progress":
         return [
-            "Not applied yet — another install holds this channel's lock.",
+            "Not applied yet — another install holds this project's lock.",
             "Next: popcorn app apply",
         ]
-    return ["Not applied to any channel.", "Next: popcorn app apply"]
+    return ["Not applied to any project.", "Next: popcorn app apply"]
 
 
 def _app_apply(args: argparse.Namespace) -> None:
@@ -1027,8 +1027,8 @@ def _app_apply(args: argparse.Namespace) -> None:
     directory = _directory(args)
     baseline = read_baseline(directory)
     conversation = (
-        str(args.channel)
-        if getattr(args, "channel", None)
+        str(args.project)
+        if getattr(args, "project", None)
         else _channel_of(args, _require_baseline(directory))
     )
     data = operations.apply_channel_app(client, conversation)
@@ -1036,10 +1036,10 @@ def _app_apply(args: argparse.Namespace) -> None:
     status = str(data.get("status") or "")
     target = f"{data.get('app')} {data.get('target_semver') or '?'}"
     rendered = {
-        "started": f"Applying {target} to this channel",
+        "started": f"Applying {target} to this project",
         "already_current": f"Already on {target} — nothing to do",
         "blocked_install_in_progress": (
-            "Another install holds this channel's lock — re-run "
+            "Another install holds this project's lock — re-run "
             "'popcorn app apply' once it finishes"
         ),
     }.get(status, f"{status}: {target}")
@@ -1059,12 +1059,12 @@ def _collect_schedule_drift(
 
     Compared against the BOUND manifest in both of `status`'s modes, including
     from inside a checkout where a local manifest is also to hand. The live
-    schedules were installed from the version the channel runs, so that is the
+    schedules were installed from the version the project runs, so that is the
     only manifest they can be judged against — a working copy's `schedules:`
-    describes a channel state that does not exist yet, and a head that has not
+    describes a project state that does not exist yet, and a head that has not
     landed describes one that may never.
 
-    Returns `(None, reason)` rather than raising: a channel with no manifest,
+    Returns `(None, reason)` rather than raising: a project with no manifest,
     or a Temporal outage behind the schedule list, must not take down the
     version reporting that is this command's main job and works fine without
     it. The reason is rendered where a reader will see it.
@@ -1090,7 +1090,7 @@ def _collect_schedule_drift(
     try:
         live_resp = operations.list_scheduled_flows(client, conversation)
     except APIError as exc:
-        return None, f"the channel's live schedules could not be read ({exc})"
+        return None, f"the project's live schedules could not be read ({exc})"
     live = live_resp.get("scheduled_flows") or []
     # The platform's intended cadence is what tells a de-peak or an interval
     # phase from drift, and this has no way to compute it — so a server that
@@ -1102,7 +1102,7 @@ def _collect_schedule_drift(
         )
 
     # `popcorn.app_mode` separates a deliberate retune from an unexplained one,
-    # and a channel that never set it reads as None — which `classify` treats
+    # and a project that never set it reads as None — which `classify` treats
     # as "could not confirm" rather than as prod.
     app_mode: str | None = None
     try:
@@ -1147,7 +1147,7 @@ def _schedule_drift_section(
     """Fold the drift check into a status report's data and rendering.
 
     Returns the message the caller must raise AFTER emitting output, so a
-    drifted channel still prints its report rather than only an error.
+    drifted project still prints its report rather than only an error.
     """
     report, error = _collect_schedule_drift(client, conversation)
     data["schedule_drift"] = report.to_dict() if report is not None else None
@@ -1170,7 +1170,7 @@ def _version_label(semver: Any, version_id: Any) -> str:
     return "the line's head"
 
 
-# The served `install.error_code` for a failure the channel cannot fix: its
+# The served `install.error_code` for a failure the project cannot fix: its
 # `error` is a generic message naming the install workflow. Every other code
 # (`invalid_manifest`, `bundle_rejected`, ...) keeps an actionable message.
 INTERNAL_INSTALL_ERROR = "internal"
@@ -1192,14 +1192,14 @@ def _served_install_lines(install: dict[str, Any], conversation: str) -> list[st
         else (f"attempt {attempt}" if attempt is not None else "")
     )
     headline = {
-        "current": "the channel runs the line's head",
+        "current": "the project runs the line's head",
         "installing": f"installing {target}" + (f", {attempts}" if attempts else ""),
         "retrying": f"retrying {target}" + (f", {attempts}" if attempts else ""),
-        "locked": f"app updates are locked on this channel, so {target} is not applied",
+        "locked": f"app updates are locked on this project, so {target} is not applied",
         "failed": f"the install of {target} failed" + (f" on {attempts}" if attempts else ""),
         "skipped": f"the install of {target} was skipped"
         + (f" ({install['reason']})" if install.get("reason") else ""),
-        "behind": f"no install is moving the channel to {target}",
+        "behind": f"no install is moving the project to {target}",
     }.get(state, target)
     lines = [f"Install: {state.upper()} — {headline}."]
     if install.get("error"):
@@ -1215,7 +1215,7 @@ def _served_install_lines(install: dict[str, Any], conversation: str) -> list[st
         # is worth it stays the served `retry_hint`'s call.
         workflow = install.get("workflow_id")
         lines.append(
-            "  This failure is inside the platform, not in the bundle — no edit "
+            "  This failure is inside the platform, not in the app — no edit "
             "or publish fixes it." + (f" Its detail is on workflow {workflow}." if workflow else "")
         )
     if install.get("at"):
@@ -1228,9 +1228,9 @@ def _served_install_lines(install: dict[str, Any], conversation: str) -> list[st
     hint = install.get("retry_hint")
     if hint:
         lines.append(f"Next: {hint}")
-        # The served hint names the command without the channel it applies to.
+        # The served hint names the command without the project it applies to.
         if "app apply" in str(hint):
-            lines.append(f"      popcorn app apply --channel '{conversation}'")
+            lines.append(f"      popcorn app apply --project '{conversation}'")
     return lines
 
 
@@ -1251,7 +1251,7 @@ def _read_install(client: Any, conversation: str) -> tuple[dict | None, str | No
 
 
 def _channel_status(args: argparse.Namespace, conversation: str) -> None:
-    """ "Has my publish landed on this channel?", from server state alone.
+    """ "Has my publish landed on this project?", from server state alone.
 
     The server answers it in one read, `/apps/status`: the binding, the
     line's head, and an `install` block saying whether an install is
@@ -1274,9 +1274,9 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
         if exc.status_code != 404:
             raise
         raise PopcornError(
-            f"{conversation} does not run an app bundle — there is no install to report",
+            f"{conversation} does not run an app — there is no install to report",
             error_code="not_found",
-            hint=f"popcorn app list --channel '{conversation}'",
+            hint=f"popcorn app list --project '{conversation}'",
         ) from exc
 
     install = served.get("install") or {}
@@ -1296,8 +1296,8 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
         "channel_version_id": channel_id,
         "head_semver": head_semver,
         "head_version_id": head_id,
-        # Every state but `current` is a channel short of its head (`current`
-        # includes a product channel ahead of a rolled-back track head).
+        # Every state but `current` is a project short of its head (`current`
+        # includes a product project ahead of a rolled-back track head).
         "channel_behind": state != "current",
         "install_state": "current" if state == "current" else "pending",
         "install": install,
@@ -1305,7 +1305,7 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
 
     if served.get("app") is None:
         # A first install still running or failed: nothing is bound yet.
-        lines = [f"No app bundle is bound on {conversation} yet."]
+        lines = [f"No app is bound on {conversation} yet."]
     else:
         lines = [
             f"{served.get('app')} {channel_semver} ({served.get('kind')}"
@@ -1325,19 +1325,19 @@ def _app_status(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     directory = _directory(args)
-    # `--channel` outside a checkout is the channel-scoped read; inside one it
-    # keeps its older meaning — the channel to compare the working copy
+    # `--project` outside a checkout is the project-scoped read; inside one it
+    # keeps its older meaning — the project to compare the working copy
     # against, which a v1 baseline (0.19.0) cannot supply on its own. Branching
     # on the baseline rather than on the flag is what keeps that intact.
     baseline = read_baseline(directory)
     if baseline is None:
-        if getattr(args, "channel", None):
-            _channel_status(args, str(args.channel))
+        if getattr(args, "project", None):
+            _channel_status(args, str(args.project))
             return
         raise PopcornError(
             f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
             error_code="not_found",
-            hint="pass --channel '#your-channel' to report that channel's "
+            hint="pass --project '#your-project' to report that project's "
             "install without a checkout",
         )
     client = _get_client(args)
@@ -1352,7 +1352,7 @@ def _app_status(args: argparse.Namespace) -> None:
     diff = diff_tree_hashes(base_hashes, local.files)
     head_id = resp.get("version_id")
     head_semver = resp.get("semver")
-    # The channel's own version rides along; an older API sends only the
+    # The project's own version rides along; an older API sends only the
     # served one, and then the two are the same.
     channel_id = resp.get("bound_version_id", head_id)
     channel_semver = resp.get("bound_semver", head_semver)
@@ -1399,19 +1399,19 @@ def _app_status(args: argparse.Namespace) -> None:
         )
     elif channel_id != head_id and install is not None:
         # The served block says why it has not landed, and what moves it on,
-        # which is not always `apply` (a locked channel, a product line).
+        # which is not always `apply` (a locked project, a product line).
         lines.append(
-            f"Channel still runs {channel_semver} (version {channel_id}); "
+            f"Project still runs {channel_semver} (version {channel_id}); "
             f"{baseline.semver} is the line's head."
         )
     elif channel_id != head_id:
         lines.append(
-            f"Channel still runs {channel_semver} (version {channel_id}); "
+            f"Project still runs {channel_semver} (version {channel_id}); "
             f"{baseline.semver} is the line's head and its install has not "
             "landed — 'popcorn app apply' retries it."
         )
     else:
-        lines.append(f"Channel runs the same version ({head_id}).")
+        lines.append(f"Project runs the same version ({head_id}).")
     if install_error is not None:
         lines.append(f"Install: not checked — {install_error}")
     elif install is not None and install.get("state") != "current":
@@ -1498,7 +1498,7 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
     The server runs publish's own checks on the same request `app publish`
     would send, so its rules — the manifest's tables above all — are never
     copied here. It needs what a publish needs: a fork checkout of the line's
-    head, with edits, a channel on that line (which authorizes the call), and
+    head, with edits, a project on that line (which authorizes the call), and
     a login. Anything short of that is a skip with the
     reason, never a failure and never a guess: the offline findings stand.
     """
@@ -1514,12 +1514,12 @@ def _run_server_checks(args: argparse.Namespace, directory: Path, report: Bundle
     if baseline.historical:
         report.skip_server("a past version — publish is based only on the line's head")
         return
-    # The channel authorizes the call, as for `flow validate`: the flag, else
+    # The project authorizes the call, as for `flow validate`: the flag, else
     # the baseline's. The server also requires it to run the checkout's line.
-    conversation = getattr(args, "channel", None) or baseline.conversation_id
+    conversation = getattr(args, "project", None) or baseline.conversation_id
     if not conversation:
         report.skip_server(
-            f"no channel — {BASELINE_FILE} records none; pass --channel or "
+            f"no project — {BASELINE_FILE} records none; pass --project or "
             "re-run 'popcorn app checkout'"
         )
         return
@@ -1584,7 +1584,7 @@ def _app_validate(args: argparse.Namespace) -> None:
 VALIDATE_ARGUMENTS = [
     Argument(
         "directory",
-        "Bundle directory",
+        "App directory",
         positional=True,
         flag_alias="--dir",
     ),
@@ -1594,8 +1594,8 @@ VALIDATE_ARGUMENTS = [
         action="store_true",
     ),
     Argument(
-        "channel",
-        "Channel the server checks run against (default: the checkout's "
+        "project",
+        "Project the server checks run against (default: the checkout's "
         "baseline); it must run the checkout's fork line",
     ),
 ]
@@ -1605,13 +1605,13 @@ register(
     Command(
         name="app",
         category="flows",
-        description="App bundles — fork, check out, edit and publish one",
+        description="Apps — fork, check out, edit and publish one",
         subcommands=[
             Subcommand(
                 "list",
-                "Show each app's product and fork lines, and with --channel what that channel runs",
+                "Show each app's product and fork lines, and with --project what that project runs",
                 _app_list,
-                [Argument("channel", "Also report what this channel runs (name or UUID)")],
+                [Argument("project", "Also report what this project runs (name or UUID)")],
             ),
             Subcommand(
                 "lines",
@@ -1619,7 +1619,7 @@ register(
                 _app_lines,
                 [
                     Argument(
-                        "channel",
+                        "project",
                         "Not needed, and ignored: the lines listed are the "
                         "workspace's. Accepted so older scripts keep working",
                     ),
@@ -1632,7 +1632,7 @@ register(
                 "version) to disk, with a baseline",
                 _app_checkout,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "directory",
                         "Target directory (default: ./<app>)",
@@ -1655,7 +1655,7 @@ register(
                     ),
                     Argument(
                         "version",
-                        "Check out this version id of the channel's own line "
+                        "Check out this version id of the project's own line "
                         "instead of its head, into ./<app>-<semver> by default. "
                         "A past version is for reading and diffing; 'app "
                         "publish' refuses it. Ids appear in 'app publish' and "
@@ -1665,7 +1665,7 @@ register(
                     ),
                     Argument(
                         "force",
-                        "Overwrite bundle files in a non-empty directory "
+                        "Overwrite app files in a non-empty directory "
                         "without asking (--yes does not cover this). Nothing "
                         "is deleted: files the new tree lacks stay, and are "
                         "listed",
@@ -1675,10 +1675,10 @@ register(
             ),
             Subcommand(
                 "fork",
-                "Give this workspace its own fork line of the channel's app",
+                "Give this workspace its own fork line of the project's app",
                 _app_fork,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "name",
                         "Fork line name (default: the single line, or 'default')",
@@ -1688,7 +1688,7 @@ register(
             Subcommand(
                 "publish",
                 "Publish a checkout's edits as the next version on its fork "
-                "line. Every channel on the line picks it up, so it confirms "
+                "line. Every project on the line picks it up, so it confirms "
                 "first; --yes skips that, and agent mode requires it",
                 _app_publish,
                 [
@@ -1707,12 +1707,12 @@ register(
                         "past the head",
                         choices=list(BUMP_PARTS),
                     ),
-                    _CHANNEL_OPT,
+                    _PROJECT_OPT,
                 ],
             ),
             Subcommand(
                 "validate",
-                "Check a bundle before publishing: structure offline, and in "
+                "Check an app before publishing: structure offline, and in "
                 "a fork checkout while logged in, the server's publish checks "
                 "too (the manifest's tables among them)",
                 _app_validate,
@@ -1723,7 +1723,7 @@ register(
                 "Recovery only: retry an install that did not land. 'publish' "
                 "starts one and it normally converges on its own",
                 _app_apply,
-                [_DIRECTORY, _CHANNEL_OPT],
+                [_DIRECTORY, _PROJECT_OPT],
             ),
             Subcommand(
                 "status",
@@ -1733,9 +1733,9 @@ register(
                 [
                     _DIRECTORY,
                     Argument(
-                        "channel",
-                        "Channel to act on (default: the checkout's baseline). "
-                        "Outside a checkout this reports that channel's bound "
+                        "project",
+                        "Project to act on (default: the checkout's baseline). "
+                        "Outside a checkout this reports that project's bound "
                         "version, its line's head and the install state",
                     ),
                 ],

@@ -1,4 +1,4 @@
-"""`popcorn webhook` — intake webhooks on a channel.
+"""`popcorn webhook` — intake webhooks on a project.
 
 Handlers import their `..cli` helpers *inside* the function body: cli.py
 imports this package at module load to build the parser, so a module-level
@@ -6,9 +6,9 @@ import would be a cycle.
 
 Two shapes of subcommand live here and the split is the API's, not ours.
 `create`, `list` and `deliveries` are channel-scoped — a webhook is created
-in a channel and listed with its siblings. Everything else addresses one
+in a project and listed with its siblings. Everything else addresses one
 webhook directly, because the server authorizes those against the webhook's
-own channel, looked up from the id. `_resolve_id` is what lets the second
+own project, looked up from the id. `_resolve_id` is what lets the second
 group still be driven by the name the first group prints.
 """
 
@@ -23,19 +23,19 @@ from popcorn_core.errors import PopcornError
 
 from ..registry import Argument, Command, Subcommand, register
 
-_CHANNEL = Argument("conversation", "Channel name or UUID", positional=True, flag_alias="--channel")
+_PROJECT = Argument("project", "Project name or UUID", positional=True, flag_alias="--project")
 # Every by-id subcommand takes this. Named `webhook` rather than `webhook_id`
 # because a name is accepted too — `_resolve_id` turns either into the UUID
 # the route needs.
-_WEBHOOK = Argument("webhook", "Webhook UUID, or its name with --channel", positional=True)
-_WEBHOOK_CHANNEL = Argument("channel", "Channel holding the webhook — only needed for a name")
+_WEBHOOK = Argument("webhook", "Webhook UUID, or its name with --project", positional=True)
+_WEBHOOK_PROJECT = Argument("project", "Project holding the webhook — only needed for a name")
 
 _ACTION_MODES = ["silent", "as_is", "ai_enhanced", "trigger_workflow"]
 
 
 def _resolve_id(args: argparse.Namespace, client: Any) -> str:
     """The UUID of the webhook this invocation addresses."""
-    return operations.resolve_webhook_id(client, args.webhook, getattr(args, "channel", None))
+    return operations.resolve_webhook_id(client, args.webhook, getattr(args, "project", None))
 
 
 def _hook_lines(hook: dict[str, Any], *, show_url: bool = False) -> list[str]:
@@ -81,30 +81,30 @@ def _webhook_create(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.create_webhook(
         client,
-        args.conversation,
+        args.project,
         args.name,
         description=getattr(args, "description", None),
         avatar_url=getattr(args, "avatar_url", None),
         action_mode=getattr(args, "action_mode", None),
         trigger_flow_name=flow_name,
     )
-    _output(args, resp, f"Created webhook '{args.name}' for {args.conversation}")
+    _output(args, resp, f"Created webhook '{args.name}' for {args.project}")
 
 
 def _webhook_list(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
     client = _get_client(args)
-    resp = operations.list_webhooks(client, args.conversation)
+    resp = operations.list_webhooks(client, args.project)
     hooks = resp if isinstance(resp, list) else resp.get("webhooks", [resp])
     show_url = getattr(args, "show_url", False)
-    lines = [f"Webhooks for {args.conversation} ({len(hooks)}):"]
+    lines = [f"Webhooks for {args.project} ({len(hooks)}):"]
     for h in hooks:
         lines.append(f"  {h.get('id', '?')}  {h.get('name', '?')}")
         if show_url and h.get("url"):
             lines.append(f"    {h['url']}")
     # The ingest URL's token IS the credential — anyone holding it can post
-    # to the channel — so it is opt-in rather than printed by default, and
+    # to the project — so it is opt-in rather than printed by default, and
     # the footer is what stops that decision from sending people back to
     # `--json` to find it.
     if not show_url and any(h.get("url") for h in hooks):
@@ -119,7 +119,7 @@ def _webhook_deliveries(args: argparse.Namespace) -> None:
     client = _get_client(args)
     resp = operations.list_webhook_deliveries(
         client,
-        args.conversation,
+        args.project,
         limit=getattr(args, "limit", 50),
         since=getattr(args, "since", None),
         after=getattr(args, "after", None),
@@ -127,7 +127,7 @@ def _webhook_deliveries(args: argparse.Namespace) -> None:
         include=getattr(args, "include", None),
     )
     deliveries = resp if isinstance(resp, list) else resp.get("deliveries", [resp])
-    lines = [f"Deliveries for {args.conversation} ({len(deliveries)}):"]
+    lines = [f"Deliveries for {args.project} ({len(deliveries)}):"]
     for d in deliveries:
         wh_name = d.get("webhook_name", d.get("webhook_id", "?"))
         ts = d.get("created_at", "?")
@@ -286,7 +286,7 @@ def _webhook_send(args: argparse.Namespace) -> None:
         url = target
     else:
         url = operations.resolve_webhook_url(
-            _get_client(args), target, getattr(args, "channel", None)
+            _get_client(args), target, getattr(args, "project", None)
         )
     result = operations.send_webhook(url, payload)
     body = result["response"]
@@ -308,7 +308,7 @@ register(
                 "Create a webhook",
                 _webhook_create,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument("name", "Webhook name", positional=True),
                     Argument("description", "Webhook description", type=str),
                     Argument("avatar-url", "Avatar URL", type=str),
@@ -329,10 +329,10 @@ register(
             ),
             Subcommand(
                 "list",
-                "List webhooks for a channel",
+                "List webhooks for a project",
                 _webhook_list,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument(
                         "show-url",
                         "Print each webhook's ingest URL — it embeds a secret token, "
@@ -347,7 +347,7 @@ register(
                 _webhook_get,
                 [
                     _WEBHOOK,
-                    _WEBHOOK_CHANNEL,
+                    _WEBHOOK_PROJECT,
                     Argument(
                         "show-url",
                         "Print the ingest URL — it embeds a secret token, "
@@ -362,7 +362,7 @@ register(
                 _webhook_update,
                 [
                     _WEBHOOK,
-                    _WEBHOOK_CHANNEL,
+                    _WEBHOOK_PROJECT,
                     Argument("name", "New name", type=str),
                     Argument("description", "New description", type=str),
                     Argument("avatar-url", "New avatar URL", type=str),
@@ -398,7 +398,7 @@ register(
                 "delete",
                 "Delete a webhook (prompts; --yes to skip)",
                 _webhook_delete,
-                [_WEBHOOK, _WEBHOOK_CHANNEL],
+                [_WEBHOOK, _WEBHOOK_PROJECT],
             ),
             Subcommand(
                 "override-rules",
@@ -408,7 +408,7 @@ register(
                         "get",
                         "Show a webhook's override rules",
                         _webhook_rules_get,
-                        [_WEBHOOK, _WEBHOOK_CHANNEL],
+                        [_WEBHOOK, _WEBHOOK_PROJECT],
                     ),
                     Subcommand(
                         "set",
@@ -422,7 +422,7 @@ register(
                                 "('@-' reads stdin, '@path' reads a file)",
                                 positional=True,
                             ),
-                            _WEBHOOK_CHANNEL,
+                            _WEBHOOK_PROJECT,
                         ],
                     ),
                 ],
@@ -432,7 +432,7 @@ register(
                 "List webhook deliveries",
                 _webhook_deliveries,
                 [
-                    _CHANNEL,
+                    _PROJECT,
                     Argument("limit", "Max results (1-100)", type=int, default=50),
                     Argument("since", "ISO timestamp — deliveries after this", type=str),
                     Argument(
@@ -466,8 +466,8 @@ register(
                         nargs="?",
                     ),
                     Argument(
-                        "channel",
-                        "Channel name or UUID — needed only when <target> is a name",
+                        "project",
+                        "Project name or UUID — needed only when <target> is a name",
                         type=str,
                     ),
                 ],

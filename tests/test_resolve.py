@@ -46,7 +46,7 @@ class TestResolveConversation:
 
     def test_channel_not_found(self, mock_client):
         mock_client.get.return_value = {"conversations": []}
-        with pytest.raises(PopcornError, match="Channel not found"):
+        with pytest.raises(PopcornError, match="Project not found"):
             resolve_conversation(mock_client, "#nonexistent")
 
     def test_caches_result(self, mock_client):
@@ -57,7 +57,7 @@ class TestResolveConversation:
         assert mock_client.get.call_count == 1
 
     def test_asks_for_archived_and_hidden(self, mock_client):
-        """Naming a channel means that channel, whatever its visibility."""
+        """Naming a project means that project, whatever its visibility."""
         mock_client.get.return_value = {"conversations": [{"id": "conv-001", "name": "general"}]}
         resolve_conversation(mock_client, "#general")
         _, params = mock_client.get.call_args[0]
@@ -65,7 +65,7 @@ class TestResolveConversation:
         assert params["exclude_archived"] == "false"
 
     def test_hidden_channel_resolves(self, mock_client):
-        """A hidden channel is only in the response when the switch is sent."""
+        """A hidden project is only in the response when the switch is sent."""
 
         def _list(_path, params):
             # The server excludes hidden conversations when the switch is
@@ -108,7 +108,7 @@ class TestResolveConversation:
                 {"id": "conv-upper", "name": "Ops"},
             ]
         }
-        with pytest.raises(PopcornError, match="matches more than one channel") as excinfo:
+        with pytest.raises(PopcornError, match="matches more than one project") as excinfo:
             resolve_conversation(mock_client, "#OPS")
         assert "conv-lower" in str(excinfo.value)
         assert "conv-upper" in str(excinfo.value)
@@ -273,15 +273,15 @@ class TestResolveByName:
     def test_a_substring_hit_is_not_a_match(self, mock_client):
         """`query=` is a substring search; #ops must not resolve to #devops."""
         mock_client.get.side_effect = self._server({"id": "conv-001", "name": "devops"})
-        with pytest.raises(PopcornError, match="Channel not found"):
+        with pytest.raises(PopcornError, match="Project not found"):
             resolve_conversation(mock_client, "#ops")
 
     def test_two_channels_with_the_identical_name_raise(self, mock_client):
-        """A channel shared in from another workspace can carry a name a local one already has."""
+        """A project shared in from another workspace can carry a name a local one already has."""
         mock_client.get.side_effect = self._server(
             {"id": "conv-local", "name": "ops"}, {"id": "conv-shared", "name": "ops"}
         )
-        with pytest.raises(PopcornError, match="matches more than one channel") as excinfo:
+        with pytest.raises(PopcornError, match="matches more than one project") as excinfo:
             resolve_conversation(mock_client, "#ops")
         assert "conv-local" in str(excinfo.value)
         assert "conv-shared" in str(excinfo.value)
@@ -354,14 +354,14 @@ class TestResolveByName:
 
     def test_an_empty_name_asks_nothing(self, mock_client):
         """An empty `query=` is no filter at all, so it would walk everything."""
-        with pytest.raises(PopcornError, match="Channel not found"):
+        with pytest.raises(PopcornError, match="Project not found"):
             resolve_conversation(mock_client, "#")
         mock_client.get.assert_not_called()
 
     def test_an_overlong_name_is_not_found_without_asking(self, mock_client):
         """The server answers an over-long `name=` with a 422, which would turn
         a miss into a validation error naming a query parameter."""
-        with pytest.raises(PopcornError, match="Channel not found") as excinfo:
+        with pytest.raises(PopcornError, match="Project not found") as excinfo:
             resolve_conversation(mock_client, "#" + "a" * 256)
         assert excinfo.value.error_code == "not_found"
         mock_client.get.assert_not_called()

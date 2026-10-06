@@ -56,7 +56,7 @@ def search_channels(
     include_archived: bool = False,
     include_hidden: bool = False,
 ) -> dict[str, Any]:
-    """Search channels, optionally by a case-insensitive substring of the name.
+    """Search projects, optionally by a case-insensitive substring of the name.
 
     The server applies the filter, so a query costs the matches rather than
     the whole listing.
@@ -168,7 +168,7 @@ def search_messages(
 ) -> dict[str, Any]:
     """Full-text search across messages.
 
-    `conversations` and `from_users` take channel names and usernames as well
+    `conversations` and `from_users` take project names and usernames as well
     as ids, comma-separated; both are resolved here so a caller never has to
     look an id up to filter by a name it already knows.
     """
@@ -226,7 +226,7 @@ def read_messages(
     latest: str = "",
     oldest: str = "",
 ) -> dict[str, Any]:
-    """Read message history from a channel, DM, or thread."""
+    """Read message history from a project, DM, or thread."""
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"limit": limit, "conversation": conv_id}
     if latest:
@@ -246,7 +246,7 @@ def send_message(
     thread_id: str = "",
     file_parts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Send a message to a channel or DM."""
+    """Send a message to a project or DM."""
     conv_id = resolve_conversation(client, conversation)
     parts: list[dict[str, Any]] = list(file_parts or [])
     if text:
@@ -330,7 +330,7 @@ def get_conversation_info(client: APIClient, conversation: str) -> dict[str, Any
     }
 
 
-# What `channel create` makes when no type is named, matching the web client:
+# What `project create` makes when no type is named, matching the web client:
 # every workspace member, including anyone who joins later. The server fills
 # the membership itself and ignores `member_ids` for this type.
 DEFAULT_CHANNEL_TYPE = "workspace_channel"
@@ -344,17 +344,17 @@ def create_conversation(
     template: str | None = None,
     if_not_exists: bool = False,
 ) -> dict[str, Any]:
-    """Create a new conversation (channel or DM), optionally from a template.
+    """Create a new conversation (project or DM), optionally from a template.
 
-    `template` names a registry template (what `channel templates` lists) and
+    `template` names a registry template (what `project apps` lists) and
     is the ONLY way to install one -- the install runs server-side, in the
-    worker, after the channel exists. An unknown name is rejected up front with
-    a 400 rather than creating a channel whose install silently no-ops.
+    worker, after the project exists. An unknown name is rejected up front with
+    a 400 rather than creating a project whose install silently no-ops.
 
-    `if_not_exists` asks the server to return a channel that already holds the
+    `if_not_exists` asks the server to return a project that already holds the
     name, with `already_existed: true`, instead of failing on the duplicate.
     The server decides what counts as the same name, so nothing here has to
-    reproduce its normalisation. It resolves only to a channel the caller is
+    reproduce its normalisation. It resolves only to a project the caller is
     an active member of; any other holder of the name is still a duplicate.
     """
     body: dict[str, Any] = {"name": name, "conversation_type": conv_type}
@@ -571,7 +571,7 @@ def get_webhook(client: APIClient, webhook_id: str) -> dict[str, Any]:
     """Get one webhook by UUID.
 
     Unlike ``list_webhooks`` this needs no conversation: the server authorizes
-    against the webhook's own channel, which it looks up from the id.
+    against the webhook's own project, which it looks up from the id.
     """
     return client.get(f"/api/webhooks/{webhook_id}")
 
@@ -648,20 +648,20 @@ def _lookup_webhook(
     """Find one webhook by UUID or by name.
 
     A UUID answers on its own through the by-id lookup. A NAME needs
-    ``conversation``: names are only unique within a channel, and listing that
-    channel's webhooks is the one place a name is matched at all. A UUID given
-    *with* a channel takes the listing path too, which is harmless and keeps
-    one code path for the "not in this channel" message.
+    ``conversation``: names are only unique within a project, and listing that
+    project's webhooks is the one place a name is matched at all. A UUID given
+    *with* a project takes the listing path too, which is harmless and keeps
+    one code path for the "not in this project" message.
     """
     if _looks_like_uuid(target) and not conversation:
         return (get_webhook(client, target) or {}).get("webhook") or {}
     if not conversation:
         raise PopcornError(
-            f"'{target}' is a webhook name, and matching one needs a channel: "
-            "names are only unique within a channel. "
-            "Pass --channel, or give the webhook's UUID instead.",
+            f"'{target}' is a webhook name, and matching one needs a project: "
+            "names are only unique within a project. "
+            "Pass --project, or give the webhook's UUID instead.",
             error_code="validation",
-            hint="popcorn webhook list '#my-channel'",
+            hint="popcorn webhook list '#my-project'",
         )
     resp = list_webhooks(client, conversation)
     hooks: list[dict[str, Any]] = resp if isinstance(resp, list) else resp.get("webhooks", [])
@@ -785,7 +785,7 @@ def list_webhook_deliveries(
 
 
 # ---------------------------------------------------------------------------
-# Customer flows (Temporal workflow automations per channel)
+# Customer flows (Temporal workflow automations per project)
 # ---------------------------------------------------------------------------
 
 
@@ -795,7 +795,7 @@ def list_flows(
     limit: int = 50,
     offset: int = 0,
 ) -> dict[str, Any]:
-    """List the flows defined in a channel."""
+    """List the flows defined in a project."""
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
     if offset:
@@ -809,7 +809,7 @@ def get_flow(
     """Get a single flow definition by ID.
 
     `include_triggers` asks the server to add its report of what starts the
-    flow on this channel under `triggers`. A server that predates the report
+    flow on this project under `triggers`. A server that predates the report
     ignores the parameter and leaves `triggers` absent or null, so the caller
     must treat a missing report as "not checked", never as "nothing runs it".
     """
@@ -830,7 +830,7 @@ def with_conversation_id(inputs: dict[str, Any] | None, conversation_id: str) ->
     Practically every flow declares it, and omitting it fails at RUNTIME with
     `ReferenceError: $inputs.conversation_id: key not found` — the run starts,
     reports success, and only then dies. Since the caller already addressed a
-    channel, filling it in removes a whole class of confusing failure. An
+    project, filling it in removes a whole class of confusing failure. An
     explicit value always wins: a flow may target another conversation.
     """
     merged = dict(inputs or {})
@@ -865,7 +865,7 @@ def list_flow_runs(
     page_token: str | None = None,
     flow_name: str | None = None,
 ) -> dict[str, Any]:
-    """List Temporal workflow executions (flow runs) for a channel.
+    """List Temporal workflow executions (flow runs) for a project.
 
     ``status`` is one of ``all | running | failed | closed``. ``page_token``
     is the ``next_page_token`` cursor from a previous response.
@@ -885,7 +885,7 @@ def list_flow_runs(
         raise PopcornError(
             "--flow needs a flow name",
             error_code="validation",
-            hint="popcorn flow runs list --channel <conv> --flow <name>",
+            hint="popcorn flow runs list --project <project> --flow <name>",
         )
     conv_id = resolve_conversation(client, conversation)
     params: dict[str, Any] = {"conversation_id": conv_id, "limit": limit}
@@ -920,7 +920,7 @@ def _api_error_label(err: APIError) -> str | None:
 
 
 # How many foreign flow names the old-server refusal lists before summarising;
-# a busy channel's unfiltered page can name many flows.
+# a busy project's unfiltered page can name many flows.
 _MAX_NAMES_SHOWN = 5
 
 
@@ -1005,7 +1005,7 @@ def cancel_flow_runs(
     reason: str | None = None,
     page_token: str | None = None,
 ) -> dict[str, Any]:
-    """Stop one flow run, or every Running run of one flow, on a channel.
+    """Stop one flow run, or every Running run of one flow, on a project.
 
     Exactly one of ``workflow_id`` (one run; ``run_id`` pins a specific run,
     else the latest) or ``flow_name`` (every Running run of that flow — the
@@ -1027,8 +1027,8 @@ def cancel_flow_runs(
         raise PopcornError(
             "Pass exactly one of a workflow id or --flow",
             error_code="validation",
-            hint="popcorn flow runs cancel <workflow_id> --channel <conv>, "
-            "or popcorn flow runs cancel --flow <name> --channel <conv>",
+            hint="popcorn flow runs cancel <workflow_id> --project <project>, "
+            "or popcorn flow runs cancel --flow <name> --project <project>",
         )
     conv_id = resolve_conversation(client, conversation)
     body: dict[str, Any] = {"force": force}
@@ -1053,7 +1053,7 @@ def cancel_flow_runs(
 
 
 def list_scheduled_flows(client: APIClient, conversation: str) -> dict[str, Any]:
-    """List a channel's scheduled flows — the LIVE schedule set.
+    """List a project's scheduled flows — the LIVE schedule set.
 
     This is the authoritative cadence, which a bundle manifest is not: a
     manifest declares what an install creates, while `set_app_mode` and the
@@ -1072,7 +1072,7 @@ def resolve_schedule_ref(client: APIClient, conversation: str, ref: str) -> str:
     (`channel:<uuid>:flow:<flow_id>:<slug>`), so requiring one verbatim would
     make `get` unusable without a preceding `list` and a copy-paste. Anything
     already carrying the composite's `:` separator passes through untouched;
-    everything else is matched against the channel's schedules by `slug`
+    everything else is matched against the project's schedules by `slug`
     first, then `flow_id`.
     """
     if ":" in ref:
@@ -1108,7 +1108,7 @@ def trigger_scheduled_flow(
     schedule_ref: str,
     overlap_policy: str | None = None,
 ) -> dict[str, Any]:
-    """Run one of the channel's declared schedules now, with its stored inputs.
+    """Run one of the project's declared schedules now, with its stored inputs.
 
     Returns `schedule_id`, `workflow_id`, `run_id` and `skipped_overlap`.
     The ids are null when no run was observed starting within the server's
@@ -1204,7 +1204,7 @@ def list_activity_catalog(
 
 
 def list_channel_templates(client: APIClient) -> dict[str, Any]:
-    """List the channel templates available in the workspace."""
+    """List the project templates available in the workspace."""
     return client.get("/api/conversations/templates")
 
 
@@ -1254,7 +1254,7 @@ def raw_api_call(
 #
 # The user-JWT surface at /api/v1/conversations/{conversation_id}/data-store/…
 # The conversation is a *path* segment here, not a query param, so every
-# operation resolves the channel ref up front and bakes it into the path.
+# operation resolves the project ref up front and bakes it into the path.
 # ---------------------------------------------------------------------------
 
 
@@ -1264,7 +1264,7 @@ def _store_base(client: APIClient, conversation: str) -> str:
 
 
 def list_tables(client: APIClient, conversation: str) -> dict[str, Any]:
-    """List the agent-store tables in a channel (`tables`: name, record_count)."""
+    """List the agent-store tables in a project (`tables`: name, record_count)."""
     return client.get(f"{_store_base(client, conversation)}/tables")
 
 
@@ -1321,7 +1321,7 @@ def delete_record(
 def list_scalars(
     client: APIClient, conversation: str, limit: int = 50, cursor: str | None = None
 ) -> dict[str, Any]:
-    """List the channel's agent-store scalars (`scalars`: key, value, timestamps)."""
+    """List the project's agent-store scalars (`scalars`: key, value, timestamps)."""
     params: dict[str, Any] = {"limit": limit}
     if cursor:
         params["cursor"] = cursor
@@ -1391,15 +1391,15 @@ def list_store_audit(
 # authorizes them — the human surface never reads X-Active-Conversation-ID —
 # so they look like every other channel-scoped operation here and need
 # nothing special from APIClient. The list is the exception: its inventory is
-# the workspace's, and the channel only selects a binding to report.
+# the workspace's, and the project only selects a binding to report.
 
 
 def list_channel_apps(client: APIClient, conversation: str | None = None) -> dict[str, Any]:
-    """Each app's lineage heads, plus a channel's current binding if one is named.
+    """Each app's lineage heads, plus a project's current binding if one is named.
 
     One "product" entry per app and one "fork" entry per fork line the
-    workspace owns. The inventory is the workspace's whatever the channel, so
-    the channel is optional: it only selects the binding reported alongside.
+    workspace owns. The inventory is the workspace's whatever the project, so
+    the project is optional: it only selects the binding reported alongside.
     `channel` is null when none was named or the named one runs no bundle.
     """
     if conversation is None:
@@ -1419,7 +1419,7 @@ def get_channel_app_tree(
 
     `ref` picks the version the same way `get_channel_app_files` does, and the
     response carries both sides of it: `version_id`/`semver` for the version
-    served, `bound_version_id`/`bound_semver` for what the channel runs. That
+    served, `bound_version_id`/`bound_semver` for what the project runs. That
     pair is the cheapest read that answers "has the publish landed here?" —
     the files endpoint answers it too, but ships every file's content to do so.
 
@@ -1432,7 +1432,7 @@ def get_channel_app_tree(
 
 
 def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dict[str, Any]:
-    """One file's text from the channel's bound version."""
+    """One file's text from the project's bound version."""
     conv_id = resolve_conversation(client, conversation)
     return client.get("/api/apps/file", {"conversation_id": conv_id, "path": path})
 
@@ -1448,15 +1448,15 @@ def get_channel_app_files(
     The checkout read. Bundle trees are tens of files and tens of KB, so this
     is one request rather than a tree listing plus N file reads.
 
-    `ref` picks the version: "head" is the latest on the channel's fork line
-    and is what a publish must be based on; "bound" is what the channel runs.
-    The two differ only while the channel lags its line — a head whose install
+    `ref` picks the version: "head" is the latest on the project's fork line
+    and is what a publish must be based on; "bound" is what the project runs.
+    The two differ only while the project lags its line — a head whose install
     has not landed, or failed — which is exactly when a checkout of the bound
     tree would produce an edit no publish can accept.
     The response carries both: `version_id`/`semver` for the served version
-    and `bound_version_id`/`bound_semver` for the channel's own.
+    and `bound_version_id`/`bound_semver` for the project's own.
 
-    `version_id` reads one specific version of the channel's own line instead,
+    `version_id` reads one specific version of the project's own line instead,
     and replaces `ref` rather than accompanying it. A server that predates the
     parameter ignores it and answers with the bound tree, which would be
     written to disk under the requested version's name — so the response is
@@ -1489,7 +1489,7 @@ def require_version_served(resp: dict[str, Any], version_id: int) -> None:
         f"version {served_id}) — nothing was written",
         error_code="validation",
         hint="the server predates --version; check out without it to read what "
-        "the channel runs, or retry once the server is upgraded",
+        "the project runs, or retry once the server is upgraded",
     )
 
 
@@ -1501,16 +1501,16 @@ def require_version_served(resp: dict[str, Any], version_id: int) -> None:
 # Fork and apply have the reads' `conversation_id`-authorizes-the-call shape,
 # so these are three-liners too. `publish` is the asymmetry worth knowing at
 # the call site: it is workspace-ADMIN only, its `conversation_id` authorizes
-# nothing and only names the channel to install on, and so a channel member
+# nothing and only names the project to install on, and so a project member
 # gets a 403 on publish alone.
 
 
 def fork_channel_app(
     client: APIClient, conversation: str, fork_name: str | None = None
 ) -> dict[str, Any]:
-    """Give this workspace its own fork line of the channel's app.
+    """Give this workspace its own fork line of the project's app.
 
-    `status` is "created" (line minted, channel re-bound), "already_fork" (a
+    `status` is "created" (line minted, project re-bound), "already_fork" (a
     no-op) or "adopting" (the workspace's existing line is being applied by
     the install workflow, asynchronously).
     """
@@ -1527,8 +1527,8 @@ def publish_channel_app(
     `payload` is `{base_version_id, files, deletes, changelog?}` — see
     `app_publish.publish_payload`. The publish is a LINE operation: the server
     checks `base_version_id` against the line's head and nothing about what
-    the channel runs. `conversation_id` only names the
-    channel to install on right away; other channels on the line catch up on
+    the project runs. `conversation_id` only names the
+    project to install on right away; other projects on the line catch up on
     their own auto-update tick. `install_status` in the response says how that
     install went: "started", "blocked_install_in_progress",
     "blocked_app_updates_locked", or "not_requested".
@@ -1550,7 +1550,7 @@ def validate_app_bundle(
     keeps publish's status.
 
     `conversation_id` is required as authorization, as for `flow validate`:
-    a workspace admin, or a member of the channel. The channel must run the
+    a workspace admin, or a member of the project. The project must run the
     fork line `base_version_id` is on, or the server answers 409. Nothing is
     installed on it.
     """
@@ -1559,23 +1559,23 @@ def validate_app_bundle(
 
 
 def apply_channel_app(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Bring this channel up to its lineage head. Publishes nothing.
+    """Bring this project up to its lineage head. Publishes nothing.
 
     `status` is "started", "already_current", or
     "blocked_install_in_progress" — the last is another install holding the
-    channel's lock, and the retry is this same command.
+    project's lock, and the retry is this same command.
     """
     conv_id = resolve_conversation(client, conversation)
     return client.post("/api/apps/apply", {}, {"conversation_id": conv_id})
 
 
 def get_channel_app_status(client: APIClient, conversation: str) -> dict[str, Any]:
-    """Where the channel's install stands, with the binding it compares.
+    """Where the project's install stands, with the binding it compares.
 
     `install.state` is one of current, installing, retrying, locked, failed,
     skipped or behind. The binding fields (`app`, `bound_*`, `head_*`) are
-    null while a channel's first install is running or has failed, since it
-    has no binding yet. A channel that runs no bundle and has no install
+    null while a project's first install is running or has failed, since it
+    has no binding yet. A project that runs no bundle and has no install
     under way is a 404.
     """
     conv_id = resolve_conversation(client, conversation)
@@ -1583,7 +1583,7 @@ def get_channel_app_status(client: APIClient, conversation: str) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Channel config
+# Project config
 # ---------------------------------------------------------------------------
 #
 # The one shape to keep in mind: `PUT .../parameters` REPLACES the whole
@@ -1594,7 +1594,7 @@ def get_channel_app_status(client: APIClient, conversation: str) -> dict[str, An
 
 
 def inspect_channel_config(client: APIClient, conversation: str) -> dict[str, Any]:
-    """The channel's config, its flows' `$channel.*` usage, and the diff.
+    """The project's config, its flows' `$channel.*` usage, and the diff.
 
     `comparison` is computed server-side; the CLI renders it and must never
     recompute it.
@@ -1649,7 +1649,7 @@ def set_channel_integration(
     """Bind `$channel.integrations.<name>` to one of the CALLER's accounts.
 
     A foreign or unknown `integration_id` is the same 404 — existence is
-    deliberately undisclosed. A 409 means the channel's flows declare a
+    deliberately undisclosed. A 409 means the project's flows declare a
     `provider:` this account does not match.
     """
     conv_id = resolve_conversation(client, conversation)

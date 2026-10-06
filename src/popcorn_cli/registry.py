@@ -14,6 +14,7 @@ docs/architecture-commands.md.
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -155,8 +156,8 @@ class Argument:
     # this one that are themselves optional. Naming them is what lets
     # `cli.py — _shift_trailing_positionals` put a value back where the caller
     # meant it — argparse fills positionals left to right, so with the flag
-    # form given, `message send --channel '#ops' "hi"` lands "hi" in the
-    # channel's slot and leaves the message empty. Empty when nothing optional
+    # form given, `message send --project '#ops' "hi"` lands "hi" in the
+    # project's slot and leaves the message empty. Empty when nothing optional
     # follows, which is the common case.
     trailing: tuple[str, ...] = ()
 
@@ -287,6 +288,62 @@ def hidden_names() -> set[str]:
 def register(command: Command) -> Command:
     COMMANDS.append(command)
     return command
+
+
+def register_renamed(
+    command: Command, old_name: str, *, renamed_subcommands: dict[str, str] | None = None
+) -> Command:
+    """Keep `old_name` working as a hidden copy of `command`.
+
+    Every leaf runs the same handler after one stderr line naming the new
+    spelling, so an existing caller keeps working and learns where to go,
+    while nothing that lists commands teaches the old name. A subcommand
+    renamed along with the family is mapped back to its old name through
+    `renamed_subcommands` ({new: old}).
+    """
+    renames = renamed_subcommands or {}
+
+    def mirror(
+        subs: list[Subcommand], old_path: list[str], new_path: list[str]
+    ) -> list[Subcommand]:
+        out = []
+        for sub in subs:
+            old = renames.get(sub.name, sub.name) if len(old_path) == 1 else sub.name
+            handler = sub.handler
+            if handler is not None:
+                handler = _with_notice(
+                    handler, " ".join([*old_path, old]), " ".join([*new_path, sub.name])
+                )
+            out.append(
+                Subcommand(
+                    old,
+                    sub.help,
+                    handler,
+                    sub.arguments,
+                    mirror(sub.subcommands, [*old_path, old], [*new_path, sub.name]),
+                )
+            )
+        return out
+
+    return register(
+        Command(
+            name=old_name,
+            category=command.category,
+            description=f"Deprecated: use 'popcorn {command.name}'",
+            subcommands=mirror(command.subcommands, [old_name], [command.name]),
+            hidden=True,
+        )
+    )
+
+
+def _with_notice(
+    handler: Callable[[argparse.Namespace], None], old: str, new: str
+) -> Callable[[argparse.Namespace], None]:
+    def run(args: argparse.Namespace) -> None:
+        print(f"Note: popcorn {old} is now popcorn {new}", file=sys.stderr)
+        handler(args)
+
+    return run
 
 
 def _nested_dest(dest: str, sub_name: str) -> str:

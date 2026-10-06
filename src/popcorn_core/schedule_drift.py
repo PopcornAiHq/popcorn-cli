@@ -1,6 +1,6 @@
-"""Declared-vs-live schedule drift for an installed channel.
+"""Declared-vs-live schedule drift for an installed project.
 
-A channel's manifest declares `schedules:`, and the installer creates them —
+A project's manifest declares `schedules:`, and the installer creates them —
 but it does not create them verbatim, and neither does it keep them that way.
 Two platform mechanisms rewrite an installed schedule in place:
 
@@ -23,7 +23,7 @@ function that arms it. Armed equal to intended is the platform confirming the
 moved minute, or the interval phase, is its own; this module never computes
 either. A copy of that derivation here would be a second implementation with
 nothing to notice when the two disagreed, on the one command an operator runs
-to be told the truth about a channel.
+to be told the truth about a project.
 
 The served intent says nothing about the manifest — it is derived from the
 armed cadence, not the declaration — so matching the hour or the interval
@@ -68,7 +68,7 @@ _DEFAULT_SCHEDULE_CLASS = "periodic"
 # Matching free text another system writes is a stopgap and inherently
 # fragile: these notes are prose aimed at a human reading a schedule, so a
 # reword there silently demotes an explained pause to an unexplained one here
-# and this tool starts crying drift at a healthy channel. The durable fix is
+# and this tool starts crying drift at a healthy project. The durable fix is
 # a machine-readable `pause_reason` on the schedule itself, which this would
 # read instead of guessing; until that exists, the table below is matched
 # case-insensitively as a substring, and a note matching nothing deliberately
@@ -76,7 +76,7 @@ _DEFAULT_SCHEDULE_CLASS = "periodic"
 #
 # One entry per note the platform writes, because they do not call for the
 # same response: an archive or a lock lifts on its own, a delete never does,
-# and the mode-dependent ones are contradicted by a channel reporting prod.
+# and the mode-dependent ones are contradicted by a project reporting prod.
 # Folding them together would hand an operator confidently wrong advice —
 # telling someone to go un-pause by hand a schedule that resumes itself the
 # moment the lock comes off.
@@ -87,7 +87,7 @@ class _PauseMarker:
     """One recognised platform note and what it means for the reader.
 
     `mode_dependent` is the escalation switch: True for a note that only
-    makes sense off prod, so a channel reporting prod contradicts a cadence
+    makes sense off prod, so a project reporting prod contradicts a cadence
     retuned under it. False for the lifecycle and switch notes, which are
     independent of app mode and are therefore taken at face value whatever
     the mode says.
@@ -109,7 +109,7 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
         literal="channel archived",
         mode_dependent=False,
         pause_summary=(
-            "paused because the channel is archived — unarchiving resumes "
+            "paused because the project is archived — unarchiving resumes "
             "exactly the schedules carrying this marker"
         ),
     ),
@@ -117,9 +117,9 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
         literal="channel deleted",
         mode_dependent=False,
         pause_summary=(
-            "paused because the channel is deleted — this one is never "
+            "paused because the project is deleted — this one is never "
             "auto-resumed, not even by unarchiving, and the schedule is torn "
-            "down with the channel. Nothing to do unless the channel is "
+            "down with the project. Nothing to do unless the project is "
             "meant to come back, which is a re-install rather than an "
             "un-pause"
         ),
@@ -128,7 +128,7 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
         literal="app updates locked",
         mode_dependent=False,
         pause_summary=(
-            "paused because app updates are locked on this channel — "
+            "paused because app updates are locked on this project — "
             "releasing the lock resumes it, so this needs no manual un-pause"
         ),
     ),
@@ -136,15 +136,15 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
         literal="app_agent off",
         mode_dependent=False,
         pause_summary=(
-            "paused because the channel's app agents are switched off — "
+            "paused because the project's app agents are switched off — "
             "switching them back on resumes it. Independent of app mode: a "
-            "prod channel with the agents off is a deliberate state"
+            "prod project with the agents off is a deliberate state"
         ),
     ),
     _PauseMarker(
         literal="app_mode not prod",
         mode_dependent=True,
-        pause_summary="paused because the channel is not in prod",
+        pause_summary="paused because the project is not in prod",
     ),
     _PauseMarker(
         literal="app_mode off",
@@ -154,7 +154,7 @@ _PAUSE_MARKERS: tuple[_PauseMarker, ...] = (
     _PauseMarker(
         literal="prod-only",
         mode_dependent=True,
-        pause_summary=("paused because this schedule only runs in prod, and the channel is not"),
+        pause_summary=("paused because this schedule only runs in prod, and the project is not"),
     ),
     # Last, so every more specific note matches first. `set_app_mode` writes
     # its resume note on every mode it leaves running — retuned for test and
@@ -261,12 +261,12 @@ def _platform_note(note: str | None) -> _PauseMarker | None:
 
 
 def _app_mode_verdict(marker: _PauseMarker | None, app_mode: str | None) -> bool | None:
-    """Does a platform marker actually explain a difference on this channel?
+    """Does a platform marker actually explain a difference on this project?
 
     None when no marker is present. True when the marker accounts for it.
     False for the one case worth escalating rather than excusing: a
-    mode-dependent marker on a channel that reports `prod`. The marker says
-    the platform retuned this schedule for a non-prod mode and the channel is
+    mode-dependent marker on a project that reports `prod`. The marker says
+    the platform retuned this schedule for a non-prod mode and the project is
     not in one, so either the mode changed without the schedule being
     restored or the note is stale — both are real findings, and treating the
     marker as a blanket excuse would hide exactly the state that needs
@@ -327,7 +327,7 @@ def classify(
                     drift_class=CLASS_DRIFT,
                     summary=(
                         "declared by the manifest but not installed on the "
-                        "channel — it has never fired and never will"
+                        "project — it has never fired and never will"
                     ),
                     declared=declared_cadence,
                     live=None,
@@ -398,14 +398,14 @@ def _contradicted_by_mode(
     declared_cadence: str,
     live: str,
 ) -> Finding:
-    """A mode-dependent note on a channel whose mode says otherwise."""
+    """A mode-dependent note on a project whose mode says otherwise."""
     return Finding(
         slug=slug,
         drift_class=CLASS_DRIFT,
         summary=(
-            f"note says {marker.literal!r}, but this channel's "
+            f"note says {marker.literal!r}, but this project's "
             f"popcorn.app_mode is {app_mode!r} — the schedule was "
-            "retuned for a mode the channel is no longer in, so "
+            "retuned for a mode the project is no longer in, so "
             "nothing has restored it"
         ),
         declared=declared_cadence,
@@ -427,7 +427,7 @@ def _explained_pause(marker: _PauseMarker, app_mode: str | None) -> str:
             f"{marker.pause_summary} (note says {marker.literal!r}); "
             "popcorn.app_mode could not be read to confirm the mode"
         )
-    return f"{marker.pause_summary} — this channel's app_mode is {app_mode!r}"
+    return f"{marker.pause_summary} — this project's app_mode is {app_mode!r}"
 
 
 def _only_minute_moved(declared_cron: str, live_cron: str) -> bool:
@@ -549,7 +549,7 @@ def _cadence_difference(
     """A cadence that differs for a reason the platform's intent does not explain.
 
     This is where a mode-dependent note meets the mode: a cadence retuned
-    under one, on a channel reporting prod, is the state nothing restored.
+    under one, on a project reporting prod, is the state nothing restored.
     Only here and on a pause — a note beside a cadence that already matches
     the manifest contradicts nothing, whatever the mode.
     """

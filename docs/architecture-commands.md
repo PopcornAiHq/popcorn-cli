@@ -90,23 +90,35 @@ what `commands --json` reports, rather than argparse's answer.
 
 Two arguments use it:
 
-- **The channel.** The hand-written families in `cli.py` (`message`,
-  `channel`, `webhook`) take it positionally and go through `cli.py —
-  _add_channel_argument`. The registry families declare it as
-  `Argument("channel", …)` — a flag, never a positional: they put their own
+- **The project.** `message`, `project` and `webhook` take it positionally,
+  declared as `Argument("project", …, positional=True,
+  flag_alias="--project")`. The other families declare it as
+  `Argument("project", …)` — a flag, never a positional: they put their own
   positionals first (`table rows <table>`), where an optional leading
   positional could not be told apart from the ones after it.
 - **The directory.** Declared in the registry as `Argument("directory", …,
   positional=True, flag_alias="--dir")`, on the `app` commands and
   `app validate`.
 
-Declaring a bare `conversation`/`channel`/`directory` positional instead
+Declaring a bare `project`/`directory` positional instead
 re-splits the surface, and `tests/test_parser.py` — `TestChannelArgument` and
 `TestDirectoryArgument` — fails if you do.
 
 A command declaring two dual-spelled arguments would work (specs accumulate in
-a tuple), but none does today: the channel families have no directory and the
-directory commands take the channel as a flag.
+a tuple), but none does today: the project families have no directory and the
+directory commands take the project as a flag.
+
+### Renamed families and flags
+
+A family renamed out from under existing callers keeps its old name through
+`registry.register_renamed(command, old_name)`: a hidden copy whose every leaf
+prints one stderr line naming the new spelling, then runs the same handler.
+`channel` and `channel-config` are kept that way. A renamed flag is not
+declared as an alias, which would list it in `--help`, completions and
+`commands --json`; `cli.py — _rewrite_legacy_flags` rewrites it before
+argparse sees it (`--channel`, `--template`).
+`tests/test_parser_parity.py::test_the_old_spelling_parses_the_same` replays
+every recorded row under the old spellings.
 
 ### Nesting and `dest`
 
@@ -149,10 +161,10 @@ Every family with subcommands is now registry-declared.
 | Family | Declared in | Handlers |
 |---|---|---|
 | `app` | `commands/app.py` | alongside |
-| `channel` | `commands/channel.py` | `cli.py`, late-bound |
-| `channel-config` | `commands/channel_config.py` | alongside |
 | `flow` | `commands/flow.py` | alongside |
 | `message` | `commands/message.py` | `cli.py`, late-bound |
+| `project` (hidden old name `channel`) | `commands/project.py` | `cli.py`, late-bound |
+| `project-config` (hidden old name `channel-config`) | `commands/project_config.py` | alongside |
 | `schedule` | `commands/schedule.py` | alongside |
 | `table` | `commands/table.py` | alongside |
 | `template` | `commands/template.py` | alongside |

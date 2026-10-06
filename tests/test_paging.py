@@ -150,7 +150,7 @@ class TestSearchPaging:
 
 class TestArchivedAndHidden:
     def test_archived_and_hidden_are_excluded_by_default(self, mock_client):
-        """Archived channels are server-side opt-OUT, so they pad every listing
+        """Archived projects are server-side opt-OUT, so they pad every listing
         and eat into the same page budget unless the CLI says otherwise."""
         mock_client.get.return_value = _page("conversations", [])
         operations.search_channels(mock_client)
@@ -199,7 +199,7 @@ class TestResolvePaging:
             if params.get("cursor")
             else _page("conversations", _named("conv", "alpha"), next_cursor="1")
         )
-        with pytest.raises(PopcornError, match="Channel not found"):
+        with pytest.raises(PopcornError, match="Project not found"):
             resolve_conversation(mock_client, "#nope")
 
     def test_case_variants_are_compared_across_every_fallback_page(self, mock_client):
@@ -214,7 +214,7 @@ class TestResolvePaging:
             return _page("conversations", _named("conv", "General"), next_cursor="1")
 
         mock_client.get.side_effect = _list
-        with pytest.raises(PopcornError, match="matches more than one channel"):
+        with pytest.raises(PopcornError, match="matches more than one project"):
             resolve_conversation(mock_client, "#general")
 
     def test_a_user_on_a_later_page_resolves(self, mock_client):
@@ -251,5 +251,5 @@ class TestCommandWiring:
                 operations, "search_channels", return_value={"conversations": []}
             ) as search,
         ):
-            cli.cmd_channel_list(args)
+            cli.cmd_project_list(args)
         assert search.call_args.kwargs == {"include_archived": True, "include_hidden": True}

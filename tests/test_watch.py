@@ -98,7 +98,7 @@ def watch(monkeypatch, mock_client, capsys):
         monkeypatch.setattr(operations, "read_messages", history.read)
         monkeypatch.setattr(cli.time, "sleep", lambda seconds: None)
         args = argparse.Namespace(
-            conversation="#example-channel",
+            project="#example-channel",
             interval=3,
             count=count,
             max_wait=None,

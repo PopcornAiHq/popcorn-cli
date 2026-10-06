@@ -55,7 +55,7 @@ Setting `POPCORN_AGENT=1` implies the following defaults on every invocation, un
 
 Agent mode does **not** imply `--yes`. Destructive confirmations must be opted into explicitly via `--yes` / `-y` or `POPCORN_ASSUME_YES=1`. Without them, the CLI fails loudly in non-TTY contexts instead of hanging.
 
-`app publish` confirms too, because a publish changes every channel on the checkout's fork line, not only the one it was run from. In agent mode it needs `--yes` / `POPCORN_ASSUME_YES=1` **even on a TTY**, and without it is refused before any request is sent (`error_code: validation`, exit `1`). An interactive human gets a `[y/N]` prompt naming the line; the prompt cannot give a channel count, since nothing before a publish serves one — the count arrives in the publish response (`other_channels_converging`).
+`app publish` confirms too, because a publish changes every project on the checkout's fork line, not only the one it was run from. In agent mode it needs `--yes` / `POPCORN_ASSUME_YES=1` **even on a TTY**, and without it is refused before any request is sent (`error_code: validation`, exit `1`). An interactive human gets a `[y/N]` prompt naming the line; the prompt cannot give a project count, since nothing before a publish serves one — the count arrives in the publish response (`other_channels_converging`).
 
 Accepts `1`, `true`, or `yes` (case-insensitive) as the enabling value.
 
@@ -114,13 +114,13 @@ Stable enum. All values are lowercase `snake_case`. The set is frozen at 1.0.0; 
 | `validation` | Bad input, missing args, or invalid state | Malformed flag, wrong argument count, 422 from API |
 | `unauthorized` | Not logged in or token expired | 401, expired JWT |
 | `forbidden` | Authenticated but lacks permission | 403 |
-| `not_found` | Resource does not exist | 404, unknown channel name |
+| `not_found` | Resource does not exist | 404, unknown project name |
 | `conflict` | Conflicts with current state | 409, already-exists; 412 `stale_rev` (a failed `If-Match` — re-read and retry) |
 | `rate_limited` | Rate limited — honor `retry_after` | 429 |
 | `client_error` | Other 4xx | |
 | `server_error` | 5xx — retryable with backoff | |
 | `network_error` | Transport failure (no HTTP response) | DNS, TLS, connection refused |
-| `unhealthy` | The command succeeded but the thing it checked is unhealthy | `channel-config show --strict` with fatal findings |
+| `unhealthy` | The command succeeded but the thing it checked is unhealthy | `project-config show --strict` with fatal findings |
 | `timeout` | Client-side wait elapsed before the operation finished | `flow run --wait` hit `--timeout-run` |
 | `internal` | Unexpected internal CLI error | Bug; please report |
 
@@ -234,20 +234,38 @@ The format ID is `ndjson`, surfaced in `popcorn commands --json` under `envelope
 
 - `version` is the CLI version (semver).
 - `schema_version` is the version of the *schema itself*; bumped only on breaking changes to the agent contract.
-- `popcorn commands --json --groups=message,channel` filters to specific command groups.
+- `popcorn commands --json --groups=message,project` filters to specific command groups.
 - Command families declared in the CLI's command registry (`flow`, `table`) have their `subcommands` / `arguments` entries **generated** from that single declaration rather than hand-maintained, so the schema cannot drift from the commands it describes. The emitted shape is identical either way.
 
-### The channel argument
+### The project argument
 
-**`--channel <name-or-uuid>` is accepted by every command that acts on a channel** — prefer it, and an agent never has to remember which family spells the argument which way.
+A project is what the API calls a channel: one tracker, defined by the app it runs. The CLI says project throughout; JSON payloads keep the server's field names (`conversation`, `channel`, `channel_parameters`, …) and CLI-authored keys that already said `channel` keep saying it.
 
-Some families (`message`, `channel`, `webhook`) also take the channel as their first positional, and always will: scripts and skills are written that way. Those commands report both spellings in the schema — a `conversation` positional whose `required` says whether the command can run without a channel at all, plus a `--channel` flag that is never marked required because it is the same argument under another name. Passing both is a usage error.
+**`--project <name-or-uuid>` is accepted by every command that acts on a project** — prefer it, and an agent never has to remember which family spells the argument which way.
 
-The registry families (`app`, `channel-config`, `flow`, `schedule`, `table`) take `--channel` only. They put other positionals ahead of the channel — `table rows <table>` — where a second optional positional could not be told apart from the ones after it.
+Some families (`message`, `project`, `webhook`) also take the project as their first positional, and always will: scripts and skills are written that way. Those commands report both spellings in the schema — a `project` positional whose `required` says whether the command can run without a project at all, plus a `--project` flag that is never marked required because it is the same argument under another name. Passing both is a usage error.
+
+The registry families (`app`, `project-config`, `flow`, `schedule`, `table`) take `--project` only. They put other positionals ahead of the project — `table rows <table>` — where a second optional positional could not be told apart from the ones after it.
+
+### Renamed spellings
+
+Before 0.62.0 a project was a *channel* and an app an *app bundle* or *template*. Every old spelling still works, prints one `Note:` line on stderr naming its replacement, and appears nowhere in `--help`, completions or `commands --json`:
+
+| Old | New |
+|---|---|
+| `popcorn channel …` | `popcorn project …` |
+| `popcorn channel templates` | `popcorn project apps` |
+| `popcorn channel-config …` | `popcorn project-config …` |
+| `--channel` | `--project` |
+| `channel create --template` | `project create --app` |
+
+Parsed values are identical either way. What does differ is the schema: a dual-spelled argument that `commands --json` reported as `conversation` (or a `channel` flag) is now reported as `project`, and the family's `category` is `projects` rather than `channels`. Read argument names from the schema rather than hardcoding them.
+
+**DMs and group DMs are deprecated.** They are not projects. `project list --dms` still lists them, with a `Note:` on stderr, and will be removed in a future release. Messages to a DM by UUID still work and are not flagged.
 
 ### The directory argument
 
-**`--dir <path>` is accepted by every command that takes a checkout or bundle directory** — `app status`, `app publish`, `app apply`, `app checkout` and `app validate`. Each still takes the directory as its first positional, and always will, for the same reason the channel does.
+**`--dir <path>` is accepted by every command that takes a checkout directory** — `app status`, `app publish`, `app apply`, `app checkout` and `app validate`. Each still takes the directory as its first positional, and always will, for the same reason the project does.
 
 The two spellings behave identically, and passing both is a usage error. Whether the directory may be omitted is per command: the other `app` commands fall back to the cwd checkout, while `app validate` requires one.
 

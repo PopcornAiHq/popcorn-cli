@@ -1,7 +1,7 @@
-"""Tests for `popcorn channel-config`.
+"""Tests for `popcorn project-config`.
 
 The load-bearing test is `test_sends_only_the_new_keys_as_a_patch`. `PUT
-/channel-config/parameters` replaces the whole section, so a per-key `set`
+/project-config/parameters` replaces the whole section, so a per-key `set`
 sent there as only the new key silently deletes every other parameter and
 reports success; built as a read-merge-PUT instead, it loses a concurrent
 edit's keys. Only the PATCH, which merges on the server, is safe.
@@ -26,7 +26,7 @@ from popcorn_core.errors import EXIT_UNHEALTHY, PopcornError
 
 def _args(**over):
     base = {
-        "channel": "#alerts",
+        "project": "#alerts",
         "strict": False,
         "replace": False,
         "assignment": [],
@@ -111,7 +111,7 @@ class TestFatalFindings:
     def test_unused_entries_are_not_fatal(self):
         """A shared config legitimately carries keys one flow does not read.
 
-        Failing --strict on these would make it useless on every real channel.
+        Failing --strict on these would make it useless on every real project.
         """
         comparison = {"unused_parameters": ["x"], "unused_integrations": ["y"]}
         assert fatal_findings(comparison) == {}
@@ -171,7 +171,7 @@ def _run(handler, args, inspect_response=None, recorder=None, accounts=None, pat
     """
     from contextlib import ExitStack
 
-    from popcorn_cli.commands import channel_config as mod
+    from popcorn_cli.commands import project_config as mod
 
     captured: dict = {}
     with ExitStack() as stack:
@@ -317,7 +317,7 @@ class TestShow:
 
 class TestIntegrations:
     def test_set_passes_the_name_and_id(self):
-        from popcorn_cli.commands import channel_config as mod
+        from popcorn_cli.commands import project_config as mod
 
         calls = []
 
@@ -338,7 +338,7 @@ class TestIntegrations:
         assert calls == [("#alerts", "mail", "abc-123")]
 
     def test_unset_says_the_grant_survives(self):
-        from popcorn_cli.commands import channel_config as mod
+        from popcorn_cli.commands import project_config as mod
 
         captured: dict = {}
         with (
@@ -375,18 +375,18 @@ class TestIntegrations:
 
 
 class TestAccountsParser:
-    """`accounts` lists YOUR accounts, so it needs no channel — but every
-    sibling takes --channel, and a scripted `channel-config <sub> --channel X`
+    """`accounts` lists YOUR accounts, so it needs no project — but every
+    sibling takes --project, and a scripted `project-config <sub> --project X`
     must not blow up on this one subcommand (unrecognized arguments)."""
 
     def test_accepts_channel(self):
         from popcorn_cli.cli import build_parser
 
-        args = build_parser().parse_args(["channel-config", "accounts", "--channel", "#ops"])
-        assert args.channel == "#ops"
+        args = build_parser().parse_args(["project-config", "accounts", "--project", "#ops"])
+        assert args.project == "#ops"
 
     def test_channel_stays_optional(self):
         from popcorn_cli.cli import build_parser
 
-        args = build_parser().parse_args(["channel-config", "accounts"])
-        assert args.channel is None
+        args = build_parser().parse_args(["project-config", "accounts"])
+        assert args.project is None

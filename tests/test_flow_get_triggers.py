@@ -2,7 +2,7 @@
 
 The server owns the analysis of what starts a flow; the CLI's job is to ask
 for it and say it without overstating it. The verdict these tests protect is
-the negative one: "nothing on this channel starts this flow" finds a dead
+the negative one: "nothing on this project starts this flow" finds a dead
 flow, so it may only print when the server says every source was read — and
 never when the server did not send a report at all.
 """
@@ -98,11 +98,11 @@ class TestRendering:
     def test_each_kind_prints_the_server_summary_verbatim(self, trigger):
         out = _render(_report(triggers=[trigger]))
         assert f"    {trigger['summary']}" in out.splitlines()
-        assert "nothing on this channel" not in out
+        assert "nothing on this project" not in out
 
     def test_nothing_starts_it_is_said_when_every_source_was_read(self):
         out = _render(_report())
-        assert "Triggers: nothing on this channel starts this flow" in out
+        assert "Triggers: nothing on this project starts this flow" in out
         assert "bundle" not in out
 
     def test_an_incomplete_report_withholds_the_negative_verdict(self):
@@ -136,12 +136,12 @@ class TestRendering:
 
     def test_an_agent_runnable_flow_says_the_agent_may_run_it(self):
         out = _render(_report(agent_runnable=True))
-        assert "the channel agent may run it" in out
+        assert "the project agent may run it" in out
         assert "operator-only" not in out
 
     def test_a_dynamic_launcher_softens_the_verdict_and_prints_after_it(self):
         out = _render(_report(dynamic_callers=[_DYNAMIC]))
-        assert "nothing on this channel starts this flow" not in out
+        assert "nothing on this project starts this flow" not in out
         assert (
             "Triggers: nothing names this flow as its target — "
             "1 run-time launcher may start it (below)"
@@ -180,14 +180,14 @@ def _run(argv: list[str], response: dict[str, Any]) -> tuple[list[str], Any]:
 class TestCommand:
     def test_triggers_are_requested_by_default(self):
         _, get_flow = _run(
-            ["--json", "flow", "get", "example_turn", "--channel", "#x"],
+            ["--json", "flow", "get", "example_turn", "--project", "#x"],
             {"ok": True, "flow": dict(_FLOW), "triggers": _report()},
         )
         assert get_flow.call_args.kwargs["include_triggers"] is True
 
     def test_no_triggers_does_not_request_them(self):
         printed, get_flow = _run(
-            ["flow", "get", "example_turn", "--channel", "#x", "--no-triggers"],
+            ["flow", "get", "example_turn", "--project", "#x", "--no-triggers"],
             {"ok": True, "flow": dict(_FLOW), "triggers": None},
         )
         assert get_flow.call_args.kwargs["include_triggers"] is False
@@ -195,7 +195,7 @@ class TestCommand:
 
     def test_no_triggers_json_keeps_the_same_key_set(self):
         printed, _ = _run(
-            ["--json", "flow", "get", "example_turn", "--channel", "#x", "--no-triggers"],
+            ["--json", "flow", "get", "example_turn", "--project", "#x", "--no-triggers"],
             {"ok": True, "flow": dict(_FLOW)},
         )
         data = json.loads(printed[0])["data"]
@@ -206,7 +206,7 @@ class TestCommand:
     def test_json_carries_the_server_report_verbatim(self):
         report = _report(triggers=[_FLOW_CALL], dynamic_callers=[_DYNAMIC])
         printed, _ = _run(
-            ["--json", "flow", "get", "example_turn", "--channel", "#x"],
+            ["--json", "flow", "get", "example_turn", "--project", "#x"],
             {"ok": True, "flow": dict(_FLOW), "triggers": json.loads(json.dumps(report))},
         )
         out = json.loads(printed[0])
@@ -220,7 +220,7 @@ class TestCommand:
         response: dict[str, Any] = {"ok": True, "flow": dict(_FLOW)}
         if not absent:
             response["triggers"] = None
-        printed, _ = _run(["--json", "flow", "get", "example_turn", "--channel", "#x"], response)
+        printed, _ = _run(["--json", "flow", "get", "example_turn", "--project", "#x"], response)
         out = json.loads(printed[0])
         assert out["data"]["flow"] == _FLOW
         assert out["data"]["triggers"] is None
@@ -228,7 +228,7 @@ class TestCommand:
 
     def test_an_old_server_renders_not_checked_under_the_definition(self):
         printed, _ = _run(
-            ["flow", "get", "example_turn", "--channel", "#x"],
+            ["flow", "get", "example_turn", "--project", "#x"],
             {"ok": True, "flow": dict(_FLOW)},
         )
         text = "\n".join(printed)

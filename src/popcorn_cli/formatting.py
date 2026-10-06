@@ -139,14 +139,14 @@ def fmt_message(msg: dict[str, Any]) -> str:
 
 
 def app_type(conv: dict[str, Any]) -> str:
-    """The channel's installed app type, or "" when it runs no app bundle.
+    """The project's installed app type, or "" when it runs no app.
 
     Written at install time to the conversation's ``metadata['app_type']``, so a
-    channel that never had a bundle installed — and one whose bundle was
+    project that never had a bundle installed — and one whose bundle was
     published without an ``app_type`` declared, which clears the tag — both read
-    as untagged here. `popcorn app list --channel <ch>` is the authoritative
-    answer for a single channel; this is the cheap one that comes back with
-    every channel in a list.
+    as untagged here. `popcorn app list --project <project>` is the authoritative
+    answer for a single project; this is the cheap one that comes back with
+    every project in a list.
     """
     metadata = conv.get("metadata")
     if not isinstance(metadata, dict):

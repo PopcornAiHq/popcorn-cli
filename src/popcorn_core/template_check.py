@@ -1,7 +1,7 @@
 """Offline structural checks for a channel-template bundle.
 
 `popcorn flow validate` is the authority on whether a single flow's references
-resolve, but it needs a channel and a live server, and it only ever sees one
+resolve, but it needs a project and a live server, and it only ever sees one
 file at a time. The defects this module exists for are the ones that span files,
 or that every layer below accepts in silence:
 
@@ -91,7 +91,7 @@ RESERVED_FILENAMES = frozenset(
     }
 )
 
-# Subdirectories the tree reader descends into, seeding a channel parameter
+# Subdirectories the tree reader descends into, seeding a project parameter
 # from each. The zip reader preserves the same one segment instead of
 # flattening it to a basename, which is the only classification rule the two
 # readers agree on.
@@ -290,7 +290,7 @@ class BundleReport:
                     ERROR,
                     "publish-refused",
                     where,
-                    str(raw.get("message") or "the server refused this bundle"),
+                    str(raw.get("message") or "the server refused this app"),
                     rule=str(rule) if rule else None,
                 )
             )
@@ -475,7 +475,7 @@ class _Checker:
                 str(rel),
                 f"'{rel}' is in a subdirectory. The registry reader descends only "
                 f"{'/, '.join(sorted(PRESERVED_DIRS))}/ and would not see this flow at all; "
-                f"the zip reader would flatten it to '{path.name}'. Move it to the bundle root.",
+                f"the zip reader would flatten it to '{path.name}'. Move it to the app root.",
             )
 
     def _check_collisions(self, files: list[Path]) -> None:
@@ -511,7 +511,7 @@ class _Checker:
     def _report_missing_app_type(self) -> None:
         """A manifest with no `app_type:` — an error in a checkout, else a warning.
 
-        Installing an untyped bundle CLEARS the channel's app_type. For bundle
+        Installing an untyped bundle CLEARS the project's app_type. For bundle
         source with no baseline that can be intentional (an untyped ops
         bundle), so it stays a warning. A checkout always came from a typed
         version — every fork line starts from one — so a missing key there is
@@ -524,9 +524,9 @@ class _Checker:
             self.warn(
                 "clears-app-type",
                 "manifest.yaml",
-                "No app_type declared. Installing this bundle CLEARS the channel's app_type, "
+                "No app_type declared. Installing this app CLEARS the project's app_type, "
                 "which changes the client's whole interface paradigm. Intentional for an "
-                "untyped ops bundle; never import it into a channel running a real app.",
+                "untyped ops app; never import it into a project running a real app.",
             )
             return
         expected = baseline.app or "<app>"
@@ -535,7 +535,7 @@ class _Checker:
             "manifest.yaml",
             f"No app_type declared, but this is a checkout of "
             f"{baseline.app or 'an app'} {baseline.semver}. The server refuses to publish "
-            f"a manifest without one — installed, it would clear every channel's app_type. "
+            f"a manifest without one — installed, it would clear every project's app_type. "
             f"Restore 'app_type: {expected}'.",
         )
 
@@ -592,7 +592,7 @@ class _Checker:
                 "version-not-advanced",
                 "manifest.yaml",
                 f"version {raw} does not advance past the checked-out {baseline.semver} "
-                "— bundle versions only ever move forward, and a published version is "
+                "— app versions only ever move forward, and a published version is "
                 f"immutable. 'popcorn app publish' will refuse this; bump 'version:' "
                 f"past {baseline.semver}.",
             )
@@ -636,13 +636,12 @@ class _Checker:
         """
         if kind == "fork":
             return (
-                "The note ships as bundle content, for whoever edits this bundle next — "
+                "The note ships as app content, for whoever edits this app next — "
                 "it is not what a publish records on the version; that comes from "
                 "'popcorn app publish -m'."
             )
         return (
-            "The note ships as bundle content, and a product publish records it as the "
-            "version's note."
+            "The note ships as app content, and a product publish records it as the version's note."
         )
 
     def _columns(self, table: Any) -> list[dict[str, Any]]:
@@ -684,7 +683,7 @@ class _Checker:
                     self.err(
                         "schedule-unknown-flow",
                         where,
-                        f"Schedule targets flow '{flow}', which no flow in this bundle declares "
+                        f"Schedule targets flow '{flow}', which no flow in this app declares "
                         f"as its `name:`. Known: {', '.join(sorted(names)) or '(none)'}.",
                     )
                 if not sched.get("interval") and not sched.get("cron"):
@@ -697,7 +696,7 @@ class _Checker:
                 # carrying both cadences has two, and the backend refuses
                 # rather than guess which the author meant to keep — so
                 # catching it here is the difference between a checker
-                # finding and an install against a real channel failing.
+                # finding and an install against a real project failing.
                 if sched.get("interval") and sched.get("cron"):
                     self.err(
                         "schedule-two-triggers",
@@ -717,7 +716,7 @@ class _Checker:
                     self.err(
                         "webhook-unknown-flow",
                         f"manifest.yaml:webhooks.{i}",
-                        f"Webhook targets flow '{flow}', which no flow in this bundle declares "
+                        f"Webhook targets flow '{flow}', which no flow in this app declares "
                         f"as its `name:`.",
                     )
 
@@ -746,12 +745,12 @@ class _Checker:
             self.warn(
                 "path-not-published",
                 entry,
-                f"'{entry}' is not part of the bundle format, so 'popcorn app publish' "
+                f"'{entry}' is not part of the app format, so 'popcorn app publish' "
                 "leaves it behind — it stays in your working copy and never reaches the "
-                "channel. Flows are root-level <name>.yaml; prompts and templates go "
+                "project. Flows are root-level <name>.yaml; prompts and templates go "
                 "exactly one level under prompts/ or templates/; block source goes under "
                 f"{flow_rules.CODE_SUBDIR}/<block>/; an agent is {AGENT_LAYOUT}. "
-                "Anything else belongs outside the bundle directory.",
+                "Anything else belongs outside the app directory.",
             )
 
     def _check_scalar_collisions(self) -> None:
@@ -818,11 +817,11 @@ class _Checker:
                 self.err(
                     "fixture-installed-as-flow" if in_fixtures else "yaml-is-not-a-flow",
                     str(rel),
-                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/process is "
+                    "Every .yaml/.yml in the app that is not manifest/config/strings/process is "
                     "installed as a flow, and this file has no `name:`/`steps:`. "
                     + (
-                        "Move it outside the bundle directory — a fixtures/ "
-                        "directory is not part of the bundle format, so renaming "
+                        "Move it outside the app directory — a fixtures/ "
+                        "directory is not part of the app format, so renaming "
                         "it to .json only silences this check."
                         if in_fixtures
                         else "Give it a `name:` and `steps:`, or change its extension."
@@ -1217,7 +1216,7 @@ class _Checker:
                     "unknown-prompt",
                     where,
                     f"'{value}' reads prompt '{parts[2]}', but no prompts/{parts[2]}.* exists "
-                    "in the bundle.",
+                    "in the app.",
                 )
             return
         if key == "templates":
@@ -1226,7 +1225,7 @@ class _Checker:
                     "unknown-template",
                     where,
                     f"'{value}' reads template '{parts[2]}', but no templates/{parts[2]}.* "
-                    "exists in the bundle.",
+                    "exists in the app.",
                 )
             return
         if key == "integrations":
@@ -1241,7 +1240,7 @@ class _Checker:
                 self.warn(
                     "undeclared-integration",
                     where,
-                    f"'{value}' reads integration '{parts[2]}', which nothing in the bundle "
+                    f"'{value}' reads integration '{parts[2]}', which nothing in the app "
                     "declares — not this flow's `required_integrations:`, and not a manifest "
                     "`connections[].config_name`. Known: "
                     f"{', '.join(sorted(scope.integrations | self._manifest_names())) or '(none)'}"
@@ -1273,7 +1272,7 @@ class _Checker:
     def _manifest_names(self) -> set[str]:
         """Integration names the manifest's `connections:` block binds.
 
-        `config_name` is the channel-config name a connection binds to, which
+        `config_name` is the project-config name a connection binds to, which
         is exactly what `$channel.integrations.<name>` reads. A connection
         without one names its own instances (repeatable slots like `gcal`,
         `gcal_2`), so the id doubles as the name.

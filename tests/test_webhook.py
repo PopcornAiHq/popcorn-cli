@@ -18,8 +18,8 @@ from popcorn_core import operations
 from popcorn_core.errors import PopcornError
 
 WEBHOOK_ID = "11111111-2222-3333-4444-555555555555"
-# A channel UUID rather than "#name": these tests exercise the webhook lookup,
-# and a name would first spend the mocked GET on resolving the channel.
+# A project UUID rather than "#name": these tests exercise the webhook lookup,
+# and a name would first spend the mocked GET on resolving the project.
 CHANNEL_ID = "00000000-0000-4000-8000-000000000001"
 
 _HOOK = {
@@ -79,7 +79,7 @@ class TestGet:
             ),
             patch("popcorn_core.operations.get_webhook", return_value={"webhook": _HOOK}) as get,
         ):
-            _run(parser, ["webhook", "get", "Intake", "--channel", "#ops"])
+            _run(parser, ["webhook", "get", "Intake", "--project", "#ops"])
         assert get.call_args[0][1] == WEBHOOK_ID
 
 
@@ -256,12 +256,12 @@ class TestResolveWebhookId:
         assert operations.resolve_webhook_id(client, "Intake", CHANNEL_ID) == WEBHOOK_ID
 
     def test_a_name_without_a_channel_says_why(self):
-        """Names are unique per channel, so there is nothing to match against."""
+        """Names are unique per project, so there is nothing to match against."""
         client = MagicMock()
         with pytest.raises(PopcornError) as exc:
             operations.resolve_webhook_id(client, "Intake")
         assert exc.value.error_code == "validation"
-        assert "channel" in str(exc.value).lower()
+        assert "project" in str(exc.value).lower()
         client.get.assert_not_called()
 
     def test_an_unknown_name_lists_what_exists(self):

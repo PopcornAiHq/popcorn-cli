@@ -210,7 +210,7 @@ class TestDispatch:
 
         monkeypatch.setattr(operations, "list_flow_runs", fake)
         self._run_cli(
-            monkeypatch, ["flow", "runs", "list", "--channel", "#ops", "--flow", "claim_turn"]
+            monkeypatch, ["flow", "runs", "list", "--project", "#ops", "--flow", "claim_turn"]
         )
         assert seen["flow_name"] == "claim_turn"
         out = capsys.readouterr().out
@@ -235,7 +235,7 @@ class TestDispatch:
                 "count": 2,
             },
         )
-        self._run_cli(monkeypatch, ["flow", "runs", "list", "--channel", "#ops"])
+        self._run_cli(monkeypatch, ["flow", "runs", "list", "--project", "#ops"])
         out = capsys.readouterr().out
         assert "Flow runs in #ops (2):" in out
         lines = out.splitlines()
@@ -256,7 +256,7 @@ class TestDispatch:
             return {"executions": [_run("claim_turn", "wf-2")], "count": 1}
 
         monkeypatch.setattr(operations, "list_flow_runs", fake)
-        base = ["--json", "flow", "runs", "list", "--channel", "#ops", "--flow", "claim_turn"]
+        base = ["--json", "flow", "runs", "list", "--project", "#ops", "--flow", "claim_turn"]
         self._run_cli(monkeypatch, base)
         first = json.loads(capsys.readouterr().out)["data"]
         assert first["executions"][0]["flow_name"] == "claim_turn"
@@ -278,7 +278,7 @@ class TestDispatch:
         monkeypatch.setattr(cli, "_check_and_update", lambda: None)
         monkeypatch.setattr(cli, "_get_client", lambda args: client)
         monkeypatch.setattr(
-            sys, "argv", ["popcorn", "flow", "runs", "list", "--channel", "#ops", "--flow", "x"]
+            sys, "argv", ["popcorn", "flow", "runs", "list", "--project", "#ops", "--flow", "x"]
         )
         with pytest.raises(SystemExit) as exc:
             cli.main()
@@ -297,7 +297,7 @@ class TestDispatch:
         monkeypatch.setattr(operations, "list_flow_runs", fake)
         with pytest.raises(SystemExit):
             self._run_cli(
-                monkeypatch, ["flow", "runs", "list", "--channel", "#ops", "--flow", 'a"b']
+                monkeypatch, ["flow", "runs", "list", "--project", "#ops", "--flow", 'a"b']
             )
         err = capsys.readouterr().err
         assert "Error: invalid flow_name 'a\"b'" in err

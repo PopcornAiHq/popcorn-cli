@@ -43,7 +43,7 @@ def listing_params(*, include_archived: bool, include_hidden: bool) -> dict[str,
 
     It lives beside the paging helpers rather than with the listing commands
     because name resolution needs the same switches: a second copy is how the
-    two drifted apart, leaving hidden channels listable but not addressable.
+    two drifted apart, leaving hidden projects listable but not addressable.
     """
     return {
         "exclude_archived": "false" if include_archived else "true",

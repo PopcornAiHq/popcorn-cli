@@ -128,7 +128,7 @@ def _serve(
 
 
 def _install(**over) -> dict:
-    """The served `install` block of `/apps/status`, for a current channel."""
+    """The served `install` block of `/apps/status`, for a current project."""
     payload = {
         "state": "current",
         "target_version_id": None,
@@ -710,7 +710,7 @@ class TestBaselineV2:
         """0.19.0 wrote no conversation_id and no v2 marker.
 
         It must parse rather than wedge every command — the fallback is an
-        explicit --channel, not a rewrite of a file nobody asked us to touch.
+        explicit --project, not a rewrite of a file nobody asked us to touch.
         """
         (tmp_path / BASELINE_FILE).write_text(
             json.dumps(
@@ -736,7 +736,7 @@ class TestBaselineV2:
 
 def _args(**over):
     base = {
-        "channel": None,
+        "project": None,
         "directory": None,
         # `--changelog` is the deprecated ALIAS of this dest, not a second
         # one: the parser folds both spellings into `message`, so a namespace
@@ -844,12 +844,12 @@ class TestForkLineReach:
 
     def test_reports_the_other_channels_and_the_version(self):
         note = fork_line_reach({"other_channels_converging": 6, "semver": "0.2.1"})
-        assert "6 other channels" in note
+        assert "6 other projects" in note
         assert "0.2.1" in note
 
     def test_says_channel_singular_for_one(self):
         note = fork_line_reach({"other_channels_converging": 1, "semver": "0.2.1"})
-        assert "1 other channel " in note
+        assert "1 other project " in note
 
     def test_silent_when_the_publisher_is_the_only_channel(self):
         assert fork_line_reach({"other_channels_converging": 0, "semver": "0.2.1"}) == ""
@@ -857,7 +857,7 @@ class TestForkLineReach:
     def test_silent_when_the_server_did_not_send_a_count(self):
         """A popcorn newer than the API must not claim a reach of zero.
 
-        "0 other channels" and "the server never told me" are different
+        "0 other projects" and "the server never told me" are different
         facts, and the first reads as "this affects only you".
         """
         assert fork_line_reach({"semver": "0.2.1"}) == ""
@@ -1031,7 +1031,7 @@ class TestPublishCommand:
         ):
             mod._app_publish(_args(yes=True, directory=str(tmp_path)))
 
-        assert "6 other channels on this fork line" in captured["rendered"]
+        assert "6 other projects on this fork line" in captured["rendered"]
         # The raw count rides through to --json for an agent to branch on.
         assert captured["data"]["other_channels_converging"] == 6
 
@@ -1111,9 +1111,9 @@ class TestPublishCommand:
     def test_publishes_from_the_head_while_the_channel_is_behind(self, tmp_path):
         """The deadlock a server-side change removed.
 
-        The head's install failed, so the channel still runs the previous
+        The head's install failed, so the project still runs the previous
         version. The checkout IS the head, the publish is based on it, and
-        nothing about the channel's state may stop it — the old client-side
+        nothing about the project's state may stop it — the old client-side
         "install has not landed, wait" refusal was what wedged the line.
         """
         base = {"manifest.yaml": _manifest("0.2.0")}
@@ -1186,7 +1186,7 @@ class TestPublishCommand:
             tmp_path,
             _files_response(base),
             rec,
-            _args(directory=str(tmp_path), channel="#alerts"),
+            _args(directory=str(tmp_path), project="#alerts"),
         )
         assert rec.calls[0][0] == "#alerts"
 
@@ -1213,7 +1213,7 @@ def _run_publish_captured(tmp_path, recorder):
 
 
 class TestPublishConfirmation:
-    """A publish reaches every channel on the fork line, so it asks first.
+    """A publish reaches every project on the fork line, so it asks first.
 
     No server guard asks whether that reach was meant, so the CLI does: a
     human at a terminal is prompted, and a caller that cannot answer — agent
@@ -1337,9 +1337,9 @@ class TestPublishConfirmation:
         (prompt,) = prompts
         assert "alerttracker 0.2.1" in prompt
         assert "fork line 'example-line'" in prompt
-        assert "Every channel on that line" in prompt
+        assert "Every project on that line" in prompt
         # No count is served before a publish, so none may be stated.
-        assert not re.search(r"\b\d+ (other )?channels?\b", prompt)
+        assert not re.search(r"\b\d+ (other )?projects?\b", prompt)
         assert prompt.endswith("[y/N] ")
 
     def test_an_unnamed_line_is_not_given_a_guessed_name(self, tmp_path, monkeypatch, tty):
@@ -1402,7 +1402,7 @@ class TestPublishInstallStatus:
 
     def test_started_points_at_status(self, tmp_path):
         out = _run_publish_captured(tmp_path, _Recorder(install_status="started"))
-        assert "Installing on this channel: wf-1" in out["rendered"]
+        assert "Installing on this project: wf-1" in out["rendered"]
         assert "popcorn app status" in out["rendered"]
 
     def test_locked_channel_says_so_and_points_at_apply(self, tmp_path):
@@ -1412,8 +1412,8 @@ class TestPublishInstallStatus:
         )
         assert "Published alerttracker 0.2.1" in out["rendered"]
         assert (
-            "Not applied to this channel: app updates are locked here — ask a "
-            "channel admin or a workspace admin to unlock them, then run "
+            "Not applied to this project: app updates are locked here — ask a "
+            "project admin or a workspace admin to unlock them, then run "
             "'popcorn app apply'" in out["rendered"]
         )
 
@@ -1422,20 +1422,20 @@ class TestPublishInstallStatus:
             tmp_path,
             _Recorder(install_status="blocked_install_in_progress", install_workflow_id=None),
         )
-        assert "another install holds this channel's lock" in out["rendered"]
+        assert "another install holds this project's lock" in out["rendered"]
         assert "popcorn app apply" in out["rendered"]
 
     def test_not_requested_does_not_crash(self, tmp_path):
-        """Cannot happen from this CLI (it always names the channel), but the
+        """Cannot happen from this CLI (it always names the project), but the
         value exists on the wire and must render, not raise."""
         out = _run_publish_captured(
             tmp_path, _Recorder(install_status="not_requested", install_workflow_id=None)
         )
-        assert "Not applied to any channel." in out["rendered"]
+        assert "Not applied to any project." in out["rendered"]
 
     def test_an_older_api_with_only_a_workflow_id_still_reads_as_started(self, tmp_path):
         out = _run_publish_captured(tmp_path, _Recorder())
-        assert "Installing on this channel: wf-1" in out["rendered"]
+        assert "Installing on this project: wf-1" in out["rendered"]
 
 
 def _no_declared_schedules():
@@ -1498,7 +1498,7 @@ class TestStatusCommand:
         assert "Fork line moved to 0.3.0" in out["rendered"]
 
     def test_reports_a_channel_behind_the_head_without_refusing(self, tmp_path):
-        """Baseline == head, channel behind: the install has not landed (or
+        """Baseline == head, project behind: the install has not landed (or
         failed). Say so from the server's own fields and point at apply — no
         semver guesswork, no refusal."""
         base = {"manifest.yaml": _manifest("0.2.0")}
@@ -1512,7 +1512,7 @@ class TestStatusCommand:
         assert out["data"]["in_sync"] is True
         assert out["data"]["channel_behind"] is True
         assert (out["data"]["channel_version_id"], out["data"]["head_version_id"]) == (5, 7)
-        assert "Channel still runs 0.1.0 (version 5)" in out["rendered"]
+        assert "Project still runs 0.1.0 (version 5)" in out["rendered"]
         assert "popcorn app apply" in out["rendered"]
 
     def test_a_checkout_reports_a_failed_install(self, tmp_path):
@@ -1562,7 +1562,7 @@ class TestStatusCommand:
             _args(directory=str(tmp_path)),
         )
         assert out["data"]["channel_behind"] is False
-        assert "Channel runs the same version (7)." in out["rendered"]
+        assert "Project runs the same version (7)." in out["rendered"]
 
     def test_flags_a_misplaced_code_path_without_refusing(self, tmp_path):
         """status must not refuse the way publish does — it is the command
@@ -1792,7 +1792,7 @@ class TestForkAndApplyCommands:
             patch("popcorn_cli.cli._output"),
             patch.object(operations, "fork_channel_app", _fork),
         ):
-            mod._app_fork(_args(channel="#alerts", name="experiment"))
+            mod._app_fork(_args(project="#alerts", name="experiment"))
         assert calls == [("#alerts", "experiment")]
 
     def test_a_named_fork_does_not_ask_the_server_which_lines_exist(self):
@@ -1801,7 +1801,7 @@ class TestForkAndApplyCommands:
         with _fork_env(rec, listing=_listing("default")) as env:
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts", name="experiment"))
+            mod._app_fork(_args(project="#alerts", name="experiment"))
         assert env["listed"] == []
         assert rec.calls == [("#alerts", "experiment")]
 
@@ -1817,7 +1817,7 @@ class TestNamelessFork:
         with _fork_env(rec, listing=_listing("default", semver="1.14.0")):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts"))
+            mod._app_fork(_args(project="#alerts"))
 
         err = capsys.readouterr().err
         assert "default" in err and "1.14.0" in err
@@ -1831,7 +1831,7 @@ class TestNamelessFork:
             from popcorn_cli.commands import app as mod
 
             with pytest.raises(PopcornError) as exc:
-                mod._app_fork(_args(channel="#alerts"))
+                mod._app_fork(_args(project="#alerts"))
         assert "cancelled" in str(exc.value)
         assert rec.calls == []
 
@@ -1842,7 +1842,7 @@ class TestNamelessFork:
         with _fork_env(rec, listing=_listing("default", semver="1.14.0")):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts", yes=True, quiet=True))
+            mod._app_fork(_args(project="#alerts", yes=True, quiet=True))
 
         err = capsys.readouterr().err
         assert "default" in err and "1.14.0" in err
@@ -1855,7 +1855,7 @@ class TestNamelessFork:
             from popcorn_cli.commands import app as mod
 
             with pytest.raises(PopcornError) as exc:
-                mod._app_fork(_args(channel="#alerts"))
+                mod._app_fork(_args(project="#alerts"))
         assert "--yes" in str(exc.value)
         assert rec.calls == []
 
@@ -1865,7 +1865,7 @@ class TestNamelessFork:
         with _fork_env(rec, listing=_listing()):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts"))
+            mod._app_fork(_args(project="#alerts"))
         assert rec.calls == [("#alerts", None)]
         assert "adopting" not in capsys.readouterr().err.lower()
 
@@ -1876,12 +1876,12 @@ class TestNamelessFork:
         with _fork_env(rec, listing=_listing("default", "demo914")):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts"))
+            mod._app_fork(_args(project="#alerts"))
         assert rec.calls == [("#alerts", None)]
         assert capsys.readouterr().err == ""
 
     def test_ignores_fork_lines_of_other_apps(self, capsys, tty):
-        """A workspace owns lines per app; only the channel's app is at stake,
+        """A workspace owns lines per app; only the project's app is at stake,
         so one line of it plus one of something else is still an inference."""
         rec = _ForkRecorder()
         listing = _listing("default")
@@ -1890,7 +1890,7 @@ class TestNamelessFork:
         with _fork_env(rec, listing=listing):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts"))
+            mod._app_fork(_args(project="#alerts"))
         assert prompts and "default" in prompts[0]
         assert "deploywatch" not in capsys.readouterr().err
 
@@ -1906,7 +1906,7 @@ class TestNamelessFork:
         with _fork_env(rec, listing=listing):
             from popcorn_cli.commands import app as mod
 
-            mod._app_fork(_args(channel="#alerts"))
+            mod._app_fork(_args(project="#alerts"))
 
         err = capsys.readouterr().err
         assert "default" not in err
@@ -1925,7 +1925,7 @@ class TestNamelessFork:
             from popcorn_cli.commands import app as mod
 
             with pytest.raises(PopcornError) as exc:
-                mod._app_fork(_args(channel="#alerts"))
+                mod._app_fork(_args(project="#alerts"))
         assert "default" not in str(exc.value.hint)
         assert "--name" in str(exc.value.hint)
         assert rec.calls == []
@@ -2189,7 +2189,7 @@ class TestDeprecatedChangelogAlias:
 
 
 # ---------------------------------------------------------------------------
-# `app status --channel`, with no checkout
+# `app status --project`, with no checkout
 # ---------------------------------------------------------------------------
 
 
@@ -2210,7 +2210,7 @@ _BEHIND = _install(
     state="behind",
     target_version_id=7,
     target_semver="0.2.0",
-    retry_hint="run 'app apply' to move the channel to its line's head",
+    retry_hint="run 'app apply' to move the project to its line's head",
 )
 
 
@@ -2222,7 +2222,7 @@ class TestChannelScopedStatus:
     """ "Has my publish landed?" answered without a checkout.
 
     Before this, `app status` required one, so every caller polled
-    `app list --channel` and string-matched a semver out of its prose.
+    `app list --project` and string-matched a semver out of its prose.
     """
 
     def _run(self, args, status=None):
@@ -2244,25 +2244,25 @@ class TestChannelScopedStatus:
         return captured
 
     def test_a_landed_install_reads_as_current(self, tmp_path):
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"))
         assert out["data"]["install_state"] == "current"
         assert out["data"]["channel_behind"] is False
         assert out["data"]["channel_version_id"] == out["data"]["head_version_id"] == 7
         assert "CURRENT" in out["rendered"]
 
     def test_a_channel_behind_its_line_reads_as_pending(self, tmp_path):
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_BEHIND))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"), _behind_status(_BEHIND))
         assert out["data"]["install_state"] == "pending"
         assert out["data"]["channel_behind"] is True
         assert (out["data"]["channel_semver"], out["data"]["head_semver"]) == ("0.1.0", "0.2.0")
         assert "BEHIND" in out["rendered"]
-        assert "popcorn app apply --channel '#chan'" in out["rendered"]
+        assert "popcorn app apply --project '#chan'" in out["rendered"]
 
     def test_a_failed_install_is_told_apart_from_a_running_one(self, tmp_path):
         """The gap the served block closes: both used to read as PENDING."""
-        failed = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_FAILED))
+        failed = self._run(_args(directory=str(tmp_path), project="#chan"), _behind_status(_FAILED))
         running = self._run(
-            _args(directory=str(tmp_path), channel="#chan"),
+            _args(directory=str(tmp_path), project="#chan"),
             _behind_status(
                 _install(
                     state="installing",
@@ -2283,12 +2283,12 @@ class TestChannelScopedStatus:
         assert "Next:" not in running["rendered"], "a running install needs nothing of the caller"
 
     def test_json_carries_the_served_block_verbatim(self, tmp_path):
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(_FAILED))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"), _behind_status(_FAILED))
         assert out["data"]["install"] == _FAILED
 
     def test_the_older_keys_are_all_still_there(self, tmp_path):
         """`--json` is add-only: the block joins the report, it replaces nothing."""
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"))
         assert {
             "channel",
             "app",
@@ -2308,23 +2308,23 @@ class TestChannelScopedStatus:
             target_version_id=7,
             target_semver="0.2.0",
             reason="stale_target",
-            retry_hint="run 'app apply' to move the channel to its line's head",
+            retry_hint="run 'app apply' to move the project to its line's head",
         )
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"), _behind_status(skipped))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"), _behind_status(skipped))
         assert "SKIPPED" in out["rendered"] and "stale_target" in out["rendered"]
 
     def test_a_locked_channel_is_not_told_that_apply_fixes_it(self, tmp_path):
-        """A product channel's hint names no command; none is invented for it."""
+        """A product project's hint names no command; none is invented for it."""
         locked = _install(
             state="locked",
             target_version_id=9,
             target_semver="1.4.0",
             locked=True,
-            retry_hint="unlock app updates on this channel; auto-update then "
+            retry_hint="unlock app updates on this project; auto-update then "
             "applies the head on its next daily check",
         )
         out = self._run(
-            _args(directory=str(tmp_path), channel="#chan"),
+            _args(directory=str(tmp_path), project="#chan"),
             _behind_status(locked) | {"kind": "product", "fork_name": None},
         )
         assert "LOCKED" in out["rendered"]
@@ -2335,7 +2335,7 @@ class TestChannelScopedStatus:
         """The honest half that remains: with the workflow unreadable, a
         running install cannot be seen, and the output must not imply it can."""
         out = self._run(
-            _args(directory=str(tmp_path), channel="#chan"),
+            _args(directory=str(tmp_path), project="#chan"),
             _behind_status(_BEHIND | {"live": False, "run_status": None}),
         )
         assert "database alone" in out["rendered"]
@@ -2353,14 +2353,14 @@ class TestChannelScopedStatus:
             head_version_id=None,
             head_semver=None,
         )
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"), first)
+        out = self._run(_args(directory=str(tmp_path), project="#chan"), first)
         assert out["data"]["install_state"] == "pending"
-        assert "No app bundle is bound" in out["rendered"]
+        assert "No app is bound" in out["rendered"]
         assert "INSTALLING" in out["rendered"]
 
     def test_an_unknown_state_still_renders(self, tmp_path):
         out = self._run(
-            _args(directory=str(tmp_path), channel="#chan"),
+            _args(directory=str(tmp_path), project="#chan"),
             _behind_status(_install(state="paused", error="held by an operator")),
         )
         assert "PAUSED" in out["rendered"] and "held by an operator" in out["rendered"]
@@ -2368,7 +2368,7 @@ class TestChannelScopedStatus:
 
     def test_it_reads_the_served_status_not_the_bound_tree(self, tmp_path):
         """The head and the install both come from the one status read; a
-        read of `ref=bound` could never see a channel behind its line."""
+        read of `ref=bound` could never see a project behind its line."""
         from popcorn_cli.commands import app as mod
 
         with (
@@ -2380,12 +2380,12 @@ class TestChannelScopedStatus:
             patch.object(operations, "get_channel_app_tree") as tree,
             _no_declared_schedules(),
         ):
-            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+            mod._app_status(_args(directory=str(tmp_path), project="#chan"))
         status.assert_called_once()
         tree.assert_not_called()
 
     def test_it_names_the_fork_line(self, tmp_path):
-        out = self._run(_args(directory=str(tmp_path), channel="#chan"))
+        out = self._run(_args(directory=str(tmp_path), project="#chan"))
         assert out["data"]["fork_name"] == "demo914"
         assert "line demo914" in out["rendered"]
 
@@ -2401,9 +2401,9 @@ class TestChannelScopedStatus:
             ),
             pytest.raises(PopcornError) as exc,
         ):
-            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+            mod._app_status(_args(directory=str(tmp_path), project="#chan"))
         assert exc.value.error_code == "not_found"
-        assert "does not run an app bundle" in str(exc.value)
+        assert "does not run an app" in str(exc.value)
 
     def test_other_errors_are_not_read_as_no_bundle(self, tmp_path):
         from popcorn_cli.commands import app as mod
@@ -2417,7 +2417,7 @@ class TestChannelScopedStatus:
             ),
             pytest.raises(APIError) as exc,
         ):
-            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
+            mod._app_status(_args(directory=str(tmp_path), project="#chan"))
         assert exc.value.status_code == 403
 
     def test_no_checkout_and_no_channel_points_at_the_flag(self, tmp_path):
@@ -2426,15 +2426,15 @@ class TestChannelScopedStatus:
         with pytest.raises(PopcornError) as exc:
             mod._app_status(_args(directory=str(tmp_path)))
         assert exc.value.error_code == "not_found"
-        # Not merely that the hint mentions `--channel` — the old one did too,
+        # Not merely that the hint mentions `--project` — the old one did too,
         # while pointing at `app checkout`. It has to offer the checkout-free
         # read, which is the thing that did not exist before.
         assert "without a checkout" in (exc.value.hint or "")
 
     def test_a_checkout_keeps_its_own_behaviour_when_channel_is_passed(self, tmp_path):
-        """MUST NOT CHANGE: inside a checkout `--channel` still names the
-        channel to compare the working copy against — the one case a v1
-        baseline (0.19.0, no channel recorded) depends on. This test passes
+        """MUST NOT CHANGE: inside a checkout `--project` still names the
+        project to compare the working copy against — the one case a v1
+        baseline (0.19.0, no project recorded) depends on. This test passes
         with the feature reverted, which is the point of it."""
         from popcorn_cli.commands import app as mod
 
@@ -2450,8 +2450,8 @@ class TestChannelScopedStatus:
             _serve(_files_response(base)),
             _no_declared_schedules(),
         ):
-            mod._app_status(_args(directory=str(tmp_path), channel="#chan"))
-        # The checkout view, not the channel view: it carries the working copy.
+            mod._app_status(_args(directory=str(tmp_path), project="#chan"))
+        # The checkout view, not the project view: it carries the working copy.
         assert "dirty" in captured["data"]
         assert "install_state" not in captured["data"]
 
@@ -2476,14 +2476,14 @@ def _failed_with(error: str, code: str | None, **over) -> dict:
 class TestInstallErrorCode:
     """`install.error_code` says what kind of failure `error` is.
 
-    Every code but `internal` keeps a message the channel's owner can act on,
+    Every code but `internal` keeps a message the project's owner can act on,
     so the code only rides next to it. `internal` replaces the message with a
     generic one, and that is the case the CLI has to explain.
     """
 
     def _channel(self, tmp_path, install: dict) -> dict:
         return TestChannelScopedStatus()._run(
-            _args(directory=str(tmp_path), channel="#chan"), _behind_status(install)
+            _args(directory=str(tmp_path), project="#chan"), _behind_status(install)
         )
 
     def _checkout(self, tmp_path, install: dict) -> dict:
@@ -2502,8 +2502,8 @@ class TestInstallErrorCode:
             ("invalid_manifest", "BundleManifestError: flows/tick.yaml: unknown key 'stpes'"),
             ("invalid_schedule", "ScheduledFlowValidationError: unknown schedule class 'hourly'"),
             ("bundle_rejected", "ValidationFailed: column 'sev' is not declared"),
-            ("app_mismatch", "ChannelAppMismatchError: the channel runs another app"),
-            ("fork_line_conflict", "ChannelForkRegressionError: the channel is on another line"),
+            ("app_mismatch", "ChannelAppMismatchError: the project runs another app"),
+            ("fork_line_conflict", "ChannelForkRegressionError: the project is on another line"),
             ("bundle_unavailable", "no published version of this app is available to install"),
         ],
     )
@@ -2522,13 +2522,13 @@ class TestInstallErrorCode:
         rendered = out["rendered"]
         assert f"  Error: {error}" in rendered
         assert "  Code:  internal" in rendered
-        assert "not in the bundle" in rendered and "no edit or publish fixes it" in rendered
+        assert "not in the app" in rendered and "no edit or publish fixes it" in rendered
         assert f"Its detail is on workflow {_WORKFLOW}." in rendered
         # The served hint says `app apply` retries, so the command is offered.
-        assert "popcorn app apply --channel '#chan'" in rendered
+        assert "popcorn app apply --project '#chan'" in rendered
 
     def test_an_internal_failure_offers_apply_only_when_the_hint_does(self, tmp_path):
-        """A product channel's served hint names no command; the internal
+        """A product project's served hint names no command; the internal
         explanation must not add one."""
         product_hint = (
             "auto-update retries on its next daily check; a failure in "
@@ -2540,7 +2540,7 @@ class TestInstallErrorCode:
             retry_hint=product_hint,
         )
         out = TestChannelScopedStatus()._run(
-            _args(directory=str(tmp_path), channel="#chan"),
+            _args(directory=str(tmp_path), project="#chan"),
             _behind_status(failed) | {"kind": "product", "fork_name": None},
         )
         assert "  Code:  internal" in out["rendered"]
@@ -2669,7 +2669,7 @@ class TestApplyReadsAsRecovery:
         from popcorn_cli.commands import app as mod
 
         rendered = "\n".join(mod._fork_lines({"status": "adopting", "app": "a", "semver": "1.0.0"}))
-        assert "popcorn app status --channel" in rendered
+        assert "popcorn app status --project" in rendered
         assert "popcorn app list" not in rendered
 
 
@@ -2710,7 +2710,7 @@ class TestScheduleDriftInStatus:
                 stack.enter_context(p)
             error = None
             try:
-                mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+                mod._app_status(_args(directory=str(Path("/nonexistent")), project="#chan"))
             except PopcornError as exc:
                 error = exc
         captured["error"] = error
@@ -2719,7 +2719,7 @@ class TestScheduleDriftInStatus:
     @staticmethod
     def _tick(**over):
         item = {
-            "schedule_id": "channel:c:flow:tick:tick",
+            "schedule_id": "project:c:flow:tick:tick",
             "slug": "tick",
             "cron_expr": None,
             "interval_seconds": 900,
@@ -2797,14 +2797,14 @@ class TestScheduleDriftInStatus:
             ),
             patch.object(operations, "get_scalar", return_value={"scalar": {"value": "prod"}}),
         ):
-            mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+            mod._app_status(_args(directory=str(Path("/nonexistent")), project="#chan"))
         assert seen["path"] == "manifest.yaml"
 
     def test_a_server_without_intended_cadence_is_reported_not_raised(self):
         """An older API omits `intended`, and nothing here can compute it.
 
         Classifying anyway would read the absent intent as a disagreeing one
-        and cry drift at a healthy channel; failing the command would take
+        and cry drift at a healthy project; failing the command would take
         down its version report. Neither — say the check was not made.
         """
         tick = self._tick()
@@ -2845,7 +2845,7 @@ class TestScheduleDriftInStatus:
                 side_effect=APIError("temporal_unavailable", status_code=503),
             ),
         ):
-            mod._app_status(_args(directory=str(Path("/nonexistent")), channel="#chan"))
+            mod._app_status(_args(directory=str(Path("/nonexistent")), project="#chan"))
         assert captured["data"]["schedule_drift"] is None
         assert "not checked" in captured["rendered"]
         assert captured["data"]["schedule_drift_error"]
