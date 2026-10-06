@@ -200,6 +200,14 @@ def test_the_agent_rules():
     assert flow_rules.AGENT_SCHEMA_SUFFIX == ".json"
 
 
+def test_the_view_rules():
+    """The fifth classification. A view shares the flow extensions, so a reader
+    that does not know `ui/` either takes `ui/<view>.yaml` for a flow or drops
+    it as an unknown path."""
+    assert flow_rules.UI_SUBDIR == "ui"
+    assert flow_rules.UI_SUFFIXES == (".yaml", ".yml")
+
+
 # ── the generator ─────────────────────────────────────────────────────
 
 

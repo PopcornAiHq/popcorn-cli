@@ -264,6 +264,19 @@ _FIELDS: tuple[_Field, ...] = (
         "The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.",
     ),
     _Field(
+        "UI_SUBDIR",
+        ("bundle", "ui_subdir"),
+        "Directory holding the app's views, one file per view. A FIFTH classification:\n"
+        "a view is compiled at install, never seeded as a channel parameter and never\n"
+        "read as a flow, though it shares the `.yaml` extension.",
+    ),
+    _Field(
+        "UI_SUFFIXES",
+        ("bundle", "ui_suffixes"),
+        "The extensions that make `ui/<view_id><suffix>` a view. Exact depth: a view file\n"
+        "sits directly under UI_SUBDIR, and anything deeper is not one.",
+    ),
+    _Field(
         "MAX_ENTRY_BYTES",
         ("bundle", "max_entry_bytes"),
         "The zip reader's per-entry cap. The one value here that is not about\n"
