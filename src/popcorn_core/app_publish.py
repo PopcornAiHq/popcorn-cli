@@ -52,6 +52,8 @@ AGENT_LAYOUT = (
     + ", ".join(flow_rules.AGENT_FILENAMES)
     + f" and {flow_rules.AGENT_SCHEMAS_SUBDIR}/<file>{flow_rules.AGENT_SCHEMA_SUFFIX}"
 )
+# Where a view goes, for the same messages.
+VIEW_LAYOUT = f"{flow_rules.UI_SUBDIR}/<view>{flow_rules.UI_SUFFIXES[0]}"
 # Byproducts, never authored content — the only paths skipped without comment.
 _SILENT_SKIPS = ("__pycache__",)
 
@@ -164,6 +166,20 @@ def is_agent_path(parts: Sequence[str]) -> bool:
     )
 
 
+def is_view_path(parts: Sequence[str]) -> bool:
+    """A view file as the server reads it: `ui/<view_id><one of UI_SUFFIXES>`.
+
+    Exact depth, like the agent layout: the server reads nothing deeper under
+    `ui/`, so a nested path is reported as ignored rather than sent.
+    """
+    return (
+        len(parts) == 2
+        and parts[0] == flow_rules.UI_SUBDIR
+        and not parts[1].startswith(".")
+        and parts[1].endswith(flow_rules.UI_SUFFIXES)
+    )
+
+
 def recognized(path: str) -> bool:
     """Whether this CLI understands `path` as installable bundle content.
 
@@ -187,6 +203,8 @@ def recognized(path: str) -> bool:
         return _is_code_block_path(parts)
     if parts[0] == flow_rules.AGENTS_SUBDIR:
         return is_agent_path(parts)
+    if parts[0] == flow_rules.UI_SUBDIR:
+        return is_view_path(parts)
     return (
         len(parts) == flow_rules.SUBDIR_PATH_DEPTH
         and parts[0] in FILES_SUBDIRS
@@ -267,6 +285,9 @@ def classify_tree(directory: Path) -> tuple[list[tuple[str, Path]], list[str]]:
             if entry.name == flow_rules.AGENTS_SUBDIR:
                 _classify_agents_dir(entry, directory, published, ignored)
                 continue
+            if entry.name == flow_rules.UI_SUBDIR:
+                _classify_ui_dir(entry, published, ignored)
+                continue
             if entry.name not in FILES_SUBDIRS:
                 ignored.append(f"{entry.name}/")
                 continue
@@ -318,6 +339,27 @@ def _classify_agents_dir(
                 published.append((rel, path))
             else:
                 ignored.append(rel)
+
+
+def _classify_ui_dir(
+    root: Path,
+    published: list[tuple[str, Path]],
+    ignored: list[str],
+) -> None:
+    """Sort `ui/` into the view files the server reads and the rest.
+
+    A nested directory is reported once, since nothing in it is read.
+    """
+    for child in sorted(root.iterdir(), key=lambda p: p.name):
+        if child.name.startswith(".") or child.name in _SILENT_SKIPS:
+            continue
+        rel = f"{root.name}/{child.name}"
+        if child.is_dir():
+            ignored.append(f"{rel}/")
+        elif is_view_path(rel.split("/")):
+            published.append((rel, child))
+        else:
+            ignored.append(rel)
 
 
 def _walk_code_dir(root: Path) -> list[Path]:
