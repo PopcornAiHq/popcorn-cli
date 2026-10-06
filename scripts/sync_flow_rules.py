@@ -174,11 +174,25 @@ _FIELDS: tuple[_Field, ...] = (
         "The app's user-facing UI copy, locale-sectioned. Reserved.",
     ),
     _Field(
+        "RECIPE_FILENAME",
+        ("bundle", "recipe_filename"),
+        "The recipe tier's state-graph document, read from the bundle root, under its\n"
+        "current name. Publish requires a recipe document when the manifest declares\n"
+        "`recipe:` (or the legacy `process:`) and refuses one when it declares neither.",
+    ),
+    _Field(
+        "RECIPE_FILENAMES",
+        ("bundle", "recipe_filenames"),
+        "Every name a bundle may ship its recipe under, the current one first; a version\n"
+        "published before the rename ships `process.yaml` and stays readable. Each is\n"
+        "reserved: never installed as a flow, though it carries a flow suffix. A bundle\n"
+        "shipping more than one is refused at publish.",
+    ),
+    _Field(
         "PROCESS_FILENAME",
         ("bundle", "process_filename"),
-        "The process: tier's state-graph document, read from the bundle root. Reserved:\n"
-        "never installed as a flow, though it carries a flow suffix. Publish requires it\n"
-        "when the manifest declares `process:` and refuses it when the manifest doesn't.",
+        "DEPRECATED: the recipe document's name before the rename, still served for\n"
+        "older clients. Read RECIPE_FILENAMES, which includes it.",
     ),
     _Field(
         "FLOW_SUFFIXES",

@@ -78,16 +78,16 @@ WARNING = "warning"
 
 # Filenames no reader ever installs as a flow: the manifest and its legacy
 # alias, plus the reserved documents (agent doc, README, UI strings, and the
-# process: tier's state graph). One set rather than the importer's two, because
-# every use site here asks the same question — is this `.yaml` a flow candidate
-# at all.
+# recipe's state graph under its current or pre-rename name). One set rather
+# than the importer's two, because every use site here asks the same question
+# — is this `.yaml` a flow candidate at all.
 RESERVED_FILENAMES = frozenset(
     {
         *flow_rules.MANIFEST_FILENAMES,
         flow_rules.AGENT_DOC_FILENAME,
         flow_rules.README_FILENAME,
         flow_rules.STRINGS_FILENAME,
-        flow_rules.PROCESS_FILENAME,
+        *flow_rules.RECIPE_FILENAMES,
     }
 )
 
@@ -818,7 +818,7 @@ class _Checker:
                 self.err(
                     "fixture-installed-as-flow" if in_fixtures else "yaml-is-not-a-flow",
                     str(rel),
-                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/process is "
+                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/recipe is "
                     "installed as a flow, and this file has no `name:`/`steps:`. "
                     + (
                         "Move it outside the bundle directory — a fixtures/ "
