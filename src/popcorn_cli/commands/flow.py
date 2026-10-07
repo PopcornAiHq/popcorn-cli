@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,45 @@ _OUTCOME_STILL_RUNNING = "still_running"
 _OUTCOMES = frozenset({_OUTCOME_SUCCEEDED, _OUTCOME_FAILED, _OUTCOME_STILL_RUNNING})
 _POLL_SECONDS = 3
 _DEFAULT_WAIT_SECONDS = 300
+# A cause is one line of an error envelope, not a traceback: a validation
+# message that lists every offending column can run to kilobytes.
+_CAUSE_MAX_CHARS = 300
+
+
+def _failure_cause(run: dict[str, Any]) -> str | None:
+    """`<type>: <message>` of what failed a run, or None when it says nothing.
+
+    The innermost link of the run's `failure` chain is the one that explains
+    it — the outer links are Temporal's wrappers ("Workflow execution failed",
+    "Activity task failed"). A run that closed without a `failure` (timed out,
+    terminated) falls back to its latest activity failure from
+    `error_history`. Whitespace is collapsed so a multi-line message stays one
+    line, and the result is capped at `_CAUSE_MAX_CHARS`.
+    """
+    innermost: dict[str, Any] | None = None
+    node = run.get("failure")
+    while isinstance(node, dict):
+        if node.get("message") or node.get("type"):
+            innermost = node
+        node = node.get("cause")
+    if innermost is None:
+        # `>=` so that, with no times to compare, the last entry wins.
+        for entry in run.get("error_history") or []:
+            if not isinstance(entry, dict) or not entry.get("message"):
+                continue
+            if innermost is None or str(entry.get("time") or "") >= str(
+                innermost.get("time") or ""
+            ):
+                innermost = entry
+    if innermost is None:
+        return None
+
+    kind = str(innermost.get("type") or "").strip()
+    message = " ".join(str(innermost.get("message") or "").split())
+    cause = f"{kind}: {message}" if kind and message else kind or message
+    if len(cause) > _CAUSE_MAX_CHARS:
+        cause = cause[: _CAUSE_MAX_CHARS - 1].rstrip() + "…"
+    return cause
 
 
 def _run_outcome(run: dict[str, Any], workflow_id: str) -> str:
@@ -79,9 +119,10 @@ def _poll_until_closed(
     """Poll a flow run until the server says it has finished.
 
     Returns the run when its `outcome` is `succeeded`. Raises PopcornError when
-    it is `failed` (so the shell sees a non-zero exit), when `timeout` seconds
-    elapse while it is `still_running`, or when the response carries no usable
-    `outcome` at all.
+    it is `failed` (so the shell sees a non-zero exit, and the message carries
+    the cause from `_failure_cause`), when `timeout` seconds elapse while it
+    is `still_running`, or when the response carries no usable `outcome` at
+    all.
     """
     from popcorn_core.errors import EXIT_TIMEOUT, PopcornError
 
@@ -97,8 +138,22 @@ def _poll_until_closed(
         if outcome == _OUTCOME_SUCCEEDED:
             return dict(run)
         if outcome == _OUTCOME_FAILED:
+            # The poll asks for error details, so the cause is already here;
+            # putting it in the message saves the caller a `runs get` round
+            # trip to learn why. The status rides along unless it is the
+            # plain `Failed` the word "failed" already says, so a timeout
+            # still reads apart from a cancel.
+            cause = _failure_cause(run)
+            if cause is None:
+                raise PopcornError(
+                    f"Flow run {workflow_id} ended {status or 'unsuccessfully'}",
+                    error_code="validation",
+                    hint=f"popcorn flow runs get --channel {shlex.quote(channel)} "
+                    f"{workflow_id} --include-errors",
+                )
+            ended = "failed" if status in ("", "Failed") else f"failed ({status})"
             raise PopcornError(
-                f"Flow run {workflow_id} ended {status or 'unsuccessfully'}",
+                f"Flow run {workflow_id} {ended}: {cause}",
                 error_code="validation",
             )
         if time.monotonic() - started > timeout:
