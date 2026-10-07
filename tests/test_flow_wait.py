@@ -154,7 +154,7 @@ def test_failed_run_keeps_a_status_other_than_failed(monkeypatch):
     )
 
 
-def test_failed_run_without_a_failure_falls_back_to_the_latest_activity_error(monkeypatch):
+def test_failed_run_without_a_failure_labels_the_latest_activity_error(monkeypatch):
     history = [
         {
             "activity_type": "a.one",
@@ -183,8 +183,37 @@ def test_failed_run_without_a_failure_falls_back_to_the_latest_activity_error(mo
     with pytest.raises(PopcornError) as exc:
         _poll_until_closed(None, "#ops", "wid-1", timeout=30)
     assert str(exc.value) == (
-        "Flow run wid-1 failed (Terminated): ApplicationError: row already exists"
+        "Flow run wid-1 ended Terminated "
+        "(last activity error: ApplicationError: row already exists)"
     )
+    # Not a cause, so `runs get` is still where the answer is.
+    assert exc.value.hint == "popcorn flow runs get --channel '#ops' wid-1 --include-errors"
+    assert exc.value.exit_code == EXIT_VALIDATION
+
+
+@pytest.mark.parametrize("status", ["TimedOut", "Terminated"])
+def test_a_retried_activity_error_is_not_reported_as_the_cause(monkeypatch, status):
+    """`error_history` keeps every failed attempt, including one a retry got
+    past. A run that then timed out or was terminated did not fail *because*
+    of it, so the message must not say it did."""
+    history = [
+        {
+            "activity_type": "a.fetch",
+            "attempt": 1,
+            "type": "ConnectionError",
+            "message": "connection reset",
+            "time": "2026-08-09T10:00:01Z",
+        },
+    ]
+    _script(monkeypatch, [(status, "failed", {"error_history": history})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    message = str(exc.value)
+    assert message == (
+        f"Flow run wid-1 ended {status} (last activity error: ConnectionError: connection reset)"
+    )
+    assert "failed" not in message
 
 
 @pytest.mark.parametrize(
