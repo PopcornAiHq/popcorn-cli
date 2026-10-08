@@ -253,6 +253,19 @@ The two spellings behave identically, and passing both is a usage error. Whether
 
 On `app checkout` the flag also removes a real ambiguity. Its `--fork` takes an optional line name, which argparse cannot tell apart from the directory positional, so `app checkout --fork mydir` names the *line* `mydir`. Spelling the directory `--dir <path>` leaves `--fork` unambiguous.
 
+`app checkout` is the exception to "the directory is the first positional": without `--channel` it takes the app to check out first (`app checkout <app>[@<semver>] [dir]`), and the directory second. With `--channel` the first positional is still the directory, as it always was.
+
+### `app checkout` without a channel
+
+`app checkout <app>[@<semver>]` reads one of the workspace's lines by name, with no channel. The server allows it for **workspace admins only**; anyone else gets `error_code: forbidden` (exit `3`) and checks out through a channel that runs the app.
+
+- No `--line`: the product line, which serves only its head — the version the workspace's release track offers.
+- `--line <name>`: one of the workspace's fork lines (`app lines`), which serves its head, or any version on it with `--version <id>`.
+- The server addresses versions by id only. `@<semver>` is compared with the version served and, when it differs, refused before anything is written (`error_code: not_found`, exit `1`). In practice it names the head; an older semver is reachable through a channel that runs it, or on a fork line by id.
+- A line or version the workspace cannot read is `error_code: not_found` (exit `3`), with a hint naming where readable ones are listed.
+
+`data` carries `directory`, `app`, `kind`, `fork_name`, `semver`, `base_version_id`, `tree_digest`, `files`, `guide` and `stale_files`, plus `historical`, `head_version_id` and `head_semver` for a fork-line checkout by `--version`. There are no `channel_*` fields, and the baseline records no channel, so `app publish`, `app status` and `app apply` in that directory need `--channel`.
+
 ---
 
 ## Authentication

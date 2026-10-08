@@ -116,6 +116,8 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn schedule get <schedule> --channel <conv>` | One schedule's cadence, overlap policy, inputs and run counters (`<schedule>` is a slug, flow id or full schedule_id) |
 | `popcorn schedule trigger <schedule> --channel <conv> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
 | **App bundles** | |
+| `popcorn app checkout --channel <conv> [dir] [--fork [LINE] \| --version ID] [--force]` | Write the app a channel runs to disk — its line's head, or with `--version` one version by id — with a baseline for `app validate`/`app publish` |
+| `popcorn app checkout <app>[@<semver>] [dir] [--line LINE] [--version ID] [--force]` | The same without a channel, naming the app as `app list` does (workspace admins only). The product line serves only its head, the version the workspace's release track offers; `--line` names one of the workspace's fork lines, which also serves any version by id. `@<semver>` is checked against what was served and refused, with nothing written, unless it is that version. The baseline records no channel, so `app publish`/`status`/`apply` there need `--channel` |
 | `popcorn app validate <dir> [--strict]` | Check a bundle before publishing: its structure offline, and, in a fork checkout while logged in, the server's publish checks — the manifest's tables among them — without publishing. Says when the server checks were skipped and why (exit 1 on errors; `--strict` also on warnings). `popcorn template check` is the old name and still works |
 | **Tables** (channel agent store) | |
 | `popcorn table list --channel <conv>` | List tables in a channel |
