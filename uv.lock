@@ -637,7 +637,7 @@ wheels = [
 
 [[package]]
 name = "popcorn-cli"
-version = "0.61.6"
+version = "0.63.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

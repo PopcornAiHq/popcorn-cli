@@ -185,13 +185,12 @@ class Baseline:
     base_version_id: int
     tree_digest: str
     kind: str = "product"
-    # The line name is only ever displayed, and /apps/files does not carry it
-    # (AppFilesResponse is app/kind/version_id/semver/files), so a checkout
-    # leaves this None. `app list` is where the real value lives.
+    # The line name, from the files read where the server sends it. A
+    # checkout taken without a channel needs it to name its line again.
     fork_name: str | None = None
     # Resolved UUID, not the "#name" that was typed: resolve_conversation
     # accepts either and a UUID survives a channel rename. None in a v1
-    # baseline.
+    # baseline, and in a checkout taken without a channel.
     conversation_id: str | None = None
     # The checked-out manifest's `changelog:`, so `app validate` can tell a
     # note rewritten for this version from the previous version's left in
@@ -317,6 +316,19 @@ def write_baseline(directory: Path, baseline: Baseline) -> Path:
     return target
 
 
+def head_checkout_command(baseline: Baseline) -> str:
+    """The command that checks out the head of this baseline's line.
+
+    Through the channel it was checked out from when it records one;
+    otherwise by naming the line, as the checkout itself did.
+    """
+    if baseline.conversation_id:
+        return f"popcorn app checkout --channel {baseline.conversation_id}"
+    if baseline.kind == "fork" and baseline.fork_name and baseline.app:
+        return f"popcorn app checkout {baseline.app} --line {baseline.fork_name}"
+    return "popcorn app checkout --channel <channel>"
+
+
 def historical_guide_text(baseline: Baseline) -> str:
     """The guide for a checkout of a past version, which does not publish.
 
@@ -327,7 +339,6 @@ def historical_guide_text(baseline: Baseline) -> str:
     into the refusal. The republish recipe matches that refusal's hint.
     """
     app = baseline.app or "this app"
-    channel = baseline.conversation_id or "<channel>"
     return f"""# Popcorn app bundle — read-only snapshot of a past version
 
 This directory is **{app} {baseline.semver} (version {baseline.base_version_id})**,
@@ -351,7 +362,7 @@ it `historical`.
 To make this version's content current again, publish it on top of the head:
 
 ```
-popcorn app checkout --channel {channel} --dir <new-dir>
+{head_checkout_command(baseline)} --dir <new-dir>
 # copy this directory's bundle files over <new-dir>, keeping <new-dir>'s own
 # {BASELINE_FILE}, and delete any file there that this version does not have
 popcorn app publish <new-dir> --bump patch -m "<why this content is back>"
@@ -449,6 +460,7 @@ def baseline_from_response(
     return Baseline(
         app=resp.get("app", ""),
         kind=resp.get("kind", "product"),
+        fork_name=resp.get("fork_name") or None,
         semver=resp.get("semver", ""),
         base_version_id=resp.get("version_id", 0),
         conversation_id=conversation_id,

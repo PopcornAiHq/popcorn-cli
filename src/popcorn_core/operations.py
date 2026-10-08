@@ -1471,6 +1471,53 @@ def get_channel_app_files(
     return resp
 
 
+def _line_params(app: str, fork_name: str | None, version_id: int | None) -> dict[str, Any]:
+    params: dict[str, Any] = {"app": app}
+    if fork_name is not None:
+        params["fork_name"] = fork_name
+    if version_id is not None:
+        params["version_id"] = version_id
+    return params
+
+
+def get_app_line_files(
+    client: APIClient,
+    app: str,
+    fork_name: str | None = None,
+    version_id: int | None = None,
+) -> dict[str, Any]:
+    """One version of one of the workspace's lines, named without a channel.
+
+    `fork_name` names one of THIS workspace's fork lines; None names the
+    product line, whose head is the version the workspace's release track
+    offers. `version_id` reads that version of the line instead of its head:
+    any version of a fork line, but on the product line only the track's
+    head — the server addresses versions by id alone, never by semver.
+
+    Workspace-admin only. A member reads a line through a channel that runs
+    it (`get_channel_app_files`). The response is the channel read's without
+    `ref` or the `bound_*` pair: no channel, so nothing is bound.
+    """
+    resp = client.get("/api/apps/line/files", _line_params(app, fork_name, version_id))
+    if version_id is not None and resp.get("version_id") != version_id:
+        raise PopcornError(
+            f"asked for version {version_id} of {app}, the server answered with "
+            f"version {resp.get('version_id')} — nothing was written",
+            error_code="validation",
+        )
+    return resp
+
+
+def get_app_line_tree(client: APIClient, app: str, fork_name: str | None = None) -> dict[str, Any]:
+    """The head of one of the workspace's lines, as paths and hashes.
+
+    The cheap read of "which version is this line's head", for telling a
+    checkout by id apart from a checkout of the head. Admin-only, as
+    `get_app_line_files` is.
+    """
+    return client.get("/api/apps/line/tree", _line_params(app, fork_name, None))
+
+
 def require_version_served(resp: dict[str, Any], version_id: int) -> None:
     """Refuse a response that is not the version that was asked for.
 
