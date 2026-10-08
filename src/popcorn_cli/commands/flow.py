@@ -233,7 +233,7 @@ def _validate_channel(args: argparse.Namespace, target: Path) -> str:
 def _flow_validate(args: argparse.Namespace) -> None:
     from pathlib import Path
 
-    from popcorn_core.errors import PopcornError
+    from popcorn_core.errors import PopcornError, ReportedError
 
     from ..cli import _get_client, _output
 
@@ -272,7 +272,8 @@ def _flow_validate(args: argparse.Namespace) -> None:
     header = f"Validated {len(files)} flow(s), {bad} invalid:"
     _output(args, {"results": results, "invalid": bad}, "\n".join([header, *lines]))
     if bad:
-        raise PopcornError(f"{bad} flow(s) failed validation", error_code="validation")
+        # The report above is the answer; this only sets the exit code.
+        raise ReportedError(f"{bad} flow(s) failed validation", error_code="validation")
 
 
 def _schema_type(spec: dict[str, Any]) -> str:

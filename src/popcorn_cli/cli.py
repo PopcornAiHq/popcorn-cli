@@ -133,6 +133,7 @@ from popcorn_core.errors import (
     APIError,
     AuthError,
     PopcornError,
+    ReportedError,
 )
 from popcorn_core.validation import extract
 
@@ -1301,6 +1302,15 @@ def _existing_channel_notes(conv: dict[str, Any], args: argparse.Namespace) -> l
 
 
 def cmd_create_channel(args: argparse.Namespace) -> None:
+    from .commands.app import install_wait_timeout, wait_for_install
+
+    waiting = bool(getattr(args, "wait", False))
+    if waiting and not getattr(args, "template", None):
+        raise PopcornError(
+            "--wait waits for a template's install; pass --template",
+            error_code="validation",
+        )
+    wait_timeout = install_wait_timeout(args, waiting, "--wait")
     client = _get_client(args)
     if_not_exists = bool(getattr(args, "if_not_exists", False))
     conv_type = getattr(args, "type", None) or operations.DEFAULT_CHANNEL_TYPE
@@ -1336,12 +1346,31 @@ def cmd_create_channel(args: argparse.Namespace) -> None:
         raise
     conv = resp.get("conversation", resp)
     label = f"{conv.get('name', '')} (id: {conv.get('id', '?')})"
-    if resp.get("already_existed"):
+    existed = bool(resp.get("already_existed"))
+    if existed:
         for note in _existing_channel_notes(conv, args):
             print(f"Note: {note}", file=sys.stderr)
-        _output(args, resp, f"Already exists: {label}")
+    lines = [f"Already exists: {label}" if existed else f"Created: {label}"]
+    if wait_timeout is None:
+        _output(args, resp, lines[0])
         return
-    _output(args, resp, f"Created: {label}")
+    # The install runs on the server after the create returns. An existing
+    # channel had nothing installed by this call, so a channel bound to
+    # nothing there is the answer rather than an install yet to start.
+    name = conv.get("name") or args.name
+    wait = wait_for_install(
+        client,
+        str(conv.get("id") or name),
+        wait_timeout,
+        unbound_is_pending=not existed,
+        label=f"#{name}",
+    )
+    resp = {**resp, "install": wait.install, "install_wait": wait.to_dict()}
+    lines.append(wait.line())
+    _output(args, resp, "\n".join(lines))
+    failure = wait.error(reported=True)
+    if failure is not None:
+        raise failure
 
 
 def cmd_join_channel(args: argparse.Namespace) -> None:
@@ -2205,9 +2234,14 @@ def cmd_commands(args: argparse.Namespace) -> None:
                 "retryable": "<bool — true for 5xx and 429>",
             },
             "notes": [
-                "Every command with --json emits this envelope.",
+                "Every command with --json emits exactly one envelope: success "
+                "on stdout, error on stderr. Progress lines go to stderr.",
                 "Success payloads never contain a top-level `ok` key.",
                 "On failure, exit code is non-zero; see exit_codes.",
+                "Report commands (app status, app validate, flow validate, "
+                "channel-config show --strict, channel create --wait) put "
+                "their findings in the success envelope and still exit "
+                "non-zero over them; no error envelope follows.",
             ],
             "streaming": {
                 "format": "ndjson",
@@ -2670,7 +2704,11 @@ def main() -> None:
             parser.print_help()
     except PopcornError as e:
         if getattr(args, "json", False):
-            print(_json_err(e.to_dict()), file=sys.stderr)
+            # The report already went to stdout as this invocation's one
+            # envelope; a second, contradicting it, would leave a consumer
+            # reading both streams to pick which to believe.
+            if not isinstance(e, ReportedError):
+                print(_json_err(e.to_dict()), file=sys.stderr)
         else:
             msg = f"Error: {e}"
             if e.hint:

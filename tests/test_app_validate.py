@@ -142,6 +142,23 @@ def test_server_findings_are_rendered_and_fail_the_check(tmp_path, monkeypatch, 
     assert payload["deletes"] == []
 
 
+def test_findings_under_json_are_one_envelope(tmp_path, monkeypatch, capsys):
+    """The report on stdout is the whole answer: no error envelope after it."""
+    directory = _checkout(tmp_path)
+    out = _run(
+        monkeypatch,
+        capsys,
+        ["--json", "app", "validate", str(directory)],
+        findings=[_TABLE_FINDING],
+        base=_base_hashes(directory),
+    )
+    assert out["code"] == 1
+    envelope = json.loads(out["out"])
+    assert envelope["ok"] is True
+    assert envelope["data"]["findings"]
+    assert out["err"] == ""
+
+
 def test_a_clean_server_answer_passes(tmp_path, monkeypatch, capsys):
     root = _checkout(tmp_path)
     result = _run(
