@@ -383,6 +383,51 @@ def _read_json_object(raw: str, flag: str) -> dict[str, Any]:
     return parsed
 
 
+def _read_input_pairs(pairs: list[str], flag: str, *, stdin_taken: bool) -> dict[str, str]:
+    """Parse repeated ``key=value`` flags into one object of strings.
+
+    The value takes the same ``@`` sources as ``_resolve_data_arg``: ``@path``
+    is the file's text, ``@-`` is stdin, and ``\\@`` keeps a literal leading
+    ``@``. Values are never parsed as JSON — ``n=3`` is the string ``"3"`` —
+    so a value means the same thing whatever it happens to look like; a typed
+    value goes in ``--inputs``. Stdin can be read once per invocation, so a
+    second ``@-`` (here, or as ``stdin_taken`` by another flag) is refused
+    rather than read as empty.
+    """
+    out: dict[str, str] = {}
+    for pair in pairs:
+        key, sep, raw = pair.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise PopcornError(
+                f"{flag} {pair!r} is not key=value",
+                error_code="validation",
+                hint=f"{flag} name=value, {flag} name=@file.txt, or {flag} name=@- for stdin",
+            )
+        if key in out:
+            raise PopcornError(f"{flag} sets {key!r} twice", error_code="validation")
+        if raw == "@-":
+            if stdin_taken:
+                raise PopcornError(
+                    f"{flag} {key}=@-: stdin is already read by another flag",
+                    error_code="validation",
+                )
+            stdin_taken = True
+        elif raw.startswith("@"):
+            path = Path(raw[1:])
+            try:
+                out[key] = path.read_text()
+            except OSError as e:
+                raise PopcornError(
+                    f"Cannot read {flag} {key} file {path}: {e}",
+                    error_code="validation",
+                    hint=f"to pass a value starting with '@', write {flag} {key}=\\{raw}",
+                ) from e
+            continue
+        out[key] = _resolve_data_arg(raw)
+    return out
+
+
 def _format_payload_preview(payload: Any, max_len: int = 200) -> str:
     """Render a webhook payload_raw value compactly for human-readable output.
 
