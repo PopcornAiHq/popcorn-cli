@@ -153,7 +153,14 @@ def test_the_reserved_filenames_are_the_manifest_its_alias_and_four_docs():
     assert flow_rules.AGENT_DOC_FILENAME == "AGENT.md"
     assert flow_rules.README_FILENAME == "README.md"
     assert flow_rules.STRINGS_FILENAME == "strings.yaml"
+    assert flow_rules.RECIPE_FILENAME == "recipe.yaml"
     assert flow_rules.PROCESS_FILENAME == "process.yaml"
+
+
+def test_the_recipe_keeps_its_pre_rename_name():
+    """A version published before the rename ships `process.yaml` and is re-read
+    on every install, so both names stay reserved — the current one first."""
+    assert flow_rules.RECIPE_FILENAMES == ("recipe.yaml", "process.yaml")
 
 
 def test_the_bundle_layout_rules():
@@ -198,6 +205,14 @@ def test_the_agent_rules():
     assert flow_rules.AGENT_FILENAMES == ("agent.yaml", "prompt.md")
     assert flow_rules.AGENT_SCHEMAS_SUBDIR == "schemas"
     assert flow_rules.AGENT_SCHEMA_SUFFIX == ".json"
+
+
+def test_the_view_rules():
+    """The fifth classification. A view shares the flow extensions, so a reader
+    that does not know `ui/` either takes `ui/<view>.yaml` for a flow or drops
+    it as an unknown path."""
+    assert flow_rules.UI_SUBDIR == "ui"
+    assert flow_rules.UI_SUFFIXES == (".yaml", ".yml")
 
 
 # ── the generator ─────────────────────────────────────────────────────

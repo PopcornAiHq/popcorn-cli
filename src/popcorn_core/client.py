@@ -283,7 +283,7 @@ class APIClient:
             raise err
 
         # 204 No Content (and any empty 2xx body) is a success, not malformed
-        # JSON — the data-store DELETE endpoints answer this way.
+        # JSON — the agent-store DELETE endpoints answer this way.
         if resp.status_code == 204 or not resp.content:
             return {}
 

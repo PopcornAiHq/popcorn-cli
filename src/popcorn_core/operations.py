@@ -330,10 +330,16 @@ def get_conversation_info(client: APIClient, conversation: str) -> dict[str, Any
     }
 
 
+# What `channel create` makes when no type is named, matching the web client:
+# every workspace member, including anyone who joins later. The server fills
+# the membership itself and ignores `member_ids` for this type.
+DEFAULT_CHANNEL_TYPE = "workspace_channel"
+
+
 def create_conversation(
     client: APIClient,
     name: str,
-    conv_type: str = "public_channel",
+    conv_type: str = DEFAULT_CHANNEL_TYPE,
     member_ids: list[str] | None = None,
     template: str | None = None,
     if_not_exists: bool = False,
@@ -391,7 +397,6 @@ def update_conversation(
     name: str = "",
     description: str = "",
     conv_type: str = "",
-    site_name: str = "",
 ) -> dict[str, Any]:
     """Update conversation details."""
     conv_id = resolve_conversation(client, conversation)
@@ -402,8 +407,6 @@ def update_conversation(
         body["description"] = description
     if conv_type:
         body["conversation_type"] = conv_type
-    if site_name:
-        body["site_name"] = site_name
     return client.post("/api/conversations/update", data=body)
 
 
@@ -1310,16 +1313,6 @@ def check_access(client: APIClient, repo: str) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Deploy
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# Site status
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
 # Raw API access
 # ---------------------------------------------------------------------------
 
@@ -1342,7 +1335,7 @@ def raw_api_call(
 
 
 # ---------------------------------------------------------------------------
-# Agent-store data-store (tables, records, scalars, audit)
+# Agent store (tables, records, scalars, audit)
 #
 # The user-JWT surface at /api/v1/conversations/{conversation_id}/data-store/…
 # The conversation is a *path* segment here, not a query param, so every
@@ -1356,7 +1349,7 @@ def _store_base(client: APIClient, conversation: str) -> str:
 
 
 def list_tables(client: APIClient, conversation: str) -> dict[str, Any]:
-    """List the data-store tables in a channel (`tables`: name, record_count)."""
+    """List the agent-store tables in a channel (`tables`: name, record_count)."""
     return client.get(f"{_store_base(client, conversation)}/tables")
 
 
@@ -1413,7 +1406,7 @@ def delete_record(
 def list_scalars(
     client: APIClient, conversation: str, limit: int = 50, cursor: str | None = None
 ) -> dict[str, Any]:
-    """List the channel's data-store scalars (`scalars`: key, value, timestamps)."""
+    """List the channel's agent-store scalars (`scalars`: key, value, timestamps)."""
     params: dict[str, Any] = {"limit": limit}
     if cursor:
         params["cursor"] = cursor
@@ -1443,7 +1436,7 @@ def list_store_audit(
     entity_id: str | None = None,
     since: str | None = None,
 ) -> dict[str, Any]:
-    """Recent data-store audit entries (`events`: operation, entity, changed_at).
+    """Recent agent-store audit entries (`events`: operation, entity, changed_at).
 
     The two questions an audit trail is opened for — what happened to this row,
     and what changed since some moment — are both server-side filters, so they

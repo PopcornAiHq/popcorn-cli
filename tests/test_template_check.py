@@ -1369,12 +1369,14 @@ def test_a_yaml_under_a_block_is_not_a_flow(tmp_path):
     assert check_bundle(root).findings == []
 
 
-def test_a_root_process_document_is_not_a_flow(tmp_path):
-    """The process: tier keeps its state graph in a root `process.yaml`.
-    Read as a flow it drew `yaml-is-not-a-flow` on a bundle publish accepts.
-    Whether the document fits the manifest is publish's check, not this one."""
+@pytest.mark.parametrize("filename", ["recipe.yaml", "process.yaml"])
+def test_a_root_recipe_document_is_not_a_flow(tmp_path, filename):
+    """The recipe tier keeps its state graph in a root `recipe.yaml`, or
+    `process.yaml` from before the rename. Read as a flow it drew
+    `yaml-is-not-a-flow` on a bundle publish accepts. Whether the document fits
+    the manifest is publish's check, not this one."""
     root = write_bundle(tmp_path / "b", manifest=bare_manifest(), flows={"intake": CLEAN_INTAKE})
-    (root / "process.yaml").write_text(yaml.safe_dump({"table": "tracker", "machines": {}}))
+    (root / filename).write_text(yaml.safe_dump({"table": "tracker", "machines": {}}))
     assert check_bundle(root).findings == []
 
 
@@ -1452,6 +1454,34 @@ def test_a_yaml_outside_the_agent_layout_is_still_checked(tmp_path):
     (root / "agents" / "reader").mkdir(parents=True)
     (root / "agents" / "reader" / "notes.yaml").write_text(yaml.safe_dump({"a": 1}))
     assert "yaml-is-not-a-flow" in codes(root)
+
+
+# ── views ─────────────────────────────────────────────────────────────
+
+
+def test_views_are_not_flows_and_are_published(tmp_path):
+    """A `ui/<view>.yaml` was read as a flow with no steps (an error), a
+    nested flow file whose fix was to move it to the root — which would
+    install it as a flow — and a path `app publish` leaves behind."""
+    root = write_bundle(tmp_path / "b")
+    (root / "ui").mkdir()
+    (root / "ui" / "board.yaml").write_text(yaml.safe_dump({"title": "Board"}))
+    (root / "ui" / "intake.yaml").write_text(yaml.safe_dump({"title": "Intake"}))
+    report = check_bundle(root)
+    assert report.findings == [], [str(f) for f in report.findings]
+    assert {f.name for f in report.flows} == {"intake", "sweep"}
+
+
+def test_a_path_outside_the_view_layout_is_not_published(tmp_path):
+    root = write_bundle(tmp_path / "b")
+    (root / "ui" / "old").mkdir(parents=True)
+    (root / "ui" / "notes.md").write_text("scratch\n")
+    (root / "ui" / "old" / "scratch.txt").write_text("x\n")
+    unpublished = {
+        f.where: f.message for f in check_bundle(root).findings if f.code == "path-not-published"
+    }
+    assert set(unpublished) == {"ui/notes.md", "ui/old/"}
+    assert "ui/<view>.yaml" in unpublished["ui/notes.md"]
 
 
 # ── the checkout baseline ─────────────────────────────────────────────

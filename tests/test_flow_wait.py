@@ -11,7 +11,8 @@ _MISSING = object()
 
 
 class _Runs:
-    """Scripted `get_flow_run`: each entry is `(status, outcome)`.
+    """Scripted `get_flow_run`: each entry is `(status, outcome)`, or
+    `(status, outcome, extra)` with `extra` merged into the run.
 
     An outcome of `_MISSING` leaves the field out, as an API older than it does.
     """
@@ -26,8 +27,10 @@ class _Runs:
         self.run_ids.append(run_id)
         # Keep returning the last entry once the script is exhausted, so a
         # timeout test can poll indefinitely without an IndexError.
-        status, outcome = self.script.pop(0) if len(self.script) > 1 else self.script[0]
-        run = {"status": status, "workflow_id": workflow_id}
+        self.include_errors = include_errors
+        entry = self.script.pop(0) if len(self.script) > 1 else self.script[0]
+        status, outcome, extra = (*entry, {}) if len(entry) == 2 else entry
+        run = {"status": status, "workflow_id": workflow_id, **extra}
         if outcome is not _MISSING:
             run["outcome"] = outcome
         return {"run": run}
@@ -102,6 +105,158 @@ def test_returns_immediately_when_already_succeeded(monkeypatch):
 
     _poll_until_closed(None, "#ops", "wid-1", timeout=30)
     assert runs.calls == 1
+
+
+# --- a failed run says why ----------------------------------------------------
+
+_NESTED_FAILURE = {
+    "type": "WorkflowExecutionError",
+    "message": "Workflow execution failed",
+    "cause": {
+        "type": "ActivityError",
+        "message": "Activity task failed",
+        "cause": {
+            "type": "ProcessInvalid",
+            "message": "columns: machine 'document' is stored\n  in column 'doc'",
+        },
+    },
+}
+
+
+def test_failed_run_names_its_innermost_cause(monkeypatch):
+    """The outer links are Temporal's wrappers; the root is what explains the
+    failure, and having it in the message spares an agent a `runs get` call."""
+    runs = _script(monkeypatch, [("Failed", "failed", {"failure": _NESTED_FAILURE})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert str(exc.value) == (
+        "Flow run wid-1 failed: ProcessInvalid: "
+        "columns: machine 'document' is stored in column 'doc'"
+    )
+    # Taken from the poll that saw the failure, not a second request.
+    assert runs.calls == 1
+    assert runs.include_errors is True
+    assert exc.value.exit_code == EXIT_VALIDATION
+    assert exc.value.error_code == "validation"
+    assert exc.value.to_dict()["retryable"] is False
+
+
+def test_failed_run_keeps_a_status_other_than_failed(monkeypatch):
+    """A timeout must still read apart from a cancel once a cause is shown."""
+    failure = {"type": "TimeoutError", "message": "start-to-close timeout"}
+    _script(monkeypatch, [("TimedOut", "failed", {"failure": failure})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert str(exc.value) == (
+        "Flow run wid-1 failed (TimedOut): TimeoutError: start-to-close timeout"
+    )
+
+
+def test_failed_run_without_a_failure_labels_the_latest_activity_error(monkeypatch):
+    history = [
+        {
+            "activity_type": "a.one",
+            "attempt": 1,
+            "type": "Boom",
+            "message": "old",
+            "time": "2026-08-09T10:00:05Z",
+        },
+        {
+            "activity_type": "a.two",
+            "attempt": 3,
+            "type": "ApplicationError",
+            "message": "row already exists",
+            "time": "2026-08-09T10:00:09Z",
+        },
+        {
+            "activity_type": "a.one",
+            "attempt": 2,
+            "type": "Boom",
+            "message": "older",
+            "time": "2026-08-09T10:00:01Z",
+        },
+    ]
+    _script(monkeypatch, [("Terminated", "failed", {"error_history": history})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert str(exc.value) == (
+        "Flow run wid-1 ended Terminated "
+        "(last activity error: ApplicationError: row already exists)"
+    )
+    # Not a cause, so `runs get` is still where the answer is.
+    assert exc.value.hint == "popcorn flow runs get --channel '#ops' wid-1 --include-errors"
+    assert exc.value.exit_code == EXIT_VALIDATION
+
+
+@pytest.mark.parametrize("status", ["TimedOut", "Terminated"])
+def test_a_retried_activity_error_is_not_reported_as_the_cause(monkeypatch, status):
+    """`error_history` keeps every failed attempt, including one a retry got
+    past. A run that then timed out or was terminated did not fail *because*
+    of it, so the message must not say it did."""
+    history = [
+        {
+            "activity_type": "a.fetch",
+            "attempt": 1,
+            "type": "ConnectionError",
+            "message": "connection reset",
+            "time": "2026-08-09T10:00:01Z",
+        },
+    ]
+    _script(monkeypatch, [(status, "failed", {"error_history": history})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    message = str(exc.value)
+    assert message == (
+        f"Flow run wid-1 ended {status} (last activity error: ConnectionError: connection reset)"
+    )
+    assert "failed" not in message
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [{}, {"failure": None, "error_history": []}, {"failure": {"cause": {}}}],
+)
+def test_failed_run_without_a_cause_keeps_the_status_and_points_at_runs_get(monkeypatch, extra):
+    _script(monkeypatch, [("Failed", "failed", extra)])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert str(exc.value) == "Flow run wid-1 ended Failed"
+    # Quoted: an unquoted `#ops` is a comment to the shell.
+    assert exc.value.hint == "popcorn flow runs get --channel '#ops' wid-1 --include-errors"
+    assert exc.value.exit_code == EXIT_VALIDATION
+
+
+def test_a_very_long_cause_is_truncated(monkeypatch):
+    from popcorn_cli.commands.flow import _CAUSE_MAX_CHARS
+
+    failure = {"type": "ProcessInvalid", "message": "column x is bad; " * 500}
+    _script(monkeypatch, [("Failed", "failed", {"failure": failure})])
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    prefix = "Flow run wid-1 failed: "
+    message = str(exc.value)
+    assert message.startswith(prefix + "ProcessInvalid: column x is bad;")
+    assert message.endswith("…")
+    assert len(message) == len(prefix) + _CAUSE_MAX_CHARS
+
+
+def test_a_timeout_still_says_timed_out_not_failed(monkeypatch):
+    """The deadline elapsing is not a failure: no cause, a retryable exit."""
+    failure = {"type": "ActivityError", "message": "retrying"}
+    _script(monkeypatch, [("Running", "still_running", {"failure": failure})])
+    _freeze_then_expire(monkeypatch)
+
+    with pytest.raises(PopcornError) as exc:
+        _poll_until_closed(None, "#ops", "wid-1", timeout=30)
+    assert str(exc.value) == "Waiting for wid-1 timed out after 30s (last status Running)"
+    assert exc.value.exit_code == EXIT_TIMEOUT
+    assert exc.value.to_dict()["retryable"] is True
 
 
 # --- the status no longer decides anything ------------------------------------

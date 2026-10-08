@@ -174,11 +174,25 @@ _FIELDS: tuple[_Field, ...] = (
         "The app's user-facing UI copy, locale-sectioned. Reserved.",
     ),
     _Field(
+        "RECIPE_FILENAME",
+        ("bundle", "recipe_filename"),
+        "The recipe tier's state-graph document, read from the bundle root, under its\n"
+        "current name. Publish requires a recipe document when the manifest declares\n"
+        "`recipe:` (or the legacy `process:`) and refuses one when it declares neither.",
+    ),
+    _Field(
+        "RECIPE_FILENAMES",
+        ("bundle", "recipe_filenames"),
+        "Every name a bundle may ship its recipe under, the current one first; a version\n"
+        "published before the rename ships `process.yaml` and stays readable. Each is\n"
+        "reserved: never installed as a flow, though it carries a flow suffix. A bundle\n"
+        "shipping more than one is refused at publish.",
+    ),
+    _Field(
         "PROCESS_FILENAME",
         ("bundle", "process_filename"),
-        "The process: tier's state-graph document, read from the bundle root. Reserved:\n"
-        "never installed as a flow, though it carries a flow suffix. Publish requires it\n"
-        "when the manifest declares `process:` and refuses it when the manifest doesn't.",
+        "DEPRECATED: the recipe document's name before the rename, still served for\n"
+        "older clients. Read RECIPE_FILENAMES, which includes it.",
     ),
     _Field(
         "FLOW_SUFFIXES",
@@ -262,6 +276,19 @@ _FIELDS: tuple[_Field, ...] = (
         "AGENT_SCHEMA_SUFFIX",
         ("bundle", "agent_schema_suffix"),
         "The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.",
+    ),
+    _Field(
+        "UI_SUBDIR",
+        ("bundle", "ui_subdir"),
+        "Directory holding the app's views, one file per view. A FIFTH classification:\n"
+        "a view is compiled at install, never seeded as a channel parameter and never\n"
+        "read as a flow, though it shares the `.yaml` extension.",
+    ),
+    _Field(
+        "UI_SUFFIXES",
+        ("bundle", "ui_suffixes"),
+        "The extensions that make `ui/<view_id><suffix>` a view. Exact depth: a view file\n"
+        "sits directly under UI_SUBDIR, and anything deeper is not one.",
     ),
     _Field(
         "MAX_ENTRY_BYTES",

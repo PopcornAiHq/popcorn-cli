@@ -182,9 +182,22 @@ README_FILENAME = "README.md"
 # The app's user-facing UI copy, locale-sectioned. Reserved.
 STRINGS_FILENAME = "strings.yaml"
 
-# The process: tier's state-graph document, read from the bundle root. Reserved:
-# never installed as a flow, though it carries a flow suffix. Publish requires it
-# when the manifest declares `process:` and refuses it when the manifest doesn't.
+# The recipe tier's state-graph document, read from the bundle root, under its
+# current name. Publish requires a recipe document when the manifest declares
+# `recipe:` (or the legacy `process:`) and refuses one when it declares neither.
+RECIPE_FILENAME = "recipe.yaml"
+
+# Every name a bundle may ship its recipe under, the current one first; a version
+# published before the rename ships `process.yaml` and stays readable. Each is
+# reserved: never installed as a flow, though it carries a flow suffix. A bundle
+# shipping more than one is refused at publish.
+RECIPE_FILENAMES = (
+    "recipe.yaml",
+    "process.yaml",
+)
+
+# DEPRECATED: the recipe document's name before the rename, still served for
+# older clients. Read RECIPE_FILENAMES, which includes it.
 PROCESS_FILENAME = "process.yaml"
 
 # Extensions that make a bundle entry a candidate flow document. Anything else
@@ -259,6 +272,18 @@ AGENT_SCHEMAS_SUBDIR = "schemas"
 
 # The extension a file under AGENT_SCHEMAS_SUBDIR must carry to be read.
 AGENT_SCHEMA_SUFFIX = ".json"
+
+# Directory holding the app's views, one file per view. A FIFTH classification:
+# a view is compiled at install, never seeded as a channel parameter and never
+# read as a flow, though it shares the `.yaml` extension.
+UI_SUBDIR = "ui"
+
+# The extensions that make `ui/<view_id><suffix>` a view. Exact depth: a view file
+# sits directly under UI_SUBDIR, and anything deeper is not one.
+UI_SUFFIXES = (
+    ".yaml",
+    ".yml",
+)
 
 # The zip reader's per-entry cap. The one value here that is not about
 # classification: it is a real ceiling on an uploaded bundle, so a checker

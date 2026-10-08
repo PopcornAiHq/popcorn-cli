@@ -452,6 +452,39 @@ class TestCollectTree:
         assert set(tree.files) == {"manifest.yaml", "agents/reader/prompt.md"}
         assert tree.ignored == []
 
+    def test_collects_views_under_ui(self, tmp_path):
+        """`ui/` was reported as ignored and never sent, so a view `app
+        checkout` wrote could be edited, added or removed and publish would
+        change nothing."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "ui/board.yaml": "title: Board\n",
+                "ui/inbox.yml": "title: Inbox\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert tree.ignored == []
+        assert set(tree.files) == {"manifest.yaml", "ui/board.yaml", "ui/inbox.yml"}
+
+    def test_reports_paths_outside_the_view_layout(self, tmp_path):
+        """A view sits directly under `ui/` with a view suffix; the server
+        reads nothing else there, so anything else is reported, not sent."""
+        _checkout(
+            tmp_path,
+            {
+                "manifest.yaml": _manifest(),
+                "ui/board.yaml": "title: Board\n",
+                "ui/notes.md": "x\n",
+                "ui/old/board.yaml": "x\n",
+                "ui/.draft.yaml": "x\n",
+            },
+        )
+        tree = collect_tree(tmp_path)
+        assert set(tree.files) == {"manifest.yaml", "ui/board.yaml"}
+        assert sorted(tree.ignored) == ["ui/notes.md", "ui/old/"]
+
     def test_refuses_a_binary_file_by_name(self, tmp_path):
         _checkout(tmp_path, {"manifest.yaml": _manifest()})
         (tmp_path / "prompts").mkdir()
@@ -554,6 +587,35 @@ class TestDiffTree:
         diff = diff_tree(base, {"manifest.yaml": "1"})
         assert diff.deletes == []
         assert diff.preserved == ["agents/reader/examples/one.md"]
+
+    def test_view_files_round_trip_against_served_hashes(self):
+        """Add, edit and delete under `ui/`. Before, all three were invisible:
+        local views were never collected, and served ones were `preserved`
+        whether or not the author had deleted them."""
+        served = {
+            "manifest.yaml": "1",
+            "ui/board.yaml": "title: Board\n",
+            "ui/inbox.yaml": "title: Inbox\n",
+        }
+        base = {p: hashlib.sha256(c.encode("utf-8")).hexdigest() for p, c in served.items()}
+        local = {
+            "manifest.yaml": "1",
+            "ui/board.yaml": "title: Board v2\n",
+            "ui/digest.yml": "title: Digest\n",
+        }
+        diff = diff_tree_hashes(base, local)
+        assert diff.added == ["ui/digest.yml"]
+        assert diff.changed == ["ui/board.yaml"]
+        assert diff.deletes == ["ui/inbox.yaml"]
+        assert diff.preserved == []
+
+    def test_a_served_ui_path_this_cli_cannot_classify_is_preserved(self):
+        """Only the view layout is recognized, so a deeper or differently
+        suffixed `ui/` path a stale `flow_rules` predates is kept."""
+        base = {"manifest.yaml": "1", "ui/assets/logo.svg": "x", "ui/board.json": "{}"}
+        diff = diff_tree(base, {"manifest.yaml": "1"})
+        assert diff.deletes == []
+        assert diff.preserved == ["ui/assets/logo.svg", "ui/board.json"]
 
     def test_a_recognized_absence_is_still_a_deletion(self):
         """The guard must not swallow the ordinary case."""

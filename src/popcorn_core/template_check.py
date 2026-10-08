@@ -71,23 +71,29 @@ from typing import Any
 
 from popcorn_core import flow_rules
 from popcorn_core.app_checkout import changelog_of, read_baseline, semver_key
-from popcorn_core.app_publish import AGENT_LAYOUT, ignored_paths, is_agent_path
+from popcorn_core.app_publish import (
+    AGENT_LAYOUT,
+    VIEW_LAYOUT,
+    ignored_paths,
+    is_agent_path,
+    is_view_path,
+)
 
 ERROR = "error"
 WARNING = "warning"
 
 # Filenames no reader ever installs as a flow: the manifest and its legacy
 # alias, plus the reserved documents (agent doc, README, UI strings, and the
-# process: tier's state graph). One set rather than the importer's two, because
-# every use site here asks the same question — is this `.yaml` a flow candidate
-# at all.
+# recipe's state graph under its current or pre-rename name). One set rather
+# than the importer's two, because every use site here asks the same question
+# — is this `.yaml` a flow candidate at all.
 RESERVED_FILENAMES = frozenset(
     {
         *flow_rules.MANIFEST_FILENAMES,
         flow_rules.AGENT_DOC_FILENAME,
         flow_rules.README_FILENAME,
         flow_rules.STRINGS_FILENAME,
-        flow_rules.PROCESS_FILENAME,
+        *flow_rules.RECIPE_FILENAMES,
     }
 )
 
@@ -395,7 +401,7 @@ class _Checker:
         runner's convention requires each of them to carry `main.py`.
         """
         rel = path.relative_to(self.dir)
-        if _under_code_dir(rel) or _is_agent_file(rel):
+        if _under_code_dir(rel) or _is_agent_file(rel) or is_view_path(rel.parts):
             return str(rel)
         if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
             return f"{rel.parts[0]}/{path.name}"
@@ -467,8 +473,8 @@ class _Checker:
             # block reads — not a flow the registry failed to find.
             if _under_code_dir(rel):
                 continue
-            # Likewise an agent's own definition: never read as a flow.
-            if _is_agent_file(rel):
+            # Likewise an agent's own definition or a view: never read as a flow.
+            if _is_agent_file(rel) or is_view_path(rel.parts):
                 continue
             self.warn(
                 "nested-flow-file",
@@ -750,7 +756,8 @@ class _Checker:
                 "leaves it behind — it stays in your working copy and never reaches the "
                 "channel. Flows are root-level <name>.yaml; prompts and templates go "
                 "exactly one level under prompts/ or templates/; block source goes under "
-                f"{flow_rules.CODE_SUBDIR}/<block>/; an agent is {AGENT_LAYOUT}. "
+                f"{flow_rules.CODE_SUBDIR}/<block>/; an agent is {AGENT_LAYOUT}; a view is "
+                f"{VIEW_LAYOUT}. "
                 "Anything else belongs outside the bundle directory.",
             )
 
@@ -804,9 +811,9 @@ class _Checker:
             rel = path.relative_to(self.dir)
             if path.name in RESERVED_FILENAMES:
                 continue
-            # Same reason as in `_check_nesting`: block source or an agent
-            # definition, not a flow.
-            if _under_code_dir(rel) or _is_agent_file(rel):
+            # Same reason as in `_check_nesting`: block source, an agent
+            # definition or a view, not a flow.
+            if _under_code_dir(rel) or _is_agent_file(rel) or is_view_path(rel.parts):
                 continue
             if rel.parts[0] in PRESERVED_DIRS and len(rel.parts) > 1:
                 continue
@@ -818,7 +825,7 @@ class _Checker:
                 self.err(
                     "fixture-installed-as-flow" if in_fixtures else "yaml-is-not-a-flow",
                     str(rel),
-                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/process is "
+                    "Every .yaml/.yml in the bundle that is not manifest/config/strings/recipe is "
                     "installed as a flow, and this file has no `name:`/`steps:`. "
                     + (
                         "Move it outside the bundle directory — a fixtures/ "

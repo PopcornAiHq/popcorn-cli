@@ -230,7 +230,7 @@ class TestConversations:
         result = operations.create_conversation(mock_client, "test-channel")
         mock_client.post.assert_called_once_with(
             "/api/conversations/create",
-            data={"name": "test-channel", "conversation_type": "public_channel"},
+            data={"name": "test-channel", "conversation_type": "workspace_channel"},
         )
         assert result["id"] == "c1"
 
@@ -276,6 +276,14 @@ class TestConversations:
         operations.unarchive_conversation(mock_client, "conv-id")
         mock_client.post.assert_called_with(
             "/api/conversations/unarchive", data={"conversation": "conv-id"}
+        )
+
+    def test_update_sends_only_the_fields_given(self, mock_client):
+        mock_client.post.return_value = {"ok": True}
+        operations.update_conversation(mock_client, "conv-id", description="Incidents")
+        mock_client.post.assert_called_once_with(
+            "/api/conversations/update",
+            data={"conversation": "conv-id", "description": "Incidents"},
         )
 
 
@@ -671,7 +679,7 @@ class TestChannelTemplates:
 
 
 class TestDataStoreOperations:
-    """The data-store surface at /api/v1/conversations/{id}/data-store/…
+    """The agent-store surface at /api/v1/conversations/{id}/data-store/…
 
     The channel ref is resolved to a conversation UUID and baked into the
     path, so every assertion here pins the resolved path shape.
