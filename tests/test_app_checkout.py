@@ -31,7 +31,7 @@ from popcorn_core.app_checkout import (
     write_baseline,
     write_tree,
 )
-from popcorn_core.errors import PopcornError
+from popcorn_core.errors import APIError, PopcornError
 
 _CONV = "11111111-2222-3333-4444-555555555555"
 
@@ -351,6 +351,18 @@ class TestOperations:
 # ---------------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_newer_product_head():
+    """A product checkout also asks `/apps/status` for the line's head.
+
+    Most of these tests are about what a checkout writes, not which version it
+    picks; a status with no head fields leaves the head read's answer
+    standing. `TestProductLineHead` overrides it.
+    """
+    with patch.object(operations, "get_channel_app_status", return_value={}):
+        yield
+
+
 def _args(**over):
     base = {
         "channel": "#alerts",
@@ -646,6 +658,204 @@ class TestCheckoutOverwrite:
             )
         assert prompts, "-y must not skip the overwrite prompt"
         assert (tmp_path / "manifest.yaml").read_text() == "mine"
+
+
+_BOUND = {"version_id": 17, "semver": "0.17.2"}
+_HEAD = {"version_id": 20, "semver": "0.20.0"}
+
+
+class TestProductLineHead:
+    """A product-bound channel checks out its line's head, not its binding.
+
+    The reported case: a channel on 0.17.2 of a product line whose head is
+    0.20.0. A head read of a product channel serves the binding, so the
+    checkout used to write 0.17.2 while its help said "the line's head".
+    `/apps/status` names the head; the checkout reads it by id.
+    """
+
+    def _served(self, version, kind="product"):
+        return _files_response(
+            {"manifest.yaml": f"version: '{version['semver']}'\n"},
+            kind=kind,
+            ref="version" if version is _HEAD else "head",
+            bound_version_id=_BOUND["version_id"],
+            bound_semver=_BOUND["semver"],
+            **version,
+        )
+
+    def _run(self, args, status, *, by_id=None, kind="product"):
+        from popcorn_cli.commands import app as mod
+
+        captured: dict = {"reads": [], "status_reads": 0}
+
+        def _files(client, conversation, ref="head", version_id=None):
+            captured["reads"].append(version_id)
+            if version_id is None:
+                return self._served(_BOUND, kind=kind)
+            if isinstance(by_id, Exception):
+                raise by_id
+            return by_id or self._served(_HEAD)
+
+        def _status(client, conversation):
+            captured["status_reads"] += 1
+            if isinstance(status, Exception):
+                raise status
+            return status
+
+        with (
+            patch("popcorn_cli.cli._get_client", return_value=object()),
+            patch(
+                "popcorn_cli.cli._output",
+                lambda a, data, rendered: captured.update(data=data, rendered=rendered),
+            ),
+            patch.object(mod, "resolve_conversation", return_value=_CONV),
+            patch.object(operations, "get_channel_app_files", _files),
+            patch.object(operations, "get_channel_app_status", _status),
+        ):
+            mod._app_checkout(args)
+        return captured
+
+    def _status(self, head):
+        return {
+            "app": "alerttracker",
+            "kind": "product",
+            "bound_version_id": _BOUND["version_id"],
+            "bound_semver": _BOUND["semver"],
+            "head_version_id": head["version_id"],
+            "head_semver": head["semver"],
+            "install": {"state": "behind"},
+        }
+
+    def test_writes_the_line_head_when_the_channel_lags_it(self, tmp_path):
+        out_dir = tmp_path / "out"
+        out = self._run(_args(directory=str(out_dir)), self._status(_HEAD))
+        assert out["reads"] == [None, 20]
+        assert (out_dir / "manifest.yaml").read_text() == "version: '0.20.0'\n"
+        baseline = read_baseline(out_dir)
+        assert (baseline.base_version_id, baseline.semver) == (20, "0.20.0")
+        assert out["data"]["semver"] == "0.20.0"
+        assert (out["data"]["head_version_id"], out["data"]["head_semver"]) == (20, "0.20.0")
+        assert (out["data"]["channel_version_id"], out["data"]["channel_semver"]) == (17, "0.17.2")
+
+    def test_says_which_version_it_wrote_and_what_the_channel_runs(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path / "out")), self._status(_HEAD))
+        rendered = out["rendered"]
+        assert rendered.startswith("Checked out alerttracker 0.20.0 (product)")
+        assert (
+            "Note: this channel still runs alerttracker 0.17.2 (version 17); 0.20.0 "
+            "is the product line's head, the version an update moves it to." in rendered
+        )
+        # The fork-line wording would promise a publish that a product
+        # checkout cannot make.
+        assert "fork line's head" not in rendered
+        assert "baseline version 20" in rendered
+
+    def test_a_channel_on_the_head_is_read_once(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path / "out")), self._status(_BOUND))
+        assert out["reads"] == [None]
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert "Note:" not in out["rendered"]
+
+    def test_a_head_behind_the_channel_is_not_a_downgrade(self, tmp_path):
+        """A channel can sit ahead of a release track that was rolled back."""
+        older = {"version_id": 16, "semver": "0.16.0"}
+        out = self._run(_args(directory=str(tmp_path / "out")), self._status(older))
+        assert out["reads"] == [None]
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+
+    def test_a_fork_line_never_asks_for_the_status(self, tmp_path):
+        """The head read already serves a fork line's head."""
+        out = self._run(_args(directory=str(tmp_path / "out")), self._status(_HEAD), kind="fork")
+        assert out["status_reads"] == 0
+        assert out["reads"] == [None]
+
+    def test_a_failed_status_read_is_said_not_passed_off_as_the_head(self, tmp_path):
+        out = self._run(_args(directory=str(tmp_path / "out")), APIError("boom", status_code=500))
+        assert out["reads"] == [None]
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert (
+            "Note: this is the version the channel runs — the product line's head "
+            "could not be checked (boom), so a newer one may exist." in out["rendered"]
+        )
+        assert out["data"]["head_error"] == "boom"
+        assert "head_version_id" not in out["data"]
+
+    def test_a_server_without_the_status_route_checks_out_as_before(self, tmp_path):
+        """A 404 here is the route missing, not the channel: it was just read."""
+        out = self._run(
+            _args(directory=str(tmp_path / "out")), APIError("not found", status_code=404)
+        )
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert "Note:" not in out["rendered"]
+        assert "head_error" not in out["data"]
+
+    def test_an_unreadable_head_is_named_rather_than_hidden(self, tmp_path):
+        out = self._run(
+            _args(directory=str(tmp_path / "out")),
+            self._status(_HEAD),
+            by_id=PopcornError("this server does not support reading a specific version"),
+        )
+        assert read_baseline(tmp_path / "out").semver == "0.17.2"
+        assert (
+            "Note: the product line's head is 0.20.0 (version 20), newer than this "
+            "copy, and could not be read" in out["rendered"]
+        )
+        assert out["data"]["head_semver"] == "0.20.0"
+        assert "does not support" in out["data"]["head_error"]
+
+    def test_status_against_that_checkout_is_in_sync(self, tmp_path):
+        """`app status --dir` reads the head the same way, so the checkout
+        above is not reported as one the line moved back past."""
+        from popcorn_cli.commands import app as mod
+
+        sha = "0" * 64
+        trees: list = []
+
+        def _tree(client, conversation, ref="bound", version_id=None):
+            trees.append(version_id)
+            version = _BOUND if version_id is None else _HEAD
+            return {
+                "app": "alerttracker",
+                "kind": "product",
+                "ref": "head" if version_id is None else "version",
+                "paths": ["manifest.yaml"],
+                "sha256": {"manifest.yaml": sha},
+                "bound_version_id": 17,
+                "bound_semver": "0.17.2",
+                **version,
+            }
+
+        with (
+            patch.object(operations, "get_channel_app_tree", _tree),
+            patch.object(operations, "get_channel_app_status", return_value=self._status(_HEAD)),
+        ):
+            resp, hashes = mod._read_head(object(), _CONV)
+        assert trees == [None, 20]
+        assert (resp["version_id"], resp["semver"]) == (20, "0.20.0")
+        assert hashes == {"manifest.yaml": sha}
+
+    @pytest.mark.parametrize("fails", ["status", "by_id"])
+    def test_status_raises_rather_than_comparing_against_the_binding(self, fails):
+        """Falling back to the channel's version would report a checkout of
+        the head as stale and send the author to re-check it out."""
+        from popcorn_cli.commands import app as mod
+
+        def _tree(client, conversation, ref="bound", version_id=None):
+            if version_id is not None:
+                raise PopcornError("this server does not support reading a specific version")
+            return {"app": "alerttracker", "kind": "product", "ref": "head", **_BOUND}
+
+        status = (
+            {"side_effect": APIError("boom", status_code=503)}
+            if fails == "status"
+            else {"return_value": self._status(_HEAD)}
+        )
+        with (
+            patch.object(operations, "get_channel_app_tree", _tree),
+            patch.object(operations, "get_channel_app_status", **status),
+            pytest.raises(PopcornError),
+        ):
+            mod._read_head(object(), _CONV)
 
 
 # ---------------------------------------------------------------------------

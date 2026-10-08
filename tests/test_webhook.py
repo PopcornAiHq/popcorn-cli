@@ -283,6 +283,175 @@ class TestSendByUuid:
         assert client.get.call_args[0][0] == f"/api/webhooks/{WEBHOOK_ID}"
 
 
+# ---------------------------------------------------------------------------
+# `send` keeps the ingest URL's token out of its output
+# ---------------------------------------------------------------------------
+
+_TOKEN = "s3cr3t-token"
+_URL = _HOOK["url"]
+
+
+@pytest.fixture()
+def popcorn(monkeypatch, client, capsys):
+    """Run the whole CLI, so error output is captured the way a user sees it.
+
+    `httpx.post` is stubbed with whatever the test hands in — a response, or
+    an exception to raise — which is the one boundary `send` crosses.
+    """
+    import sys
+
+    import httpx
+
+    from popcorn_cli import cli
+
+    client.get.return_value = {"webhook": _HOOK}
+
+    def _run(*argv: str, reply=None) -> tuple[int, str, str]:
+        if reply is None:
+            reply = httpx.Response(202, json={"status": "accepted", "request_id": "req-1"})
+        post = MagicMock(side_effect=reply) if isinstance(reply, Exception) else None
+        monkeypatch.setattr(cli, "_check_and_update", lambda: None)
+        monkeypatch.setattr(sys, "argv", ["popcorn", "--no-color", *argv])
+        with patch("popcorn_core.operations.httpx.post", post or MagicMock(return_value=reply)):
+            try:
+                cli.main()
+                code = 0
+            except SystemExit as exc:
+                code = int(exc.code or 0)
+        captured = capsys.readouterr()
+        return code, captured.out, captured.err
+
+    return _run
+
+
+class TestSendHidesTheUrl:
+    """The reported leak: `HTTP 202 → https://…/ingest/<token>` on every send.
+
+    `list` and `get` already hid the URL behind --show-url; `send` now follows
+    them — on success and on every error path, which print whatever the flag.
+    """
+
+    def test_a_named_send_prints_the_webhook_not_its_url(self, popcorn):
+        code, out, err = popcorn("webhook", "send", WEBHOOK_ID)
+        assert code == 0
+        assert _TOKEN not in out + err
+        assert f"HTTP 202 → webhook 'Intake' ({WEBHOOK_ID})" in out
+        assert "pass --show-url" in out
+        assert "req-1" in out
+
+    def test_a_url_target_prints_redacted(self, popcorn):
+        code, out, err = popcorn("webhook", "send", _URL)
+        assert code == 0
+        assert _TOKEN not in out + err
+        assert "HTTP 202 → https://hooks.example.test/ingest/…" in out
+
+    def test_show_url_prints_it_for_a_name(self, popcorn):
+        _, out, _ = popcorn("webhook", "send", WEBHOOK_ID, "--show-url")
+        assert f"url: {_URL}" in out
+        assert "pass --show-url" not in out
+
+    def test_show_url_prints_it_for_a_url_target(self, popcorn):
+        _, out, _ = popcorn("webhook", "send", _URL, "--show-url")
+        assert f"HTTP 202 → {_URL}" in out
+
+    def test_a_reply_echoing_the_url_is_scrubbed(self, popcorn):
+        import httpx
+
+        reply = httpx.Response(202, json={"received_at": _URL})
+        _, out, _ = popcorn("webhook", "send", WEBHOOK_ID, reply=reply)
+        assert _TOKEN not in out
+
+    def test_json_carries_the_url_as_list_and_get_do(self, popcorn):
+        """`--json` of `list` and `get` serves the record whole, URL included,
+        and `send` follows that rather than starting a third rule."""
+        _, out, _ = popcorn("--json", "webhook", "send", WEBHOOK_ID)
+        data = json.loads(out)["data"]
+        assert data["url"] == _URL
+        assert data["webhook"] == {"id": WEBHOOK_ID, "name": "Intake"}
+        assert data["status"] == 202
+
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_an_error_reply_is_scrubbed(self, popcorn, as_json):
+        import httpx
+
+        reply = httpx.Response(404, text=f"no such hook: {_URL}")
+        flags = ["--json"] if as_json else []
+        code, out, err = popcorn(*flags, "webhook", "send", WEBHOOK_ID, reply=reply)
+        assert code != 0
+        assert "HTTP 404" in out + err
+        assert _TOKEN not in out + err
+
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_a_timeout_is_scrubbed(self, popcorn, as_json):
+        import httpx
+
+        flags = ["--json"] if as_json else []
+        code, out, err = popcorn(
+            *flags, "webhook", "send", _URL, reply=httpx.ReadTimeout("timed out")
+        )
+        assert code != 0
+        assert "timed out for https://hooks.example.test/ingest/" in out + err
+        assert _TOKEN not in out + err
+
+    def test_a_network_error_naming_the_url_is_scrubbed(self, popcorn):
+        import httpx
+
+        code, out, err = popcorn(
+            "webhook", "send", _URL, reply=httpx.ConnectError(f"cannot reach {_URL}")
+        )
+        assert code != 0
+        assert "network error" in out + err
+        assert _TOKEN not in out + err
+
+    def test_an_invalid_port_is_a_validation_error_not_a_traceback(self, popcorn):
+        import httpx
+
+        url = "https://hooks.example.test:99999/ingest/s3cr3t-token"
+        code, out, err = popcorn("webhook", "send", url, reply=httpx.InvalidURL("Invalid port"))
+        assert code != 0
+        assert "Not a usable ingest URL" in out + err
+        assert _TOKEN not in out + err
+
+    def test_an_invalid_url_is_a_validation_error_not_a_traceback(self, popcorn):
+        import httpx
+
+        code, out, err = popcorn("webhook", "send", _URL, reply=httpx.InvalidURL(f"bad: {_URL}"))
+        assert code != 0
+        assert "Not a usable ingest URL" in out + err
+        assert _TOKEN not in out + err
+
+
+class TestRedactWebhookUrl:
+    def test_a_malformed_port_degrades_rather_than_raising(self):
+        """It runs on the InvalidURL error path, where a ValueError would
+        surface as a traceback."""
+        assert operations.redact_webhook_url("https://hooks.example.test:99999/x/tok") == (
+            "https://hooks.example.test/x/…"
+        )
+        assert operations.redact_webhook_url("https://[::1/x/tok") == "<ingest URL>/…"
+
+    def test_scrubs_a_query_token_echoed_alone(self):
+        url = "https://hooks.example.test/ingest?token=s3cr3t-query"
+        assert operations.scrub_webhook_url("bad token s3cr3t-query", url) == "bad token …"
+
+    def test_scrubs_userinfo_echoed_alone(self):
+        url = "https://hookuser:s3cr3t-pass@hooks.example.test/ingest/x"
+        out = operations.scrub_webhook_url("auth failed for hookuser / s3cr3t-pass", url)
+        assert "s3cr3t-pass" not in out
+        assert "hookuser" not in out
+
+    def test_leaves_short_query_values_alone(self):
+        url = "https://hooks.example.test/ingest/s3cr3t-token?v=1"
+        assert operations.scrub_webhook_url("retry 1 of 3", url) == "retry 1 of 3"
+
+    def test_drops_the_last_segment(self):
+        assert operations.redact_webhook_url(_URL) == "https://hooks.example.test/ingest/…"
+
+    def test_drops_userinfo_and_query_and_keeps_the_port(self):
+        url = "https://user:pw@hooks.example.test:8443/ingest/tok?sig=abc"
+        assert operations.redact_webhook_url(url) == "https://hooks.example.test:8443/ingest/…"
+
+
 class TestRequests:
     """The routes each operation calls, pinned so a rename is caught here."""
 

@@ -677,6 +677,26 @@ def _lookup_webhook(
     )
 
 
+def resolve_webhook(
+    client: APIClient,
+    target: str,
+    conversation: str | None = None,
+) -> dict[str, Any]:
+    """The webhook a `webhook send` target names, refusing one with no URL.
+
+    ``target`` is a webhook UUID or a webhook name matched case-insensitively.
+    The whole record rather than just its URL, so the caller can name what it
+    posted to without printing the URL — whose token is the credential.
+    """
+    hook = _lookup_webhook(client, target, conversation)
+    if not hook.get("url"):
+        raise PopcornError(
+            f"Webhook '{target}' has no ingest URL to post to",
+            error_code="not_found",
+        )
+    return hook
+
+
 def resolve_webhook_url(
     client: APIClient,
     target: str,
@@ -689,14 +709,68 @@ def resolve_webhook_url(
     """
     if is_webhook_url(target):
         return target
-    hook = _lookup_webhook(client, target, conversation)
-    url = hook.get("url")
-    if not url:
-        raise PopcornError(
-            f"Webhook '{target}' has no ingest URL to post to",
-            error_code="not_found",
-        )
-    return str(url)
+    return str(resolve_webhook(client, target, conversation)["url"])
+
+
+def redact_webhook_url(url: str) -> str:
+    """An ingest URL with its secret elided: `https://host/ingest/…`.
+
+    The token is the URL's last path segment, and anyone holding it can post
+    to the channel, so it is what goes. The query and any userinfo go too:
+    nothing about the URL's shape is promised, and either could carry a
+    secret just as well. What is left still says which host was hit.
+
+    Never raises: it runs on the error path for a URL httpx has just refused,
+    so a malformed port or bracket has to degrade, not become a traceback.
+    """
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return "<ingest URL>/…"
+    host = parts.hostname or ""
+    try:
+        if parts.port:
+            host = f"{host}:{parts.port}"
+    except ValueError:
+        pass
+    head, _, _ = parts.path.rpartition("/")
+    return f"{parts.scheme}://{host}{head}/…"
+
+
+# Shorter than this, a URL part is left alone in free text: `?v=1` would
+# otherwise blank every "1" in an error body, and a value that short is no
+# secret worth the damage.
+_MIN_SCRUBBED = 6
+
+
+def _webhook_url_secrets(url: str) -> list[str]:
+    """Every part of ``url`` that could be its credential, longest first.
+
+    The last path segment, each query value, and the userinfo — the same
+    parts `redact_webhook_url` drops, since either of the last two could carry
+    the token as well as the path does.
+    """
+    try:
+        parts = urlparse(url)
+    except ValueError:
+        return []
+    candidates = [parts.path.rpartition("/")[2], parts.username or "", parts.password or ""]
+    candidates += [v for values in parse_qs(parts.query).values() for v in values]
+    found = {c for c in candidates if len(c) >= _MIN_SCRUBBED}
+    return sorted(found, key=len, reverse=True)
+
+
+def scrub_webhook_url(text: str, url: str) -> str:
+    """``text`` with ``url``, and each part of it that could be the
+    credential, replaced by the redacted form.
+
+    For what the CLI does not author: an httpx exception's message and an
+    ingest host's reply can both echo the request URL back, whole or in part.
+    """
+    text = text.replace(url, redact_webhook_url(url))
+    for secret in _webhook_url_secrets(url):
+        text = text.replace(secret, "…")
+    return text
 
 
 def resolve_webhook_id(
@@ -729,6 +803,10 @@ def send_webhook(url: str, payload: dict[str, Any], timeout: float = 30.0) -> di
     API host and the endpoint is unauthenticated, so the request carries a
     content type and nothing else. Sending it through the client would attach
     the caller's bearer token to a different host.
+
+    No error raised here carries the URL's token: an error is printed whatever
+    `--show-url` says, so its message and body are scrubbed rather than left
+    to each caller.
     """
     try:
         resp = httpx.post(
@@ -738,15 +816,22 @@ def send_webhook(url: str, payload: dict[str, Any], timeout: float = 30.0) -> di
             timeout=timeout,
         )
     except httpx.TimeoutException as e:
-        raise APIError(f"Webhook send timed out for {url}") from e
+        raise APIError(f"Webhook send timed out for {redact_webhook_url(url)}") from e
     except httpx.HTTPError as e:
-        raise APIError(f"Webhook send network error: {e}") from e
+        raise APIError(f"Webhook send network error: {scrub_webhook_url(str(e), url)}") from e
+    except httpx.InvalidURL as e:
+        # Not an HTTPError, so without this it escapes as a traceback.
+        raise PopcornError(
+            f"Not a usable ingest URL: {scrub_webhook_url(str(e), url)}",
+            error_code="validation",
+        ) from e
 
     if not 200 <= resp.status_code < 300:
+        text = scrub_webhook_url(resp.text, url)
         raise APIError(
-            f"Webhook send failed: HTTP {resp.status_code}\n{resp.text[:1000]}",
+            f"Webhook send failed: HTTP {resp.status_code}\n{text[:1000]}",
             status_code=resp.status_code,
-            body=resp.text,
+            body=text,
         )
     try:
         body: Any = resp.json()
@@ -1409,7 +1494,10 @@ def list_channel_apps(client: APIClient, conversation: str | None = None) -> dic
 
 
 def get_channel_app_tree(
-    client: APIClient, conversation: str, ref: str = "bound"
+    client: APIClient,
+    conversation: str,
+    ref: str = "bound",
+    version_id: int | None = None,
 ) -> dict[str, Any]:
     """Every file path in the selected version (`paths`).
 
@@ -1426,9 +1514,16 @@ def get_channel_app_tree(
     Defaults to "bound" rather than "head" so an existing caller keeps the
     version it already got; the files reader defaults the other way because
     its caller is a checkout, which must be based on the head.
+
+    `version_id` reads one version by id instead, checked the same way
+    `get_channel_app_files` checks it.
     """
     conv_id = resolve_conversation(client, conversation)
-    return client.get("/api/apps/tree", {"conversation_id": conv_id, "ref": ref})
+    if version_id is None:
+        return client.get("/api/apps/tree", {"conversation_id": conv_id, "ref": ref})
+    resp = client.get("/api/apps/tree", {"conversation_id": conv_id, "version_id": version_id})
+    require_version_served(resp, version_id)
+    return resp
 
 
 def get_channel_app_file(client: APIClient, conversation: str, path: str) -> dict[str, Any]:

@@ -277,21 +277,43 @@ def _webhook_send(args: argparse.Namespace) -> None:
 
     The client is built only when the target needs resolving: an ingest URL
     target posts to an unauthenticated host, so it must work without a login.
+
+    What it posted to is named the way `list` and `get` name a webhook — by
+    name and id, the URL only with --show-url — since the URL's token is the
+    credential and this output lands in logs and transcripts. A URL target
+    has no name to give, so it prints redacted. `--json` carries the URL, as
+    `list` and `get` do there.
     """
     from ..cli import _get_client, _output, _read_json_object
 
     payload = _read_json_object(args.payload, "payload") if args.payload else {}
     target = args.target
+    show_url = getattr(args, "show_url", False)
+    hook: dict[str, Any] | None = None
     if operations.is_webhook_url(target):
         url = target
     else:
-        url = operations.resolve_webhook_url(
-            _get_client(args), target, getattr(args, "channel", None)
-        )
+        hook = operations.resolve_webhook(_get_client(args), target, getattr(args, "channel", None))
+        url = str(hook["url"])
     result = operations.send_webhook(url, payload)
+    if hook is not None:
+        result["webhook"] = {"id": hook.get("id"), "name": hook.get("name")}
     body = result["response"]
     rendered = json.dumps(body, indent=2) if isinstance(body, dict | list) else str(body)
-    _output(args, result, f"HTTP {result['status']} → {url}\n{rendered}")
+    if hook is not None:
+        sent_to = f"webhook '{hook.get('name', '?')}' ({hook.get('id', '?')})"
+    else:
+        sent_to = url if show_url else operations.redact_webhook_url(url)
+    lines = [f"HTTP {result['status']} → {sent_to}"]
+    if show_url and hook is not None:
+        lines.append(f"  url: {url}")
+    # The ingest host's reply is not ours to vouch for: scrubbed, in case it
+    # echoes the URL it was posted to.
+    lines.append(rendered if show_url else operations.scrub_webhook_url(rendered, url))
+    if not show_url:
+        lines.append("")
+        lines.append("Ingest URL hidden (it carries a secret token) — pass --show-url.")
+    _output(args, result, "\n".join(lines))
 
 
 register(
@@ -469,6 +491,12 @@ register(
                         "channel",
                         "Channel name or UUID — needed only when <target> is a name",
                         type=str,
+                    ),
+                    Argument(
+                        "show-url",
+                        "Print the ingest URL posted to — it embeds a secret token, "
+                        "so it is hidden by default",
+                        action="store_true",
                     ),
                 ],
             ),
