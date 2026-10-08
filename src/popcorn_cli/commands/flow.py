@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +45,57 @@ _OUTCOME_STILL_RUNNING = "still_running"
 _OUTCOMES = frozenset({_OUTCOME_SUCCEEDED, _OUTCOME_FAILED, _OUTCOME_STILL_RUNNING})
 _POLL_SECONDS = 3
 _DEFAULT_WAIT_SECONDS = 300
+# A cause is one line of an error envelope, not a traceback: a validation
+# message that lists every offending column can run to kilobytes.
+_CAUSE_MAX_CHARS = 300
+
+
+def _one_line(entry: dict[str, Any]) -> str:
+    """`<type>: <message>` of a failure or error entry, as one capped line.
+
+    Whitespace is collapsed so a multi-line message stays one line, and the
+    result is capped at `_CAUSE_MAX_CHARS`.
+    """
+    kind = str(entry.get("type") or "").strip()
+    message = " ".join(str(entry.get("message") or "").split())
+    text = f"{kind}: {message}" if kind and message else kind or message
+    if len(text) > _CAUSE_MAX_CHARS:
+        text = text[: _CAUSE_MAX_CHARS - 1].rstrip() + "…"
+    return text
+
+
+def _failure_cause(run: dict[str, Any]) -> str | None:
+    """`<type>: <message>` of what failed a run, or None when it says nothing.
+
+    The innermost link of the run's `failure` chain is the one that explains
+    it — the outer links are Temporal's wrappers ("Workflow execution failed",
+    "Activity task failed").
+    """
+    innermost: dict[str, Any] | None = None
+    node = run.get("failure")
+    while isinstance(node, dict):
+        if node.get("message") or node.get("type"):
+            innermost = node
+        node = node.get("cause")
+    return None if innermost is None else _one_line(innermost)
+
+
+def _last_activity_error(run: dict[str, Any]) -> str | None:
+    """`<type>: <message>` of the run's latest `error_history` entry, or None.
+
+    Not a cause: the history records every failed activity attempt, including
+    ones a retry later got past, so on a run that timed out or was terminated
+    the latest entry may have nothing to do with how it ended. It is shown
+    labelled as what it is.
+    """
+    latest: dict[str, Any] | None = None
+    # `>=` so that, with no times to compare, the last entry wins.
+    for entry in run.get("error_history") or []:
+        if not isinstance(entry, dict) or not entry.get("message"):
+            continue
+        if latest is None or str(entry.get("time") or "") >= str(latest.get("time") or ""):
+            latest = entry
+    return None if latest is None else _one_line(latest)
 
 
 def _run_outcome(run: dict[str, Any], workflow_id: str) -> str:
@@ -79,7 +131,9 @@ def _poll_until_closed(
     """Poll a flow run until the server says it has finished.
 
     Returns the run when its `outcome` is `succeeded`. Raises PopcornError when
-    it is `failed` (so the shell sees a non-zero exit), when `timeout` seconds
+    it is `failed` (so the shell sees a non-zero exit, and the message carries
+    the cause from `_failure_cause`, or failing that the latest activity error
+    from `_last_activity_error`, labelled as such), when `timeout` seconds
     elapse while it is `still_running`, or when the response carries no usable
     `outcome` at all.
     """
@@ -97,9 +151,29 @@ def _poll_until_closed(
         if outcome == _OUTCOME_SUCCEEDED:
             return dict(run)
         if outcome == _OUTCOME_FAILED:
+            # The poll asks for error details, so the cause is already here;
+            # putting it in the message saves the caller a `runs get` round
+            # trip to learn why. The status rides along unless it is the
+            # plain `Failed` the word "failed" already says, so a timeout
+            # still reads apart from a cancel.
+            cause = _failure_cause(run)
+            if cause is not None:
+                ended = "failed" if status in ("", "Failed") else f"failed ({status})"
+                raise PopcornError(
+                    f"Flow run {workflow_id} {ended}: {cause}",
+                    error_code="validation",
+                )
+            # No `failure` to name, so no cause is claimed: the latest activity
+            # error, if any, is labelled as just that, and the hint stays.
+            message = f"Flow run {workflow_id} ended {status or 'unsuccessfully'}"
+            last_error = _last_activity_error(run)
+            if last_error is not None:
+                message += f" (last activity error: {last_error})"
             raise PopcornError(
-                f"Flow run {workflow_id} ended {status or 'unsuccessfully'}",
+                message,
                 error_code="validation",
+                hint=f"popcorn flow runs get --channel {shlex.quote(channel)} "
+                f"{workflow_id} --include-errors",
             )
         if time.monotonic() - started > timeout:
             raise PopcornError(

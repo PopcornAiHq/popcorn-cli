@@ -753,6 +753,35 @@ class TestFlowRunWait:
         # The run's own failure, not the refusal of a response without an outcome.
         assert "predates" not in err
 
+    def test_wait_on_a_failed_run_puts_the_cause_in_the_json_envelope(self, monkeypatch, capsys):
+        from popcorn_cli.commands import flow as mod
+        from popcorn_core import operations
+        from popcorn_core.errors import EXIT_VALIDATION
+
+        monkeypatch.setattr(operations, "run_flow", lambda *a, **kw: {"workflow_id": "wid-1"})
+        monkeypatch.setattr(mod.time, "sleep", lambda s: None)
+        failure = {
+            "type": "ActivityError",
+            "message": "Activity task failed",
+            "cause": {"type": "ProcessInvalid", "message": "columns: bad"},
+        }
+        monkeypatch.setattr(
+            operations,
+            "get_flow_run",
+            lambda *a, **kw: {"run": {"status": "Failed", "outcome": "failed", "failure": failure}},
+        )
+        with pytest.raises(SystemExit) as exc:
+            TestDispatchIsWired()._run(
+                monkeypatch, ["flow", "run", "abc", "--channel", "#ops", "--wait", "--json"]
+            )
+        assert exc.value.code == EXIT_VALIDATION
+        err = capsys.readouterr().err
+        # The "Waiting for ..." status line precedes the envelope on stderr.
+        envelope = json.loads(err[err.index("{") :])
+        assert envelope["ok"] is False
+        assert envelope["error"] == "Flow run wid-1 failed: ProcessInvalid: columns: bad"
+        assert envelope["error_code"] == "validation"
+
     def test_wait_fails_loudly_when_the_run_returns_no_workflow_id(self, monkeypatch, capsys):
         from popcorn_core import operations
 
