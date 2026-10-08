@@ -36,7 +36,9 @@ Two groups of commands, split by what they act on:
   needs none.
 - `checkout`, `publish`, `apply` and `status` act on a checkout DIRECTORY and
   read the channel out of its baseline. `--channel` stays accepted there for
-  baselines written by 0.19.0, which predate the field.
+  baselines written by 0.19.0, which predate the field. `checkout` can also
+  name an app instead of a channel (see "Checkout without a channel"), and
+  that baseline records none, so the others need `--channel` after it.
 
 `status` is the one command in both groups: with a checkout it compares the
 working copy against the line and the channel, and with `--channel` outside
@@ -77,6 +79,7 @@ from popcorn_core.app_checkout import (
     baseline_from_response,
     files_from_response,
     guide_text,
+    head_checkout_command,
     occupied,
     read_baseline,
     write_agent_guide,
@@ -315,6 +318,11 @@ def _read_version(client, conv_id: str, version_id: int) -> dict:
 def _app_checkout(args: argparse.Namespace) -> None:
     from ..cli import _confirm_force, _get_client, _output
 
+    if not getattr(args, "channel", None):
+        _app_checkout_line(args)
+        return
+    _channel_checkout_positionals(args)
+
     version_id = getattr(args, "version", None)
     # Checked before any request: the server's own 422 for this is correct but
     # names a query parameter the caller never typed.
@@ -501,6 +509,270 @@ def _app_checkout(args: argparse.Namespace) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Checkout without a channel
+# ---------------------------------------------------------------------------
+#
+# `app checkout <app>[@<semver>]` reads one of the workspace's lines by name
+# (`/apps/line/files`), which is workspace-admin only. What it can serve is
+# the server's call, and narrower than a channel's:
+#
+# - The product line serves only its head: the version this workspace's
+#   release track offers. An older product version is readable only through
+#   a channel that runs it.
+# - A fork line (`--line`) serves its head, or any version by id.
+# - The server addresses a version by id, never by semver, and nothing maps
+#   one to the other but the head itself. So `@<semver>` is held against the
+#   version served, and refused with nothing written when it is not that.
+
+
+def _channel_checkout_positionals(args: argparse.Namespace) -> None:
+    """Put the channel form's positionals back where they were before `app`.
+
+    argparse fills positionals left to right, so `checkout --channel '#c' DIR`
+    lands DIR in `app`, the first slot. A channel already says which app, so
+    in this form that slot is the directory, as it always was.
+    """
+    if getattr(args, "line", None) is not None:
+        raise PopcornError(
+            "--line names a line to check out without a channel; with --channel "
+            "the checkout is of the line that channel runs",
+            error_code="validation",
+            hint="drop --line, or drop --channel to check out a line by name",
+        )
+    app = getattr(args, "app", None)
+    if app is None:
+        return
+    if args.directory is not None:
+        raise PopcornError(
+            f"with --channel, name no app — got {app!r} as well as the directory "
+            f"{args.directory!r}",
+            error_code="validation",
+            hint="the channel says which app; drop --channel to check out an app by name",
+        )
+    args.directory, args.app = app, None
+
+
+def _parse_app_spec(spec: str) -> tuple[str, str | None]:
+    """`<app>` or `<app>@<semver>` → `(app, semver or None)`."""
+    app, at, semver = spec.partition("@")
+    if not app or (at and not semver):
+        raise PopcornError(
+            f"{spec!r} is not <app> or <app>@<semver>",
+            error_code="validation",
+            hint="'popcorn app list' names each app this workspace can read",
+        )
+    if at:
+        try:
+            parse_semver(semver)
+        except PopcornError:
+            raise PopcornError(
+                f"{semver!r} in {spec!r} is not a semver (MAJOR.MINOR.PATCH)",
+                error_code="validation",
+                hint="a version id goes in --version: "
+                f"'popcorn app checkout {app} --line <line> --version <id>'",
+            ) from None
+    return app, semver or None
+
+
+def _line_refusal_hint(exc: APIError, fork_name: str | None) -> str | None:
+    """What to do about the server refusing a line read, or None to add nothing.
+
+    Matched on the server's messages so that a refusal this does not know
+    keeps its own text and gains no hint that would misdirect.
+    """
+    if exc.status_code == 403:
+        return (
+            "checking out without a channel is for workspace admins; anyone else "
+            "checks out through a channel that runs the app: popcorn app "
+            "checkout --channel '#your-channel'"
+        )
+    if exc.status_code != 404:
+        return None
+    message = str(exc)
+    if "has no readable" in message:
+        return (
+            "'popcorn app list' shows the apps and fork lines this workspace can "
+            "read; a fork line is named with --line"
+        )
+    if "is not a version of" in message:
+        if fork_name is None:
+            return (
+                "without a channel the product line serves only its head, the "
+                "version this workspace's release track offers; an older one is "
+                "read through a channel that runs it: popcorn app checkout "
+                "--channel '<channel>'"
+            )
+        return "a version id is readable only on its own line — " + _WHERE_VERSION_IDS_ARE
+    # FastAPI's answer for a route it does not have.
+    if message == "Not Found":
+        return (
+            "this server predates checkout without a channel; check out through "
+            "a channel that runs the app: popcorn app checkout --channel '<channel>'"
+        )
+    return None
+
+
+def _refuse_unservable_semver(app: str, wanted: str, fork_name: str | None, served: dict) -> None:
+    """Refuse `<app>@<semver>` when the line served another version."""
+    head = f"{served.get('semver')} (version {served.get('version_id')})"
+    if fork_name is None:
+        raise PopcornError(
+            f"{app}@{wanted} cannot be checked out without a channel: the product "
+            f"line serves only its head, {head}, the version this workspace's "
+            "release track offers — nothing was written",
+            error_code="not_found",
+            hint=f"'popcorn app checkout {app}' checks out {served.get('semver')}; "
+            f"a channel that runs {wanted} checks that out: popcorn app checkout "
+            "--channel '<channel>'",
+        )
+    raise PopcornError(
+        f"{app}@{wanted} cannot be checked out by semver: fork line "
+        f"{fork_name!r}'s head is {head}, and its other versions are read by id "
+        "only — nothing was written",
+        error_code="not_found",
+        hint=f"'popcorn app checkout {app} --line {fork_name} --version <id>' — "
+        + _WHERE_VERSION_IDS_ARE,
+    )
+
+
+def _app_checkout_line(args: argparse.Namespace) -> None:
+    from ..cli import _confirm_force, _get_client, _output
+
+    spec = getattr(args, "app", None)
+    if not spec:
+        raise PopcornError(
+            "name an app to check out, or a channel whose app to check out",
+            error_code="validation",
+            hint="popcorn app checkout <app>[@<semver>], or popcorn app checkout "
+            "--channel '#your-channel'",
+        )
+    if getattr(args, "fork", None) is not None:
+        raise PopcornError(
+            "--fork forks a channel's app onto a line, so it needs --channel",
+            error_code="validation",
+            hint="popcorn app checkout --channel '#your-channel' --fork",
+        )
+    app, wanted = _parse_app_spec(spec)
+    fork_name = getattr(args, "line", None) or None
+    version_id = getattr(args, "version", None)
+    if version_id is not None and version_id < 1:
+        raise PopcornError(
+            f"--version takes a version id, a whole number from 1 (got {version_id})",
+            error_code="validation",
+            hint=_WHERE_VERSION_IDS_ARE,
+        )
+    if version_id is not None and wanted is not None:
+        raise PopcornError(
+            f"{spec!r} and --version {version_id} both name a version — pass one",
+            error_code="validation",
+        )
+
+    client = _get_client(args)
+    try:
+        resp = operations.get_app_line_files(client, app, fork_name, version_id)
+    except APIError as exc:
+        exc.hint = _line_refusal_hint(exc, fork_name) or exc.hint
+        raise
+    if wanted is not None and resp.get("semver") != wanted:
+        _refuse_unservable_semver(app, wanted, fork_name, resp)
+    # As in the channel form: read after the files, so a publish between the
+    # two makes the copy historical, and for fork lines only — the product
+    # line serves nothing but its head.
+    head: dict | None = None
+    if version_id is not None and resp.get("kind") == "fork":
+        head = operations.get_app_line_tree(client, app, fork_name)
+    files = files_from_response(resp)
+    if not files:
+        raise PopcornError(f"{app} returned no files to check out", error_code="not_found")
+    historical = head is not None and head.get("version_id") != resp.get("version_id")
+
+    if args.directory:
+        directory = Path(args.directory)
+    elif version_id is not None:
+        directory = Path(f"{app}-{resp.get('semver') or version_id}")
+    else:
+        directory = Path(app)
+    if occupied(directory) and not _confirm_force(
+        args, f"{directory} is not empty — overwrite its bundle files?"
+    ):
+        raise PopcornError(
+            f"{directory} is not empty — its bundle files were left as they are",
+            error_code="validation",
+            hint="pass --force to overwrite them",
+        )
+
+    previous = read_baseline(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    written = write_tree(directory, files)
+    baseline = baseline_from_response(resp, files, historical=historical)
+    write_baseline(directory, baseline)
+    guide = write_agent_guide(
+        directory,
+        force=bool(getattr(args, "force", False)),
+        text=guide_text(baseline),
+        replaceable=(GUIDE_TEXT,) + ((guide_text(previous),) if previous else ()),
+    )
+    stale = sorted(rel for rel, _ in classify_tree(directory)[0] if rel not in files)
+
+    data = {
+        "directory": str(directory),
+        "app": baseline.app,
+        "kind": baseline.kind,
+        "fork_name": baseline.fork_name,
+        "semver": baseline.semver,
+        "base_version_id": baseline.base_version_id,
+        "tree_digest": baseline.tree_digest,
+        "files": written,
+        "guide": guide.name if guide else None,
+        "stale_files": stale,
+    }
+    if head is not None:
+        data["historical"] = historical
+        data["head_version_id"] = head.get("version_id")
+        data["head_semver"] = head.get("semver")
+    line = f"fork line {baseline.fork_name!r}" if baseline.fork_name else baseline.kind
+    lines = [f"Checked out {baseline.app} {baseline.semver} ({line}) into {directory}"]
+    if historical:
+        assert head is not None
+        lines.append(
+            f"This is version {baseline.base_version_id}, not the line's head "
+            f"({head.get('semver')}, version {head.get('version_id')}). It is a copy "
+            "to read and diff — 'app publish' refuses it, and says how to republish "
+            "its content on top of the head."
+        )
+    lines += [
+        *(f"  {p}" for p in written),
+        "",
+        f"{len(written)} file{'s' if len(written) != 1 else ''}, "
+        f"baseline version {baseline.base_version_id}",
+    ]
+    if stale:
+        lines += [
+            "",
+            f"Left in place, and NOT part of {baseline.app} {baseline.semver}: " + ", ".join(stale),
+            "checkout never deletes a file; these publish from here unless you delete them.",
+        ]
+    if guide is not None:
+        lines.append(
+            f"Also wrote {guide.name} — "
+            + (
+                "what this snapshot is and how to republish its content, "
+                if historical
+                else "how to edit and publish this directory, "
+            )
+            + "for whoever reads it next. It is not bundle content and does not publish."
+        )
+    if baseline.kind == "fork" and not historical:
+        lines.append(
+            "No channel is recorded, so 'app publish', 'app status' and 'app apply' "
+            "here need --channel naming a channel that runs this line."
+        )
+    if not historical:
+        lines += ["", f"Next: popcorn app validate {directory}"]
+    _output(args, data, "\n".join(lines))
+
+
+# ---------------------------------------------------------------------------
 # Working-copy commands
 # ---------------------------------------------------------------------------
 
@@ -532,6 +804,12 @@ def _channel_of(args: argparse.Namespace, baseline: Baseline) -> str:
         return str(args.channel)
     if baseline.conversation_id:
         return baseline.conversation_id
+    if baseline.version >= 2:
+        raise PopcornError(
+            f"{BASELINE_FILE} records no channel — this checkout was taken without one",
+            error_code="validation",
+            hint="pass --channel naming a channel that runs this line",
+        )
     raise PopcornError(
         f"{BASELINE_FILE} records no channel — it was written by an older "
         "popcorn (0.19.0 or earlier)",
@@ -772,14 +1050,13 @@ def _refuse_historical_publish(baseline: Baseline, directory: Path) -> None:
     copy of the head in front of the author when it happens, where `app
     status` and the diff summary show what is being undone.
     """
-    channel = baseline.conversation_id or "<channel>"
     raise PopcornError(
         f"{directory} is a checkout of {baseline.app} {baseline.semver} "
         f"(version {baseline.base_version_id}), a past version rather than its "
         "line's head — a publish is based on the head, so it cannot start here",
         error_code="conflict",
-        hint="to republish this content: 'popcorn app checkout --channel "
-        f"{channel} --dir <new-dir>' for the head, copy these bundle files over it (leave its "
+        hint=f"to republish this content: '{head_checkout_command(baseline)} "
+        "--dir <new-dir>' for the head, copy these bundle files over it (leave its "
         f"{BASELINE_FILE}) and delete any file there this version lacks — "
         "or the publish keeps everything added since — then 'popcorn app publish <new-dir> --bump patch -m "
         '"..."\' — the diff it prints is what reverts',
@@ -1632,13 +1909,33 @@ register(
                 "version) to disk, with a baseline",
                 _app_checkout,
                 [
-                    _CHANNEL,
+                    Argument(
+                        "channel",
+                        "Channel whose app to check out (name or UUID). Omit "
+                        "it to name the app instead",
+                    ),
+                    Argument(
+                        "app",
+                        "Without --channel: the app to check out, as 'app "
+                        "list' names it, for workspace admins. <app> is its "
+                        "line's head; <app>@<semver> insists on that version, "
+                        "which without a channel is served only while it is "
+                        "the head. With --channel this slot is the directory",
+                        positional=True,
+                        nargs="?",
+                    ),
                     Argument(
                         "directory",
                         "Target directory (default: ./<app>)",
                         positional=True,
                         nargs="?",
                         flag_alias="--dir",
+                    ),
+                    Argument(
+                        "line",
+                        "Without --channel: check out this workspace's fork "
+                        "line of that name, as 'app lines' lists it, instead "
+                        "of the product line",
                     ),
                     Argument(
                         "fork",
@@ -1655,8 +1952,9 @@ register(
                     ),
                     Argument(
                         "version",
-                        "Check out this version id of the channel's own line "
-                        "instead of its head, into ./<app>-<semver> by default. "
+                        "Check out this version id of the line instead of its "
+                        "head — the channel's own line, or the one named "
+                        "without a channel — into ./<app>-<semver> by default. "
                         "A past version is for reading and diffing; 'app "
                         "publish' refuses it. Ids appear in 'app publish' and "
                         "'app status' output",

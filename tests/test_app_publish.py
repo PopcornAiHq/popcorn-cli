@@ -1236,7 +1236,7 @@ class TestPublishCommand:
 
     def test_a_v1_baseline_needs_an_explicit_channel(self, tmp_path):
         base = {"manifest.yaml": _manifest("0.2.0")}
-        _checkout(tmp_path, base, conversation_id=None)
+        _checkout(tmp_path, base, conversation_id=None, version=1)
         (tmp_path / "manifest.yaml").write_text(_manifest("0.2.1"))
 
         rec = _Recorder()

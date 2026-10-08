@@ -1288,10 +1288,6 @@ _DIRECTORY_SPELLINGS = [
     (["app", "publish", "/tmp/co"], ["app", "publish", "--dir", "/tmp/co"]),
     (["app", "apply", "/tmp/co"], ["app", "apply", "--dir", "/tmp/co"]),
     (["template", "check", "/tmp/co"], ["template", "check", "--dir", "/tmp/co"]),
-    (
-        ["app", "checkout", "--channel", "#c", "/tmp/co"],
-        ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co"],
-    ),
 ]
 
 
@@ -1342,6 +1338,23 @@ class TestDirectoryArgument:
     def test_giving_the_directory_twice_is_a_usage_error(self, parser):
         with pytest.raises(SystemExit):
             parser.parse_args(["app", "status", "/tmp/a", "--dir", "/tmp/b"])
+
+    def test_checkout_with_a_channel_reads_its_positional_as_the_directory(self, parser):
+        """`app checkout` puts an optional `app` positional ahead of the
+        directory, for checking out without a channel. argparse lands the
+        channel form's directory in that first slot, and the handler moves it
+        back — so this pair agrees once that has run, not at parse time."""
+        from popcorn_cli.commands.app import _channel_checkout_positionals
+
+        resolved = []
+        for argv in (
+            ["app", "checkout", "--channel", "#c", "/tmp/co"],
+            ["app", "checkout", "--channel", "#c", "--dir", "/tmp/co"],
+        ):
+            args = parser.parse_args(argv)
+            _channel_checkout_positionals(args)
+            resolved.append((args.app, args.directory))
+        assert resolved == [(None, "/tmp/co")] * 2
 
     def test_dir_disentangles_the_checkout_fork_collision(self, parser):
         """`app checkout`'s own help documents that a bare `--fork` cannot be

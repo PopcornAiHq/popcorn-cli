@@ -1858,15 +1858,17 @@
       "--force"
     ],
     "namespace": {
+      "app": "x",
       "app_command": "checkout",
       "channel": "x",
       "command": "app",
       "debug": false,
-      "directory": "x",
+      "directory": null,
       "env": null,
       "force": true,
       "fork": "x",
       "json": false,
+      "line": null,
       "no_color": false,
       "quiet": false,
       "timeout": null,
@@ -1887,8 +1889,41 @@
       "--force"
     ],
     "namespace": {
+      "app": "x",
       "app_command": "checkout",
       "channel": "x",
+      "command": "app",
+      "debug": false,
+      "directory": null,
+      "env": null,
+      "force": true,
+      "fork": null,
+      "json": false,
+      "line": null,
+      "no_color": false,
+      "quiet": false,
+      "timeout": null,
+      "version": 7,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "app",
+      "checkout",
+      "x",
+      "x",
+      "--line",
+      "x",
+      "--version",
+      "7",
+      "--force"
+    ],
+    "namespace": {
+      "app": "x",
+      "app_command": "checkout",
+      "channel": null,
       "command": "app",
       "debug": false,
       "directory": "x",
@@ -1896,6 +1931,7 @@
       "force": true,
       "fork": null,
       "json": false,
+      "line": "x",
       "no_color": false,
       "quiet": false,
       "timeout": null,
