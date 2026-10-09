@@ -28,7 +28,7 @@ from popcorn_core.errors import (
     PopcornError,
     ReportedError,
 )
-from tests.test_app_publish import _install, _status_response
+from tests.test_app_publish import _checkout, _install, _status_response
 
 CHANNEL = "#example-chan"
 CHANNEL_ID = "00000000-0000-4000-8000-000000000002"
@@ -446,6 +446,25 @@ class TestStatusWaitInstalled:
         error = out["error"]
         assert not isinstance(error, ReportedError)
         assert error.exit_code == EXIT_TIMEOUT
+
+    def test_a_timeout_on_a_channel_never_bound_from_a_checkout_is_one_error(self, tmp_path):
+        """The checkout path stops at the wait too, before reading the head."""
+        _checkout(tmp_path, {"manifest.yaml": _TICK_MANIFEST})
+        head = MagicMock(side_effect=AssertionError("read the head after an unbound wait"))
+        with (
+            patch.object(mod.time, "monotonic", _Clock(step=10)),
+            patch.object(mod, "_read_head", head),
+        ):
+            out = _status(
+                _args(directory=str(tmp_path), wait_installed=True, wait_timeout=5),
+                status=[_not_bound()] * 5,
+            )
+        assert "data" not in out
+        error = out["error"]
+        assert not isinstance(error, ReportedError)
+        assert error.exit_code == EXIT_TIMEOUT
+        assert error.error_code == "timeout"
+        head.assert_not_called()
 
     def test_wait_timeout_needs_the_wait(self):
         with pytest.raises(PopcornError, match="--wait-installed"):

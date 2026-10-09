@@ -1636,6 +1636,12 @@ def _app_status(args: argparse.Namespace) -> None:
     wait = (
         wait_for_install(client, conversation, wait_timeout) if wait_timeout is not None else None
     )
+    if wait is not None and wait.served is None:
+        # Never bound while the wait lasted, as in `_channel_status`: the
+        # line's head is not the question asked, so the wait is the answer.
+        error = wait.error(reported=False)
+        assert error is not None
+        raise error
 
     local = collect_tree(directory)
     unpublishable = unrecognized_code_paths(local.files)
