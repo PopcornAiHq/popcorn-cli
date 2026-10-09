@@ -10,6 +10,8 @@ them rather than agree with itself.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import pytest
 
 from popcorn_core import schedule_drift
@@ -498,3 +500,97 @@ class TestAlarmingClasses:
     def test_only_three_and_four_alarm(self) -> None:
         """The agreed acceptance: exit non-zero only on class 3 and 4."""
         assert {CLASS_PAUSED, CLASS_DRIFT} == schedule_drift.ALARMING_CLASSES
+
+
+class TestOnDemand:
+    """A declaration with neither `interval:` nor `cron:` is on demand.
+
+    The platform creates one paused with nothing to fire on, and a flow arms
+    it to one instant at a time, which reads back with no cadence. Counting
+    the pause as an alarm made `app status` fail on every healthy channel of
+    a bundle that declares one.
+    """
+
+    # Two on-demand schedules beside a plain interval one, the shape of a
+    # bundle whose reminders and held moves are armed by its own flows.
+    _MANIFEST: ClassVar[list[dict]] = [
+        {"flow": "example_tick", "slug": "example-tick", "interval": 900},
+        {"flow": "example_reminder", "slug": "example-reminder", "overlap": "buffer_one"},
+        {"flow": "example_release", "slug": "example-release", "overlap": "buffer_one"},
+    ]
+
+    @staticmethod
+    def _on_demand(slug: str, **over: object) -> dict:
+        over.setdefault("paused", True)
+        return _live(slug, interval_seconds=None, offset_seconds=None, **over)
+
+    def test_is_on_demand(self) -> None:
+        assert schedule_drift.is_on_demand({"slug": "s"})
+        assert not schedule_drift.is_on_demand({"slug": "s", "interval": 60})
+        assert not schedule_drift.is_on_demand({"slug": "s", "cron": "0 8 * * *"})
+
+    def test_a_bundle_with_two_on_demand_schedules_is_clean(self) -> None:
+        report = classify(
+            self._MANIFEST,
+            [
+                _live("example-tick"),
+                self._on_demand("example-reminder"),
+                self._on_demand("example-release"),
+            ],
+            app_mode="prod",
+        )
+        assert not report.alarming
+        assert not report.explained
+        assert [f.slug for f in report.clean] == [
+            "example-tick",
+            "example-reminder",
+            "example-release",
+        ]
+
+    def test_paused_with_no_note_is_clean(self) -> None:
+        """The case that alarmed: paused, and nothing says why — because
+        paused is where an on-demand schedule starts."""
+        report = classify([{"slug": "s"}], [self._on_demand("s")])
+        finding = report.findings[0]
+        assert finding.drift_class is None
+        assert "paused until a flow arms it" in finding.summary
+
+    def test_armed_is_clean(self) -> None:
+        """Unpaused by a mode change and armed to an instant: no cadence."""
+        report = classify(
+            [{"slug": "s"}],
+            [self._on_demand("s", paused=False, note="auto-resumed: set_app_mode")],
+            app_mode="prod",
+        )
+        assert report.findings[0].drift_class is None
+
+    def test_a_pause_note_contradicted_by_mode_is_still_clean(self) -> None:
+        """Paused is the declaration's resting state in every mode, so a mode
+        note cannot make it drift."""
+        report = classify(
+            [{"slug": "s"}],
+            [self._on_demand("s", note="auto-paused: set_app_mode off")],
+            app_mode="prod",
+        )
+        assert report.findings[0].drift_class is None
+
+    @pytest.mark.parametrize("paused", [False, True])
+    def test_a_live_cadence_is_drift(self, paused: bool) -> None:
+        report = classify([{"slug": "s"}], [_live("s", paused=paused)])
+        finding = report.findings[0]
+        assert finding.drift_class == CLASS_DRIFT
+        assert finding.declared == "on demand"
+        assert finding.live is not None and finding.live.startswith("interval 900s")
+
+    def test_not_installed_is_still_drift(self) -> None:
+        report = classify([{"slug": "s"}], [])
+        assert report.findings[0].drift_class == CLASS_DRIFT
+
+    def test_a_scheduled_pause_is_still_class_3(self) -> None:
+        """Only a declaration with no cadence rests paused."""
+        report = classify([{"slug": "s", "interval": 900}], [_live("s", paused=True)])
+        assert report.findings[0].drift_class == CLASS_PAUSED
+
+    def test_next_is_serialised(self) -> None:
+        report = classify([{"slug": "s"}], [])
+        assert report.to_dict()["findings"][0]["next"] is None

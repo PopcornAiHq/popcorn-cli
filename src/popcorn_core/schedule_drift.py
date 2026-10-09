@@ -33,6 +33,12 @@ read: it is the class the schedule was created with, and a manifest that
 re-declares `class:` over a live schedule does not refresh it, so it says
 nothing about what the manifest declares today.
 
+An on-demand schedule — a declaration with neither `interval:` nor `cron:`
+— has no cadence to compare. The platform creates it paused with nothing to
+fire on, and a flow arms it to one instant at a time, which reads back with no
+cadence either. Paused or armed, it is the declaration working; only a live
+cadence on it is drift.
+
 A known blind spot, accepted rather than worked around: the served intent is
 derived under the class a schedule was created with, and under `periodic` it
 is the armed cron verbatim. So when the manifest declares a spreading class
@@ -195,13 +201,19 @@ ALARMING_CLASSES = frozenset({CLASS_PAUSED, CLASS_DRIFT})
 
 @dataclass(frozen=True)
 class Finding:
-    """One schedule's verdict. `drift_class` is None when nothing differs."""
+    """One schedule's verdict. `drift_class` is None when nothing differs.
+
+    `next` is the command to run about it, filled in by the caller, which
+    knows the channel and its install state; None on a finding that needs
+    nothing.
+    """
 
     slug: str
     drift_class: int | None
     summary: str
     declared: str | None = None
     live: str | None = None
+    next: str | None = None
 
     @property
     def alarming(self) -> bool:
@@ -214,6 +226,7 @@ class Finding:
             "summary": self.summary,
             "declared": self.declared,
             "live": self.live,
+            "next": self.next,
         }
 
 
@@ -249,6 +262,15 @@ def _cadence(interval: Any, cron: Any) -> str:
     if cron:
         return f"cron {cron}"
     return "(none)"
+
+
+def is_on_demand(entry: dict[str, Any]) -> bool:
+    """Does a `schedules:` entry declare no cadence at all?
+
+    The platform's word for that is on demand: created paused, and armed by a
+    flow when it wants a fire.
+    """
+    return not entry.get("interval") and not entry.get("cron")
 
 
 def _platform_note(note: str | None) -> _PauseMarker | None:
@@ -338,6 +360,10 @@ def classify(
         live_cadence = _cadence(item.get("interval_seconds"), item.get("cron_expr"))
         marker = _platform_note(item.get("note"))
 
+        if is_on_demand(entry):
+            report.findings.append(_classify_on_demand(slug, item, live_cadence))
+            continue
+
         if item.get("paused"):
             report.findings.append(
                 _classify_pause(slug, marker, app_mode, declared_cadence, live_cadence)
@@ -356,6 +382,31 @@ def classify(
         report.findings.append(finding)
 
     return report
+
+
+def _classify_on_demand(slug: str, item: dict[str, Any], live_cadence: str) -> Finding:
+    """A schedule the manifest declares with no cadence.
+
+    Paused is its resting state, not a fault, and an armed one-off reads back
+    with no cadence, so either is clean. What is not is a live cadence: the
+    manifest asks for none, so something other than the declaration put it
+    there.
+    """
+    if live_cadence == "(none)":
+        if item.get("paused"):
+            summary = "on demand — paused until a flow arms it, as declared"
+        else:
+            summary = "on demand — unpaused, firing only when a flow arms it"
+        return Finding(slug=slug, drift_class=None, summary=summary)
+    return Finding(
+        slug=slug,
+        drift_class=CLASS_DRIFT,
+        summary=(
+            "declared on demand (no cadence), but runs on one — nothing in the manifest asks for it"
+        ),
+        declared="on demand",
+        live=live_cadence + (", paused" if item.get("paused") else ""),
+    )
 
 
 def _classify_pause(

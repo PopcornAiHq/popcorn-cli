@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 import yaml
 
+from popcorn_core.schedule_drift import is_on_demand
 from popcorn_core.template_check import TRIGGER_KEYS, check_bundle
 
 # ── a bundle that checks clean ────────────────────────────────────────
@@ -700,9 +701,15 @@ def test_schedule_naming_an_unknown_flow(tmp_path):
     assert "schedule-unknown-flow" in codes(write_bundle(tmp_path / "b", manifest=manifest))
 
 
-def test_schedule_without_a_trigger_can_never_fire(tmp_path):
-    manifest = {**CLEAN_MANIFEST, "schedules": [{"flow": "sweep", "slug": "s"}]}
-    assert "schedule-no-trigger" in codes(write_bundle(tmp_path / "b", manifest=manifest))
+def test_schedule_with_no_cadence_is_on_demand_and_clean(tmp_path):
+    # Neither `interval:` nor `cron:` declares an on-demand schedule: the
+    # platform creates it paused and a flow arms it. The checker must
+    # accept it, as `app status` does (`schedule_drift.is_on_demand`).
+    entry = {"flow": "sweep", "slug": "s", "overlap": "buffer_one"}
+    manifest = {**CLEAN_MANIFEST, "schedules": [entry]}
+    root = write_bundle(tmp_path / "b", manifest=manifest)
+    assert is_on_demand(entry)
+    assert check_bundle(root).findings == []
 
 
 def test_schedule_declaring_both_cadences_is_rejected(tmp_path):
@@ -716,13 +723,9 @@ def test_schedule_declaring_both_cadences_is_rejected(tmp_path):
     }
     found = codes(write_bundle(tmp_path / "b", manifest=manifest))
     assert "schedule-two-triggers" in found
-    # The two cadence checks are independent: naming both must not also
-    # trip the "can never fire" one, which would read as contradictory
-    # advice in the same report.
-    assert "schedule-no-trigger" not in found
 
 
-def test_one_cadence_alone_trips_neither_cadence_check(tmp_path):
+def test_one_cadence_alone_is_clean(tmp_path):
     for i, cadence in enumerate(({"interval": 300}, {"cron": "0 9 * * *"})):
         manifest = {
             **CLEAN_MANIFEST,
@@ -730,7 +733,6 @@ def test_one_cadence_alone_trips_neither_cadence_check(tmp_path):
         }
         found = codes(write_bundle(tmp_path / f"b{i}", manifest=manifest))
         assert "schedule-two-triggers" not in found, cadence
-        assert "schedule-no-trigger" not in found, cadence
 
 
 def test_webhook_naming_an_unknown_flow(tmp_path):

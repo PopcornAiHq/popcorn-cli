@@ -11,6 +11,7 @@ This document specifies the stable, machine-oriented surface of the `popcorn` CL
 - [Envelope](#envelope)
 - [Error codes](#error-codes)
 - [Exit codes](#exit-codes)
+- [Waiting for an install](#waiting-for-an-install)
 - [Pagination](#pagination)
 - [Streaming (NDJSON)](#streaming-ndjson)
 - [Schema discovery](#schema-discovery)
@@ -63,7 +64,7 @@ Accepts `1`, `true`, or `yes` (case-insensitive) as the enabling value.
 
 ## Envelope
 
-Every command invoked with `--json` emits one of two shapes on stdout.
+Every command invoked with `--json` emits **exactly one envelope** per invocation, in one of two shapes: success on **stdout**, error on **stderr**. Progress and informational lines also go to stderr (suppressed by `--quiet`), never to stdout, so stdout always parses as one JSON document. Streaming commands are the one exception: see [§ Streaming](#streaming-ndjson).
 
 ### Success
 
@@ -75,7 +76,22 @@ Every command invoked with `--json` emits one of two shapes on stdout.
 ```
 
 - `data` is the command's payload. Agents should never see a top-level `ok` *inside* `data` — the CLI strips any leaked upstream envelope so the outer `ok` is authoritative.
-- Exit code: `0`.
+- Exit code: `0`, except from a report command (below).
+
+### Report commands
+
+Some commands answer with a report and then exit non-zero over what it found. They emit the success envelope, carrying every finding, and **no error envelope after it** — `ok: true` says the command ran, the exit code says what it found. Branch on the exit code, then read `data`.
+
+| Command | Non-zero exit when | Exit | Where the findings are |
+|---|---|---|---|
+| `app status` | a declared schedule drifted | `5` | `data.schedule_drift.findings[]` (`drift_class` 3 or 4), each with `next`: the command to run |
+| `app status --wait-installed` | the install ended other than `current` / the wait timed out | `5` / `6` | `data.install_wait`, `data.install` |
+| `channel create --template --wait` | the same | `5` / `6` | `data.install_wait`, `data.install` |
+| `app validate` | an error finding (with `--strict`, any warning) | `1` | `data.findings[]` |
+| `flow validate` | any flow is invalid | `1` | `data.results[]`, `data.invalid` |
+| `channel-config show --strict` | a fatal finding | `5` | `data.fatal` |
+
+In text mode the same commands print the report on stdout and, all but `channel-config show --strict`, a one-line `Error:` on stderr.
 
 ### Error
 
@@ -120,8 +136,8 @@ Stable enum. All values are lowercase `snake_case`. The set is frozen at 1.0.0; 
 | `client_error` | Other 4xx | |
 | `server_error` | 5xx — retryable with backoff | |
 | `network_error` | Transport failure (no HTTP response) | DNS, TLS, connection refused |
-| `unhealthy` | The command succeeded but the thing it checked is unhealthy | `channel-config show --strict` with fatal findings |
-| `timeout` | Client-side wait elapsed before the operation finished | `flow run --wait` hit `--timeout-run` |
+| `unhealthy` | The command succeeded but the thing it checked is unhealthy | `channel-config show --strict` with fatal findings; `app status` schedule drift; a waited-for install that failed |
+| `timeout` | Client-side wait elapsed before the operation finished | `flow run --wait` hit `--timeout-run`; an install wait hit `--wait-timeout` |
 | `internal` | Unexpected internal CLI error | Bug; please report |
 
 Machine-readable copy of this table is embedded in `popcorn commands --json` under `error_codes`.
@@ -140,9 +156,27 @@ Semantic — agents can branch on these to decide retry vs bail without parsing 
 | `3` | 4xx API error | request is wrong; do not retry |
 | `4` | 5xx API error | retryable with backoff |
 | `5` | Ran fine, but what it checked is unhealthy | inspect the findings |
+| `6` | A client-side wait timed out; the operation may still be running | wait again |
 | `130` | Interrupted (SIGINT / Ctrl+C) | stop |
 
 Exit codes are also in `popcorn commands --json` under `exit_codes`.
+
+---
+
+## Waiting for an install
+
+An install runs on the server after the request that starts it returns. `app status --wait-installed` (with `--channel`, or from a checkout) and `channel create --template --wait` poll `GET /apps/status` every 3 seconds until `install.state` settles, for at most `--wait-timeout` seconds (default `600`, between `1` and `3600`; `--timeout` is the per-request HTTP timeout, not this).
+
+| `install.state` | Wait |
+|---|---|
+| `current` | done — exit `0` |
+| `installing`, `retrying` | keeps waiting |
+| `behind` with `install.live: false` | keeps waiting (the server could not read the install workflow, so a running install looks `behind`) |
+| channel not bound yet (404) | keeps waiting — the install has not started. After `channel create --if-not-exists` returned an existing channel, which this call installed nothing into, it ends the wait instead (exit `5`) |
+| `failed`, `skipped`, `locked`, `behind`, or any other | done — exit `5`, `error_code: unhealthy` |
+| none of the above by the deadline | exit `6`, `error_code: timeout`, `retryable: true` |
+
+`data.install_wait` carries `outcome` (`installed`, `failed` or `timeout`), the last `state`, `waited_seconds`, `timeout_seconds` and `message`, which names the state and the served `error` or `reason`. A timeout on a channel that was never bound has no report to print, so `app status` answers it with the error envelope alone.
 
 ---
 
@@ -325,6 +359,8 @@ popcorn api /openapi.json --raw                # raw response, no envelope
 ```
 
 The `@-` and `@file` prefixes match `curl` and `gh api` conventions. Use `\@` to escape a literal `@` at the start of a JSON payload.
+
+The same prefixes work wherever a flag takes a JSON object (`flow run --inputs`, `table rows --filter`) and in `flow run --input key=value`, which sets one input and repeats, merged over `--inputs`. Its value is always a string, never parsed as JSON: `key=@path` is the file's text, `key=@-` is stdin, and `key=\@text` is the literal `@text`. Stdin can be read once per invocation, so a second `@-` is refused (`validation`).
 
 `--raw` bypasses the envelope; the endpoint's JSON is printed unmodified. Useful for bulk-exporting spec documents. Combine with `--json` for enveloped output.
 

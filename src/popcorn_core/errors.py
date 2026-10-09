@@ -130,6 +130,17 @@ class PopcornError(Exception):
         return d
 
 
+class ReportedError(PopcornError):
+    """A failure whose report the command has already printed.
+
+    For commands that print a full report and then exit non-zero over what it
+    found (`app status` drift, `app validate` and `flow validate` errors, an
+    install wait that failed). Under `--json` the success envelope on stdout
+    already carries the findings, so no error envelope follows it: one
+    invocation, one envelope. In text mode the message still goes to stderr.
+    """
+
+
 class AuthError(PopcornError):
     """Authentication-related error."""
 
