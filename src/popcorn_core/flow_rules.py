@@ -148,6 +148,12 @@ ACTIVITY_ROLES: dict[str, dict[str, Any]] = {
         ),
         "output_schema_arg": None,
     },
+    "foundation.store.patch_rows": {
+        "writes_rows": True,
+        "reads_rows": False,
+        "column_args": (),
+        "output_schema_arg": None,
+    },
     "foundation.store.upsert_rows": {
         "writes_rows": True,
         "reads_rows": False,
