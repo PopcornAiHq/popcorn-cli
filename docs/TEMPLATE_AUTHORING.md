@@ -2,12 +2,12 @@
 
 This guide now lives on the docs site:
 
-**<https://docs.popcorn.ai/guides/template-authoring.html>**
+**<https://docs.popcorn.ai/platform/guides/template-authoring.html>**
 
 Plain Markdown, for an agent or a `curl`:
 
 ```
-https://docs.popcorn.ai/guides/template-authoring.md
+https://docs.popcorn.ai/platform/guides/template-authoring.md
 ```
 
 It moved because it describes the platform rather than this CLI — the bundle
