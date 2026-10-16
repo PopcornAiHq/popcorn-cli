@@ -102,7 +102,7 @@ The implementation rules that keep it true:
 
 ## Channel templates
 
-The authoring guide lives at <https://docs.popcorn.ai/guides/template-authoring.md>;
+The authoring guide lives at <https://docs.popcorn.ai/platform/guides/template-authoring.md>;
 `docs/TEMPLATE_AUTHORING.md` is a pointer to it, kept so references resolve
 (section numbers match). It describes the platform, not this CLI. Don't copy
 guide content into this repo, and don't restate activity names, arguments or
