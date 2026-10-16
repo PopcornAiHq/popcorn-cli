@@ -48,7 +48,12 @@ bound manifest declares. Most differences there are deliberate —
 its declared minute by the de-peak offset, which the server reports per
 schedule as its intended cadence — so `schedule_drift` classifies
 each one and only an unexplained difference, or a schedule paused with nothing
-saying why, makes the command exit non-zero.
+saying why, makes the command exit non-zero (5, `unhealthy`). A schedule the
+manifest declares with no cadence is on demand, and paused is how it rests.
+
+`status --wait-installed` polls the same `/apps/status` read until the install
+settles, for the callers that start one and have to know when it lands —
+`channel create --template --wait` uses the same wait.
 
 Handlers import `..cli` helpers inside the function body: cli.py imports this
 package at module load to build the parser, so a module-level import cycles.
@@ -58,6 +63,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -108,7 +115,14 @@ from popcorn_core.app_publish import (
     unrecognized_code_note,
     unrecognized_code_paths,
 )
-from popcorn_core.errors import APIError, AuthError, PopcornError
+from popcorn_core.errors import (
+    EXIT_TIMEOUT,
+    EXIT_UNHEALTHY,
+    APIError,
+    AuthError,
+    PopcornError,
+    ReportedError,
+)
 from popcorn_core.resolve import resolve_conversation
 from popcorn_core.template_check import ERROR, BundleReport, check_bundle
 
@@ -1138,25 +1152,260 @@ def _render_schedule_drift(
                 f"        declared {finding.declared or '(none)'}; "
                 f"live {finding.live or '(not installed)'}"
             )
+        if finding.next:
+            lines.append(f"        next: {finding.next}")
     return lines
 
 
+# Install states in which `app apply` starts the install that re-creates a
+# bundle's schedules. `locked` refuses it, and a moving install needs waiting
+# out rather than a second one.
+_APPLY_FIXES = frozenset({"failed", "skipped", "behind"})
+
+
+def _drift_next_step(
+    finding: schedule_drift.Finding, conversation: str, install_state: str | None
+) -> str:
+    """The command to run about one alarming finding.
+
+    Every install of the line's head reconciles the channel's schedules to its
+    manifest, so on a channel behind its line the fix for drift is to start
+    one, and on one with an install under way it is to wait for it. A current
+    channel has no install to start and no CLI write reaches a schedule — they
+    are bundle content — so the step is to read the schedule's own record,
+    whose `note` says what last changed it. That is also the step for an
+    unexplained pause, which no install undoes.
+    """
+    channel = f"'{conversation}'"
+    if finding.drift_class == schedule_drift.CLASS_DRIFT:
+        if install_state in _APPLY_FIXES:
+            return f"popcorn app apply --channel {channel}"
+        if install_state in _INSTALL_MOVING:
+            return f"popcorn app status --channel {channel} --wait-installed"
+    return f"popcorn schedule get {finding.slug} --channel {channel}"
+
+
 def _schedule_drift_section(
-    client: Any, conversation: str, data: dict[str, Any], lines: list[str]
-) -> str | None:
+    client: Any,
+    conversation: str,
+    data: dict[str, Any],
+    lines: list[str],
+    install_state: str | None,
+) -> ReportedError | None:
     """Fold the drift check into a status report's data and rendering.
 
-    Returns the message the caller must raise AFTER emitting output, so a
-    drifted channel still prints its report rather than only an error.
+    Returns the error the caller must raise AFTER emitting output, so a
+    drifted channel still prints its report rather than only an error, and
+    under `--json` prints only that report.
     """
     report, error = _collect_schedule_drift(client, conversation)
+    if report is not None:
+        report.findings = [
+            replace(f, next=_drift_next_step(f, conversation, install_state)) if f.alarming else f
+            for f in report.findings
+        ]
     data["schedule_drift"] = report.to_dict() if report is not None else None
     data["schedule_drift_error"] = error
     lines += _render_schedule_drift(report, error)
     if report is None or not report.alarming:
         return None
     slugs = ", ".join(f.slug for f in report.alarming)
-    return f"{len(report.alarming)} schedule(s) drifted from the manifest: {slugs}"
+    steps = {f.next for f in report.alarming}
+    return ReportedError(
+        f"{len(report.alarming)} schedule(s) drifted from the manifest: {slugs}",
+        error_code="unhealthy",
+        exit_code=EXIT_UNHEALTHY,
+        # One command fixes all of them only when they share it; otherwise
+        # each finding carries its own and a single hint would mislead.
+        hint=steps.pop() if len(steps) == 1 else None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Waiting for an install
+# ---------------------------------------------------------------------------
+
+# `install.state` values that mean an install is still moving the channel.
+# Every other state is an answer: `current` the one that succeeded, and the
+# rest (`failed`, `skipped`, `locked`, `behind`, or a state this CLI does not
+# know yet) a channel no running install will move, so waiting longer cannot
+# change it.
+_INSTALL_MOVING = frozenset({"installing", "retrying"})
+INSTALL_WAIT_DEFAULT_SECONDS = 600
+# Bounded on purpose: a foreground wait that outlives the shell that started
+# it helps nobody, and an install that needs longer has gone wrong.
+INSTALL_WAIT_MAX_SECONDS = 3600
+_INSTALL_POLL_SECONDS = 3
+
+WAIT_INSTALLED = "installed"
+WAIT_FAILED = "failed"
+WAIT_TIMEOUT = "timeout"
+
+
+def install_wait_timeout(args: argparse.Namespace, waiting: bool, wait_flag: str) -> int | None:
+    """The validated `--wait-timeout`, or None when the command is not waiting.
+
+    Checked before any request, so a bad value never leaves a half-done
+    command behind it.
+    """
+    raw = getattr(args, "wait_timeout", None)
+    if not waiting:
+        if raw is not None:
+            raise PopcornError(
+                f"--wait-timeout only applies with {wait_flag}", error_code="validation"
+            )
+        return None
+    if raw is None:
+        return INSTALL_WAIT_DEFAULT_SECONDS
+    if not 1 <= raw <= INSTALL_WAIT_MAX_SECONDS:
+        raise PopcornError(
+            f"--wait-timeout must be between 1 and {INSTALL_WAIT_MAX_SECONDS} seconds",
+            error_code="validation",
+        )
+    return int(raw)
+
+
+@dataclass
+class InstallWait:
+    """How a wait for a channel's install ended.
+
+    `served` is the last `/apps/status` response, or None when the channel
+    was never bound while the wait lasted. `outcome` is `installed`,
+    `failed` or `timeout`.
+    """
+
+    conversation: str
+    outcome: str
+    served: dict[str, Any] | None
+    waited_seconds: int
+    timeout_seconds: int
+    message: str | None = None
+    hint: str | None = None
+
+    @property
+    def install(self) -> dict[str, Any] | None:
+        if self.served is None:
+            return None
+        install = self.served.get("install")
+        return install if isinstance(install, dict) else None
+
+    @property
+    def state(self) -> str | None:
+        return (self.install or {}).get("state")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "outcome": self.outcome,
+            "state": self.state,
+            "waited_seconds": self.waited_seconds,
+            "timeout_seconds": self.timeout_seconds,
+            "message": self.message,
+        }
+
+    def line(self) -> str:
+        if self.outcome == WAIT_INSTALLED:
+            return f"Install wait: installed after {self.waited_seconds}s."
+        if self.outcome == WAIT_TIMEOUT:
+            return f"Install wait: TIMED OUT — {self.message}."
+        return f"Install wait: FAILED after {self.waited_seconds}s — {self.message}."
+
+    def error(self, *, reported: bool) -> PopcornError | None:
+        """What to raise after the report, or None when the install landed.
+
+        `reported` says whether the caller printed a report carrying this
+        wait; when it did not, the error is the invocation's one envelope.
+        """
+        if self.outcome == WAIT_INSTALLED:
+            return None
+        cls = ReportedError if reported else PopcornError
+        if self.outcome == WAIT_TIMEOUT:
+            # Not a failure: the install may still land, so the agent's
+            # move is to wait again, and it is told so in the exit code.
+            return cls(
+                self.message,
+                error_code="timeout",
+                exit_code=EXIT_TIMEOUT,
+                retryable=True,
+                hint=f"popcorn app status --channel '{self.conversation}' --wait-installed",
+            )
+        return cls(self.message, error_code="unhealthy", exit_code=EXIT_UNHEALTHY, hint=self.hint)
+
+
+def _install_still_moving(install: dict[str, Any]) -> bool:
+    state = install.get("state")
+    if state in _INSTALL_MOVING:
+        return True
+    # With the install workflow unreadable (`live: false`) the server answers
+    # from the database alone, where a running install looks `behind`; only
+    # time tells the two apart.
+    return state == "behind" and install.get("live") is False
+
+
+def _ended_message(conversation: str, install: dict[str, Any]) -> str:
+    state = install.get("state") or "unknown"
+    detail = install.get("error") or install.get("reason")
+    return f"the install on {conversation} ended {state}" + (f": {detail}" if detail else "")
+
+
+def wait_for_install(
+    client: Any,
+    conversation: str,
+    timeout: int,
+    *,
+    unbound_is_pending: bool = True,
+    label: str | None = None,
+) -> InstallWait:
+    """Poll `/apps/status` until the channel's install settles, or `timeout`.
+
+    A 404 is a channel bound to nothing with no install under way. Right
+    after something started one (`channel create --template`) that is "not
+    yet" — the install workflow has not begun — so it is polled through
+    unless `unbound_is_pending` is False, for a caller that started nothing
+    and would otherwise wait out the whole timeout on a channel with no app.
+    `label` names the channel in messages when `conversation` is an id.
+    """
+    from ..cli import _status
+
+    name = label or conversation
+    started = time.monotonic()
+    seen: object = object()
+    while True:
+        try:
+            served: dict[str, Any] | None = operations.get_channel_app_status(client, conversation)
+        except APIError as exc:
+            if exc.status_code != 404:
+                raise
+            served = None
+        install = (served or {}).get("install")
+        install = install if isinstance(install, dict) else {}
+        state = install.get("state") if served is not None else None
+        if state != seen:
+            _status(f"Install on {name}: {state or 'not started yet'}")
+            seen = state
+
+        outcome, message, hint = None, None, None
+        if served is None:
+            if not unbound_is_pending:
+                outcome = WAIT_FAILED
+                message = f"{name} runs no app bundle, so there is no install to wait for"
+                hint = f"popcorn app list --channel '{name}'"
+        elif state == "current":
+            outcome = WAIT_INSTALLED
+        elif not _install_still_moving(install):
+            outcome = WAIT_FAILED
+            message = _ended_message(name, install)
+            hint = install.get("retry_hint")
+
+        elapsed = time.monotonic() - started
+        if outcome is None and elapsed >= timeout:
+            outcome = WAIT_TIMEOUT
+            where = f"state {state}" if served is not None else "no install has started yet"
+            message = f"waited {timeout}s for the install on {name} ({where})"
+        if outcome is not None:
+            return InstallWait(
+                name, outcome, served, int(elapsed), timeout, message=message, hint=hint
+            )
+        time.sleep(min(_INSTALL_POLL_SECONDS, timeout - elapsed))
 
 
 def _version_label(semver: Any, version_id: Any) -> str:
@@ -1250,7 +1499,9 @@ def _read_install(client: Any, conversation: str) -> tuple[dict | None, str | No
     return install, None
 
 
-def _channel_status(args: argparse.Namespace, conversation: str) -> None:
+def _channel_status(
+    args: argparse.Namespace, conversation: str, wait_timeout: int | None = None
+) -> None:
     """ "Has my publish landed on this channel?", from server state alone.
 
     The server answers it in one read, `/apps/status`: the binding, the
@@ -1265,19 +1516,30 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
     from the version ids alone, which left a dead install pending forever;
     it now follows `install.state`, so the two never disagree.
     """
-    from ..cli import _get_client, _output
+    from ..cli import _get_client
 
     client = _get_client(args)
-    try:
-        served = operations.get_channel_app_status(client, conversation)
-    except APIError as exc:
-        if exc.status_code != 404:
-            raise
-        raise PopcornError(
-            f"{conversation} does not run an app bundle — there is no install to report",
-            error_code="not_found",
-            hint=f"popcorn app list --channel '{conversation}'",
-        ) from exc
+    wait: InstallWait | None = None
+    if wait_timeout is not None:
+        wait = wait_for_install(client, conversation, wait_timeout)
+        if wait.served is None:
+            # Never bound while the wait lasted: no report to print, so the
+            # error is the whole answer.
+            error = wait.error(reported=False)
+            assert error is not None
+            raise error
+        served = wait.served
+    else:
+        try:
+            served = operations.get_channel_app_status(client, conversation)
+        except APIError as exc:
+            if exc.status_code != 404:
+                raise
+            raise PopcornError(
+                f"{conversation} does not run an app bundle — there is no install to report",
+                error_code="not_found",
+                hint=f"popcorn app list --channel '{conversation}'",
+            ) from exc
 
     install = served.get("install") or {}
     state = install.get("state")
@@ -1315,15 +1577,44 @@ def _channel_status(args: argparse.Namespace, conversation: str) -> None:
         ]
     lines.append("")
     lines += _served_install_lines(install, conversation)
-    drift = _schedule_drift_section(client, conversation, data, lines)
+    _finish_status(args, client, conversation, data, lines, state, wait)
+
+
+def _finish_status(
+    args: argparse.Namespace,
+    client: Any,
+    conversation: str,
+    data: dict[str, Any],
+    lines: list[str],
+    install_state: str | None,
+    wait: InstallWait | None,
+) -> None:
+    """Append the wait and the drift check, print the one report, then exit.
+
+    A failed or timed-out wait outranks drift: schedules are reconciled by
+    the install, so drift on a channel whose install did not land is a
+    symptom of that, not news.
+    """
+    from ..cli import _output
+
+    if wait is not None:
+        data["install_wait"] = wait.to_dict()
+        lines += ["", wait.line()]
+    drift = _schedule_drift_section(client, conversation, data, lines, install_state)
     _output(args, data, "\n".join(lines))
-    if drift:
-        raise PopcornError(drift, error_code="validation")
+    failure = wait.error(reported=True) if wait is not None else None
+    if failure is not None:
+        raise failure
+    if drift is not None:
+        raise drift
 
 
 def _app_status(args: argparse.Namespace) -> None:
-    from ..cli import _get_client, _output
+    from ..cli import _get_client
 
+    wait_timeout = install_wait_timeout(
+        args, bool(getattr(args, "wait_installed", False)), "--wait-installed"
+    )
     directory = _directory(args)
     # `--channel` outside a checkout is the channel-scoped read; inside one it
     # keeps its older meaning — the channel to compare the working copy
@@ -1332,7 +1623,7 @@ def _app_status(args: argparse.Namespace) -> None:
     baseline = read_baseline(directory)
     if baseline is None:
         if getattr(args, "channel", None):
-            _channel_status(args, str(args.channel))
+            _channel_status(args, str(args.channel), wait_timeout)
             return
         raise PopcornError(
             f"no {BASELINE_FILE} in {directory} — this is not an app checkout",
@@ -1342,6 +1633,15 @@ def _app_status(args: argparse.Namespace) -> None:
         )
     client = _get_client(args)
     conversation = _channel_of(args, baseline)
+    wait = (
+        wait_for_install(client, conversation, wait_timeout) if wait_timeout is not None else None
+    )
+    if wait is not None and wait.served is None:
+        # Never bound while the wait lasted, as in `_channel_status`: the
+        # line's head is not the question asked, so the wait is the answer.
+        error = wait.error(reported=False)
+        assert error is not None
+        raise error
 
     local = collect_tree(directory)
     unpublishable = unrecognized_code_paths(local.files)
@@ -1435,10 +1735,8 @@ def _app_status(args: argparse.Namespace) -> None:
     if diff.preserved:
         lines.append("")
         lines.append(preserved_note(diff.preserved))
-    drift = _schedule_drift_section(client, conversation, data, lines)
-    _output(args, data, "\n".join(lines))
-    if drift:
-        raise PopcornError(drift, error_code="validation")
+    state = install.get("state") if install is not None else None
+    _finish_status(args, client, conversation, data, lines, state, wait)
 
 
 # ---------------------------------------------------------------------------
@@ -1566,18 +1864,29 @@ def _app_validate(args: argparse.Namespace) -> None:
     _run_server_checks(args, directory, report)
     _output(args, report.to_dict(), _render_validate(report))
 
+    # The report above carries every finding; these only set the exit code.
     if report.errors:
-        raise PopcornError(
+        raise ReportedError(
             f"{len(report.errors)} error(s) in {args.directory}",
             error_code="validation",
         )
     # --strict is for CI, where an unreviewed warning is how a bundle drifts.
     # A skipped server check is not a warning: it is the absence of an answer.
     if getattr(args, "strict", False) and report.warnings:
-        raise PopcornError(
+        raise ReportedError(
             f"{len(report.warnings)} warning(s) in {args.directory} (--strict)",
             error_code="validation",
         )
+
+
+# Shared with `channel create --wait`. Not `--timeout`: that is the global
+# per-request HTTP timeout, hoisted ahead of every subcommand.
+WAIT_TIMEOUT_ARGUMENT = Argument(
+    "wait-timeout",
+    f"Seconds to wait for the install (default {INSTALL_WAIT_DEFAULT_SECONDS}, "
+    f"max {INSTALL_WAIT_MAX_SECONDS})",
+    type=int,
+)
 
 
 # The arguments `template check` took, so the alias stays a pure rename.
@@ -1738,6 +2047,15 @@ register(
                         "Outside a checkout this reports that channel's bound "
                         "version, its line's head and the install state",
                     ),
+                    Argument(
+                        "wait-installed",
+                        "First wait until the channel's install settles: exit 0 "
+                        "once it is current, 5 if it ended failed, skipped or "
+                        "locked, 6 on timeout. A channel not bound yet counts "
+                        "as not started",
+                        action="store_true",
+                    ),
+                    WAIT_TIMEOUT_ARGUMENT,
                 ],
             ),
         ],

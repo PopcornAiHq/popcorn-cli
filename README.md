@@ -90,7 +90,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn message download <file_key> [-o PATH]` | Download a file |
 | **Channels** | |
 | `popcorn channel list [query] [--dms] [--include-archived] [--include-hidden]` | List channels or DMs, following the server's cursor to the last page. Archived and hidden conversations are excluded unless asked for |
-| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists]` | Create a channel. `--type` defaults to `workspace_channel` (everyone in the workspace is a member, now and as people join, so `--members` is ignored); `public_channel` is visible to anyone and joined on demand, `private_channel` holds only invited members. `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server |
+| `popcorn channel create <name> [--type TYPE] [--members IDS] [--template T] [--if-not-exists] [--wait] [--wait-timeout N]` | Create a channel. `--type` defaults to `workspace_channel` (everyone in the workspace is a member, now and as people join, so `--members` is ignored); `public_channel` is visible to anyone and joined on demand, `private_channel` holds only invited members. `--template` installs a registry template into it (the only way to install one). `--if-not-exists` returns a channel you are a member of that already has the name (`already_existed: true`), matched case-sensitively by the server. The template installs after the create returns; `--wait` waits for it (default 600s, max 3600): exit 0 installed, 5 failed, 6 timed out |
 | `popcorn channel info <conv>` | Channel details + members |
 | `popcorn channel join <conv>` | Join a channel |
 | `popcorn channel leave <conv>` | Leave a channel |
@@ -102,10 +102,10 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn channel templates` | List the channel templates the registry can install |
 | **Flows** | |
 | `popcorn flow activities [--tier T] [--status S] [--category C]` | List the DSL activity catalog |
-| `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail) |
+| `popcorn flow validate <file\|dir> --channel <conv>` | Statically validate flow YAML without installing (exit 1 if any fail; the report is the only envelope) |
 | `popcorn flow list --channel <conv> [--limit N] [--offset N]` | List flows in a channel |
 | `popcorn flow get <flow_id> --channel <conv> [--no-triggers]` | Get a flow definition and what starts it on the channel (schedules, webhooks, message triggers, document uploads, state edges, sibling flows) |
-| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded) |
+| `popcorn flow run <flow_id> --channel <conv> [--inputs JSON] [--input K=V ...] [--wait] [--timeout-run N]` | Start a flow run (`--wait` polls until the server reports the run finished; non-zero exit unless it succeeded). `--input` sets one input as a string and repeats, merged over `--inputs`: `K=@path` is a file's text, `K=@-` is stdin, `K=\@text` keeps a leading `@` |
 | `popcorn flow runs list --channel <conv> [--status S] [--flow <name>] [--limit N] [--page-token T]` | List flow runs, each with its flow name; `--flow` narrows to one flow (pass it again with `--page-token`); older runs may be stamped with the flow's id instead of its name, and passing that id lists them |
 | `popcorn flow runs get <workflow_id> --channel <conv> [--run-id R] [--include-errors]` | Get a flow run's detail (incl. the queue/tier it landed on, its inputs and the version it ran) |
 | `popcorn flow runs timeline <workflow_id> --channel <conv> [--run-id R] [--before N] [--limit N]` | List a run's steps (activities, timers, signals) newest first, with outcome, duration and attempt; page with `--before` and `--run-id` from `pagination.next` |
@@ -117,6 +117,7 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn schedule trigger <schedule> --channel <conv> [--overlap-policy P]` | Run a declared schedule now with its stored inputs; prints the run's workflow id to follow with `flow runs get` |
 | **App bundles** | |
 | `popcorn app validate <dir> [--strict]` | Check a bundle before publishing: its structure offline, and, in a fork checkout while logged in, the server's publish checks — the manifest's tables among them — without publishing. Says when the server checks were skipped and why (exit 1 on errors; `--strict` also on warnings). `popcorn template check` is the old name and still works |
+| `popcorn app status [<dir>] [--channel <conv>] [--wait-installed] [--wait-timeout N]` | Has the publish landed? The bound version, the line's head, the install state and the schedules against the bound manifest; with a checkout, also what differs. Exit 5 on schedule drift, each finding naming the command to run next (a schedule declared with no cadence is on demand, and paused is healthy). `--wait-installed` first waits until the install settles (default 600s, max 3600): exit 0 current, 5 failed/skipped/locked, 6 timed out |
 | **Tables** (channel agent store) | |
 | `popcorn table list --channel <conv>` | List tables in a channel |
 | `popcorn table schema <name> --channel <conv>` | Show a table's columns |
@@ -192,8 +193,10 @@ $ popcorn channel info '#nope' --json
  "error_code": "not_found", "code": "PopcornError", "retryable": false}   # exit 1
 ```
 
+- One envelope per invocation: success on stdout, error on stderr
 - Success: `{"ok": true, "data": ...}` (data never contains a leaked top-level `ok`)
 - Failure: `{"ok": false, "error": "...", "error_code": "...", "retryable": ...}` + non-zero exit
+- Report commands (`app status`, `app validate`, `flow validate`, `channel-config show --strict`, `channel create --wait`) print their findings as the success envelope and still exit non-zero over them
 - `error_code` is the stable machine-readable code — branch on this, not `code` (class name)
 
 **Exit codes** (agents can switch on these):
@@ -206,11 +209,12 @@ $ popcorn channel info '#nope' --json
 | `3` | 4xx API error — request is wrong |
 | `4` | 5xx API error — retryable with backoff |
 | `5` | Ran fine, but what it checked is unhealthy |
+| `6` | A client-side wait timed out — the operation may still be running |
 | `130` | Interrupted (Ctrl+C) |
 
 **Error codes** (stable `error_code` enum):
 
-`validation` · `unauthorized` · `forbidden` · `not_found` · `conflict` · `rate_limited` · `client_error` · `server_error` · `network_error` · `unhealthy` · `internal`
+`validation` · `unauthorized` · `forbidden` · `not_found` · `conflict` · `rate_limited` · `client_error` · `server_error` · `network_error` · `unhealthy` · `timeout` · `internal`
 
 **Discover everything programmatically** — no scraping `--help`:
 

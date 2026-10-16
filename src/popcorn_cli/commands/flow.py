@@ -233,7 +233,7 @@ def _validate_channel(args: argparse.Namespace, target: Path) -> str:
 def _flow_validate(args: argparse.Namespace) -> None:
     from pathlib import Path
 
-    from popcorn_core.errors import PopcornError
+    from popcorn_core.errors import PopcornError, ReportedError
 
     from ..cli import _get_client, _output
 
@@ -272,7 +272,8 @@ def _flow_validate(args: argparse.Namespace) -> None:
     header = f"Validated {len(files)} flow(s), {bad} invalid:"
     _output(args, {"results": results, "invalid": bad}, "\n".join([header, *lines]))
     if bad:
-        raise PopcornError(f"{bad} flow(s) failed validation", error_code="validation")
+        # The report above is the answer; this only sets the exit code.
+        raise ReportedError(f"{bad} flow(s) failed validation", error_code="validation")
 
 
 def _schema_type(spec: dict[str, Any]) -> str:
@@ -476,11 +477,17 @@ def _flow_get(args: argparse.Namespace) -> None:
 def _flow_run(args: argparse.Namespace) -> None:
     from popcorn_core.errors import PopcornError
 
-    from ..cli import _get_client, _output, _read_json_object, _status
+    from ..cli import _get_client, _output, _read_input_pairs, _read_json_object, _status
 
-    client = _get_client(args)
     raw_inputs = getattr(args, "inputs", None)
+    pairs = getattr(args, "input", None) or []
+    # Parsed before the client, so bad input fails before any request.
     inputs = _read_json_object(raw_inputs, "--inputs") if raw_inputs else None
+    if pairs:
+        # Merged over --inputs: the object is the base, a flag the override.
+        overrides = _read_input_pairs(pairs, "--input", stdin_taken=raw_inputs == "@-")
+        inputs = {**(inputs or {}), **overrides}
+    client = _get_client(args)
     # Name->id resolution and the conversation_id default both live in
     # operations.run_flow, which already resolves the conversation.
     resp = operations.run_flow(client, args.channel, args.flow_id, inputs=inputs)
@@ -856,6 +863,13 @@ register(
                         "inputs",
                         "JSON object of flow inputs (use '@-' for stdin, '@path' for a file)",
                         type=str,
+                    ),
+                    Argument(
+                        "input",
+                        "One input as key=value, repeatable, merged over --inputs. "
+                        "The value is a string: key=@path is that file's text, "
+                        "key=@- is stdin, and key=\\@text keeps a leading '@'",
+                        action="append",
                     ),
                     Argument(
                         "wait",

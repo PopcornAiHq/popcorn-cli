@@ -21,6 +21,7 @@ from popcorn_core.operations import DEFAULT_CHANNEL_TYPE
 
 from ..registry import Argument, Command, Subcommand, register
 from ._late import late_handler
+from .app import WAIT_TIMEOUT_ARGUMENT
 
 _CHANNEL = Argument(
     "conversation",
@@ -75,6 +76,14 @@ register(
                         "instead of failing on the duplicate",
                         action="store_true",
                     ),
+                    Argument(
+                        "wait",
+                        "With --template: wait until the template's install settles "
+                        "(exit 0 installed, 5 failed, 6 timed out); the create "
+                        "otherwise returns before it runs",
+                        action="store_true",
+                    ),
+                    WAIT_TIMEOUT_ARGUMENT,
                 ],
             ),
             Subcommand(

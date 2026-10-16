@@ -891,6 +891,8 @@
       "template": null,
       "timeout": null,
       "type": "workspace_channel",
+      "wait": false,
+      "wait_timeout": null,
       "workspace": null,
       "yes": false
     }
@@ -906,7 +908,10 @@
       "x",
       "--template",
       "x",
-      "--if-not-exists"
+      "--if-not-exists",
+      "--wait",
+      "--wait-timeout",
+      "30"
     ],
     "namespace": {
       "channel_command": "create",
@@ -922,6 +927,8 @@
       "template": "x",
       "timeout": null,
       "type": "public_channel",
+      "wait": true,
+      "wait_timeout": 30,
       "workspace": null,
       "yes": false
     }
@@ -1546,6 +1553,8 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
+      "wait_installed": false,
+      "wait_timeout": null,
       "workspace": null,
       "yes": false
     }
@@ -2041,6 +2050,8 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
+      "wait_installed": false,
+      "wait_timeout": null,
       "workspace": null,
       "yes": false
     }
@@ -2051,7 +2062,10 @@
       "status",
       "x",
       "--channel",
-      "x"
+      "x",
+      "--wait-installed",
+      "--wait-timeout",
+      "30"
     ],
     "namespace": {
       "app_command": "status",
@@ -2064,6 +2078,8 @@
       "no_color": false,
       "quiet": false,
       "timeout": null,
+      "wait_installed": true,
+      "wait_timeout": 30,
       "workspace": null,
       "yes": false
     }
@@ -2326,6 +2342,7 @@
       "env": null,
       "flow_command": "run",
       "flow_id": "x",
+      "input": null,
       "inputs": null,
       "json": false,
       "no_color": false,
@@ -2348,7 +2365,11 @@
       "x",
       "--wait",
       "--timeout-run",
-      "7"
+      "7",
+      "--input",
+      "k=v",
+      "--input",
+      "j=\\@x"
     ],
     "namespace": {
       "channel": "x",
@@ -2357,6 +2378,10 @@
       "env": null,
       "flow_command": "run",
       "flow_id": "x",
+      "input": [
+        "k=v",
+        "j=\\@x"
+      ],
       "inputs": "x",
       "json": false,
       "no_color": false,

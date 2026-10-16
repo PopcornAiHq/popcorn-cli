@@ -693,24 +693,20 @@ class _Checker:
                         f"Schedule targets flow '{flow}', which no flow in this bundle declares "
                         f"as its `name:`. Known: {', '.join(sorted(names)) or '(none)'}.",
                     )
-                if not sched.get("interval") and not sched.get("cron"):
-                    self.err(
-                        "schedule-no-trigger",
-                        where,
-                        "Schedule has neither `interval:` nor `cron:`, so it can never fire.",
-                    )
-                # At MOST one, as well as at least one. A schedule spec
-                # carrying both cadences has two, and the backend refuses
-                # rather than guess which the author meant to keep — so
-                # catching it here is the difference between a checker
-                # finding and an install against a real channel failing.
+                # At most one cadence. None is valid: the platform creates
+                # such a schedule paused, on demand, for a flow to arm when
+                # it wants a fire (`schedule_drift.is_on_demand` reads it the
+                # same way). Both is refused by the installer rather than
+                # guessing which the author meant to keep — so catching it
+                # here is the difference between a checker finding and an
+                # install against a real channel failing.
                 if sched.get("interval") and sched.get("cron"):
                     self.err(
                         "schedule-two-triggers",
                         where,
-                        "Schedule declares both `interval:` and `cron:`. Exactly one "
-                        "cadence is allowed — the installer cannot pick between them "
-                        "and will refuse the schedule.",
+                        "Schedule declares both `interval:` and `cron:`. At most one "
+                        "cadence is allowed (none makes it on demand) — the installer "
+                        "cannot pick between them and will refuse the schedule.",
                     )
 
         webhooks = manifest.get("webhooks")
