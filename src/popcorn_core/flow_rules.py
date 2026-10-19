@@ -291,6 +291,25 @@ UI_SUFFIXES = (
     ".yml",
 )
 
+# Directory holding the app's web pages, one directory per page, which a view's
+# `web:` block names. A SIXTH classification, read under the code rule on another
+# directory: the page segment matches CODE_BLOCK_NAME_PATTERN, a file sits at
+# least CODE_MIN_PATH_DEPTH segments deep, and every segment below the page
+# matches CODE_PATH_SEGMENT_PATTERN. Source may sit beside the page itself.
+WEB_SUBDIR = "web"
+
+# The file the client fetches from a page directory, `web/<page>/<this>`: the
+# built page with its scripts and styles inlined.
+WEB_PAGE_FILENAME = "index.html"
+
+# Directory names that are never bundle content under WEB_SUBDIR or CODE_SUBDIR,
+# at any depth and as the page or block segment itself: running or building code
+# locally creates them. Publish refuses an uploaded tree carrying one.
+WEB_IGNORED_DIRS = (
+    "__pycache__",
+    "node_modules",
+)
+
 # The zip reader's per-entry cap. The one value here that is not about
 # classification: it is a real ceiling on an uploaded bundle, so a checker
 # should warn before an author hits it.

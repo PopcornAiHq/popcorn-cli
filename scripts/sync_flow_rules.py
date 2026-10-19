@@ -291,6 +291,28 @@ _FIELDS: tuple[_Field, ...] = (
         "sits directly under UI_SUBDIR, and anything deeper is not one.",
     ),
     _Field(
+        "WEB_SUBDIR",
+        ("bundle", "web_subdir"),
+        "Directory holding the app's web pages, one directory per page, which a view's\n"
+        "`web:` block names. A SIXTH classification, read under the code rule on another\n"
+        "directory: the page segment matches CODE_BLOCK_NAME_PATTERN, a file sits at\n"
+        "least CODE_MIN_PATH_DEPTH segments deep, and every segment below the page\n"
+        "matches CODE_PATH_SEGMENT_PATTERN. Source may sit beside the page itself.",
+    ),
+    _Field(
+        "WEB_PAGE_FILENAME",
+        ("bundle", "web_page_filename"),
+        "The file the client fetches from a page directory, `web/<page>/<this>`: the\n"
+        "built page with its scripts and styles inlined.",
+    ),
+    _Field(
+        "WEB_IGNORED_DIRS",
+        ("bundle", "web_ignored_dirs"),
+        "Directory names that are never bundle content under WEB_SUBDIR or CODE_SUBDIR,\n"
+        "at any depth and as the page or block segment itself: running or building code\n"
+        "locally creates them. Publish refuses an uploaded tree carrying one.",
+    ),
+    _Field(
         "MAX_ENTRY_BYTES",
         ("bundle", "max_entry_bytes"),
         "The zip reader's per-entry cap. The one value here that is not about\n"
