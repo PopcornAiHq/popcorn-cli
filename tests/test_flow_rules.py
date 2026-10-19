@@ -215,6 +215,16 @@ def test_the_view_rules():
     assert flow_rules.UI_SUFFIXES == (".yaml", ".yml")
 
 
+def test_the_web_page_rules():
+    """The sixth classification: a page a view's `web:` block hosts. It reads
+    under the code rule on another directory, so a page may carry its source
+    beside the built file, and the build's own output directories are never
+    bundle content."""
+    assert flow_rules.WEB_SUBDIR == "web"
+    assert flow_rules.WEB_PAGE_FILENAME == "index.html"
+    assert flow_rules.WEB_IGNORED_DIRS == ("__pycache__", "node_modules")
+
+
 # ── the generator ─────────────────────────────────────────────────────
 
 
