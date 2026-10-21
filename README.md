@@ -121,6 +121,8 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | `popcorn table list --channel <conv>` | List tables in a channel |
 | `popcorn table schema <name> --channel <conv>` | Show a table's columns |
 | `popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N] [--cursor C]` | List rows in a table |
+| `popcorn table import <name> --channel <conv> --file rows.jsonl\|rows.json\|rows.csv [--merge-on COL] [--batch-size N] [--skip N]` | Create rows in bulk, in batches of 500 by default, and report how many were created and updated. A CSV's header row names the columns and its cells are typed from `table schema`. A failed batch says which rows were already written, and `--skip` resumes after them. `--merge-on` writes over the row whose column matches, replacing it whole: columns the file leaves out are emptied. Example: `popcorn table import leads --channel '#sales' --file leads.csv` |
+| `popcorn table row create <name> --channel <conv> --data JSON [--merge-on COL]` | Create one row and print it as `row get` does. `--data` takes `@path` or `@-` like `row patch`. Example: `popcorn table row create leads --channel '#sales' --data '{"Name":"Ada"}'` |
 | `popcorn table row get <name> <record_id> --channel <conv>` | Get one row |
 | `popcorn table row patch <name> <record_id> --channel <conv> --data JSON` | Patch one row's columns |
 | `popcorn table row delete <name> <record_id> --channel <conv>` | Delete one row (confirms) |

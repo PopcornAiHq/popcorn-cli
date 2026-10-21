@@ -443,6 +443,78 @@ class TestTableFamily:
         with pytest.raises(SystemExit):
             parser.parse_args(["table", "row", "patch", "alerts", "7", "--channel", "#ops"])
 
+    def test_row_create_is_nested(self, parser):
+        args = parser.parse_args(
+            ["table", "row", "create", "alerts", "--channel", "#ops", "--data", '{"Alarm":"cpu"}']
+        )
+        assert args.table_row_command == "create"
+        assert args.name == "alerts"
+        assert args.data == '{"Alarm":"cpu"}'
+        assert args.merge_on is None
+
+    def test_row_create_requires_data(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["table", "row", "create", "alerts", "--channel", "#ops"])
+
+    def test_merge_on_repeats_into_a_list(self, parser):
+        args = parser.parse_args(
+            [
+                "table",
+                "import",
+                "alerts",
+                "--channel",
+                "#ops",
+                "--file",
+                "rows.csv",
+                "--merge-on",
+                "Alarm",
+                "--merge-on",
+                "Host",
+            ]
+        )
+        assert args.merge_on == ["Alarm", "Host"]
+
+    def test_import_takes_file_and_options(self, parser):
+        args = parser.parse_args(
+            [
+                "table",
+                "import",
+                "alerts",
+                "--channel",
+                "#ops",
+                "--file",
+                "-",
+                "--format",
+                "jsonl",
+                "--batch-size",
+                "100",
+                "--skip",
+                "0",
+            ]
+        )
+        assert args.table_command == "import"
+        assert (args.file, args.format, args.batch_size, args.skip) == ("-", "jsonl", 100, 0)
+
+    def test_import_requires_file(self, parser):
+        with pytest.raises(SystemExit):
+            parser.parse_args(["table", "import", "alerts", "--channel", "#ops"])
+
+    @pytest.mark.parametrize(
+        "extra",
+        [["--batch-size", "0"], ["--batch-size", "x"], ["--skip", "-1"], ["--format", "xlsx"]],
+    )
+    def test_import_rejects_bad_options(self, parser, extra):
+        with pytest.raises(SystemExit):
+            parser.parse_args(
+                ["table", "import", "alerts", "--channel", "#ops", "--file", "r.csv", *extra]
+            )
+
+    def test_rows_is_still_a_listing(self, parser):
+        """`import` is a sibling, not a child: `table rows <name>` is unchanged."""
+        args = parser.parse_args(["table", "rows", "import", "--channel", "#ops"])
+        assert args.table_command == "rows"
+        assert args.name == "import"
+
     def test_scalar_set_takes_value(self, parser):
         args = parser.parse_args(
             ["table", "scalar", "set", "alerts_summary", "3 firing", "--channel", "#ops"]
@@ -453,6 +525,19 @@ class TestTableFamily:
 
     def test_table_appears_in_schema(self):
         assert any(c["name"] == "table" for c in registry.schema())
+
+    def test_the_writes_reach_commands_json(self, capsys):
+        """Schema discovery is how an agent learns the CLI can create rows."""
+        from popcorn_cli.cli import cmd_commands
+
+        cmd_commands(argparse.Namespace(command="commands", groups=None))
+        schema = json.loads(capsys.readouterr().out)
+        table = next(c for c in schema["commands"] if c["name"] == "table")
+        subs = {s["name"]: s for s in table["subcommands"]}
+        row_subs = {s["name"] for s in subs["row"]["subcommands"]}
+        assert "create" in row_subs
+        flags = {f for a in subs["import"]["arguments"] for f in a.get("flags", [])}
+        assert {"--file", "--format", "--merge-on", "--batch-size", "--skip"} <= flags
 
 
 class TestTableHandlersRenderTheRealShapes:
