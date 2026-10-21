@@ -390,7 +390,11 @@ def _json_rows(text: str, label: str) -> list[dict[str, Any]]:
 def _jsonl_rows(text: str, label: str) -> list[dict[str, Any]]:
     """One row object per line; blank lines are skipped."""
     rows: list[dict[str, Any]] = []
-    for line_num, line in enumerate(text.splitlines(), 1):
+    # "\n" only, not `splitlines()`: that also breaks on U+2028, U+2029 and
+    # U+0085, which JSON allows unescaped inside a string, so a valid row
+    # exported with `ensure_ascii=False` would be cut in two.
+    for line_num, raw in enumerate(text.split("\n"), 1):
+        line = raw.removesuffix("\r")
         if not line.strip():
             continue
         try:

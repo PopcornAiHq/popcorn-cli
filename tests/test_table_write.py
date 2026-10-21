@@ -125,6 +125,15 @@ class TestJsonlRows:
             _jsonl_rows(f'{{"a": 1}}\n{{"a": {{"deep": [{value}]}}}}\n', "f.jsonl")
         assert exc.value.error_code == "validation"
 
+    @pytest.mark.parametrize("sep", ["\u2028", "\u2029", "\u0085"])
+    def test_unicode_line_separators_inside_a_string_stay_in_it(self, sep):
+        """Valid unescaped JSON content; only "\n" ends a JSONL record."""
+        text = json.dumps({"Note": f"first{sep}second"}, ensure_ascii=False) + "\r\n"
+        assert _jsonl_rows(text + '{"Note": "x"}\n', "f.jsonl") == [
+            {"Note": f"first{sep}second"},
+            {"Note": "x"},
+        ]
+
     def test_values_are_sent_as_written(self):
         """JSON input carries its own types; nothing is coerced."""
         assert _jsonl_rows('{"Score": "42"}', "f.jsonl") == [{"Score": "42"}]
