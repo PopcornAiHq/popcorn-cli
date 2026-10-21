@@ -350,10 +350,21 @@ def _csv_rows(text: str, label: str) -> list[tuple[int, dict[str, str]]]:
     Coercion is a separate step because it needs the table's schema, and a
     file that cannot even be parsed should fail before any request is made.
     """
-    reader = csv.reader(io.StringIO(text, newline=""))
+    # Strict, because the lenient reader takes an unterminated quote as a cell
+    # running to the end of the file: every row after it would be swallowed
+    # into one value and the import would report success.
+    reader = csv.reader(io.StringIO(text, newline=""), strict=True)
     try:
-        header = next(reader)
-    except StopIteration:
+        return _csv_records(reader, label)
+    except csv.Error as e:
+        raise PopcornError(
+            f"{label} line {reader.line_num}: malformed CSV ({e})", error_code="validation"
+        ) from e
+
+
+def _csv_records(reader: Any, label: str) -> list[tuple[int, dict[str, str]]]:
+    header = next(reader, None)
+    if header is None:
         return []
     names = [h.strip() for h in header]
     if any(not n for n in names):
@@ -443,8 +454,23 @@ def _batches(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]
     return [rows[i : i + size] for i in range(0, len(rows), size)]
 
 
+def _popcorn(args: argparse.Namespace) -> list[str]:
+    """`popcorn` plus the profile and workspace this run used.
+
+    Both are in-memory overrides, so a suggested command without them would
+    run against the default profile's workspace, where the same channel name
+    can be a different channel.
+    """
+    argv = ["popcorn"]
+    if getattr(args, "env", None):
+        argv += ["--env", args.env]
+    if getattr(args, "workspace", None):
+        argv += ["--workspace", args.workspace]
+    return argv
+
+
 def _resume_command(args: argparse.Namespace, skip: int) -> str:
-    argv = ["popcorn", "table", "import", args.name, "--channel", args.channel]
+    argv = [*_popcorn(args), "table", "import", args.name, "--channel", args.channel]
     argv += ["--file", args.file]
     if getattr(args, "format", None):
         argv += ["--format", args.format]
@@ -501,9 +527,10 @@ def _batch_failed(
         request_id=err.request_id,
     )
     if unknown:
+        rows_cmd = [*_popcorn(args), "table", "rows", args.name, "--channel", args.channel]
         wrapped.hint = (
-            f"check with `popcorn table rows {shlex.quote(args.name)} --channel "
-            f"{shlex.quote(args.channel)}`, then resume with --skip {written_through} "
+            f"check with `{' '.join(shlex.quote(a) for a in rows_cmd)}`, "
+            f"then resume with --skip {written_through} "
             f"if rows {first}-{last} are absent or --skip {last} if they are there"
         )
     elif written_through > 0:

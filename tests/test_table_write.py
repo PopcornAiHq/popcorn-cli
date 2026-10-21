@@ -151,6 +151,16 @@ class TestCsvRows:
     def test_blank_lines_are_skipped(self):
         assert _csv_rows("a\n1\n\n2\n", "f.csv") == [(2, {"a": "1"}), (4, {"a": "2"})]
 
+    def test_unterminated_quote_is_refused(self):
+        """The lenient reader would swallow every later row into one cell."""
+        with pytest.raises(PopcornError, match="malformed CSV") as exc:
+            _csv_rows('Name,Note\nAda,"unfinished\nBob,second\n', "f.csv")
+        assert exc.value.error_code == "validation"
+
+    def test_stray_quote_is_refused(self):
+        with pytest.raises(PopcornError, match=r"f\.csv line 2: malformed CSV"):
+            _csv_rows('a,b\n1,"x"y\n', "f.csv")
+
     def test_empty_file_has_no_rows(self):
         assert _csv_rows("", "f.csv") == []
 
@@ -623,6 +633,55 @@ class TestImport:
         hint = _error(capsys.readouterr().err)["hint"]
         assert "--channel '#example sales'" in hint
         assert "--merge-on Name --batch-size 2 --skip 2" in hint
+
+    def test_hints_keep_the_profile_and_workspace(self, monkeypatch, tmp_path, capsys):
+        """`--env`/`--workspace` only override in memory; a hint without them
+        would resume against the default workspace's same-named channel."""
+        store = _Store(fail_on=2)
+        self._install(monkeypatch, store)
+        path = self._jsonl(tmp_path, 4)
+        _run_failing(
+            monkeypatch,
+            [
+                "--env",
+                "dev",
+                "--workspace",
+                "Example Co",
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                path,
+                "--batch-size",
+                "2",
+                "--json",
+            ],
+        )
+        hint = _error(capsys.readouterr().err)["hint"]
+        assert "popcorn --env dev --workspace 'Example Co' table import leads" in hint
+
+    def test_unknown_hint_keeps_the_profile_too(self, monkeypatch, tmp_path, capsys):
+        store = _Store(fail_on=1, error=APIError("Request timed out: POST ..."))
+        self._install(monkeypatch, store)
+        _run_failing(
+            monkeypatch,
+            [
+                "--env",
+                "dev",
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                self._jsonl(tmp_path, 1),
+                "--json",
+            ],
+        )
+        hint = _error(capsys.readouterr().err)["hint"]
+        assert "`popcorn --env dev table rows leads" in hint
 
     def test_unknown_extension_sends_nothing(self, monkeypatch, tmp_path):
         store = _Store()
