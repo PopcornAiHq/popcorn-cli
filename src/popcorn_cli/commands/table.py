@@ -123,16 +123,33 @@ def _row_create(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output, _read_json_object, _status
 
     data = _read_json_object(args.data, "--data")
+    try:
+        _require_finite(data)
+    except ValueError as e:
+        raise PopcornError(f"--data: {e}", error_code="validation") from None
     client = _get_client(args)
-    resp = operations.insert_records(
-        client, args.channel, args.name, [data], merge_on=getattr(args, "merge_on", None)
+    check = (
+        f"check with `{_command(args, 'table', 'rows', args.name, '--channel', args.channel)}` "
+        "before creating it again"
     )
-    ids = resp.get("ids") or []
+    try:
+        resp = operations.insert_records(
+            client, args.channel, args.name, [data], merge_on=getattr(args, "merge_on", None)
+        )
+    except APIError as e:
+        if _outcome_unknown(e):
+            e.hint = f"the row may or may not have been written; {check}"
+        raise
+    try:
+        ids, created, updated = _insert_result(resp)
+    except ValueError as e:
+        raise _uncertain_answer(e, f"the row may or may not have been written; {check}") from None
     if not ids:
-        _output(args, resp, f"Created {args.name} record")
-        return
+        raise _uncertain_answer(
+            ValueError("a record id"), f"the row may or may not have been written; {check}"
+        )
     record_id = ids[0]
-    counts = {"created": resp.get("created", 0), "updated": resp.get("updated", 0)}
+    counts = {"created": created, "updated": updated}
     # A table with its own merge key upserts even without --merge-on, so the
     # response, not the flag, says whether this was a new row.
     verb = "Merged into existing" if counts["updated"] else "Created"
@@ -256,6 +273,48 @@ _FLOAT_RE = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 _BOOLEANS = {"true": True, "yes": True, "1": True, "false": False, "no": False, "0": False}
 
 
+def _require_finite(value: Any) -> None:
+    """Refuse NaN, Infinity and numbers too large for a double (``1e400``).
+
+    `json.loads` accepts all three, but JSON has no spelling for them, so the
+    request could not be serialised. During an import that would surface as a
+    crash mid-way, after earlier batches were already written.
+    """
+    try:
+        json.dumps(value, allow_nan=False)
+    except ValueError:
+        raise ValueError("NaN, Infinity or an out-of-range number has no JSON form") from None
+
+
+def _outcome_unknown(err: APIError) -> bool:
+    """Whether a failed write may still have been applied.
+
+    No response (status 0), a server error, or a success status whose body
+    couldn't be read: in all three the server may have committed the write,
+    so only a 4xx is a definite refusal.
+    """
+    return err.status_code == 0 or err.status_code >= 500 or 200 <= err.status_code < 300
+
+
+def _insert_result(resp: Any) -> tuple[list[Any], int, int]:
+    """`ids`, `created`, `updated` from an insert answer; ValueError if any is missing."""
+    body = resp if isinstance(resp, dict) else {}
+    ids, created, updated = body.get("ids"), body.get("created"), body.get("updated")
+    if not isinstance(ids, list) or not isinstance(created, int) or not isinstance(updated, int):
+        raise ValueError("its ids or created/updated counts")
+    return ids, created, updated
+
+
+def _uncertain_answer(err: ValueError, hint: str) -> APIError:
+    # 200 rather than the real status, which `operations` doesn't hand back: it
+    # was some success, and a 2xx is what `_outcome_unknown` reads as "the
+    # write may have happened".
+    wrapped = APIError(f"the server accepted the write but answered without {err}", status_code=200)
+    if hint:
+        wrapped.hint = hint
+    return wrapped
+
+
 def _positive_int(value: str) -> int:
     try:
         n = int(value)
@@ -321,6 +380,10 @@ def _json_rows(text: str, label: str) -> list[dict[str, Any]]:
     for i, row in enumerate(parsed, 1):
         if not isinstance(row, dict):
             raise PopcornError(f"{label} item {i}: not a JSON object", error_code="validation")
+        try:
+            _require_finite(row)
+        except ValueError as e:
+            raise PopcornError(f"{label} item {i}: {e}", error_code="validation") from None
     return parsed
 
 
@@ -340,6 +403,10 @@ def _jsonl_rows(text: str, label: str) -> list[dict[str, Any]]:
             raise PopcornError(
                 f"{label} line {line_num}: not a JSON object", error_code="validation"
             )
+        try:
+            _require_finite(row)
+        except ValueError as e:
+            raise PopcornError(f"{label} line {line_num}: {e}", error_code="validation") from None
         rows.append(row)
     return rows
 
@@ -414,9 +481,11 @@ def _coerce_cell(cell: str, col_type: str | None) -> Any:
             raise ValueError(f"{cell!r} is not a boolean (true/false, yes/no, 1/0)") from None
     if col_type == "json":
         try:
-            return json.loads(cell)
+            value = json.loads(cell)
         except json.JSONDecodeError as e:
             raise ValueError(f"{cell!r} is not valid JSON ({e.msg})") from None
+        _require_finite(value)
+        return value
     return cell
 
 
@@ -454,19 +523,33 @@ def _batches(rows: list[dict[str, Any]], size: int) -> list[list[dict[str, Any]]
     return [rows[i : i + size] for i in range(0, len(rows), size)]
 
 
-def _popcorn(args: argparse.Namespace) -> list[str]:
-    """`popcorn` plus the profile and workspace this run used.
+# The top-level flags a suggested command repeats, as (dest, flag). `--env`
+# and `--workspace` are in-memory overrides, so without them the command runs
+# against the default profile's workspace, where the same channel name can be
+# a different channel; the rest keep it behaving like the run that failed.
+_GLOBAL_VALUE_FLAGS = (("env", "--env"), ("workspace", "--workspace"), ("timeout", "--timeout"))
+_GLOBAL_BOOLEAN_FLAGS = (
+    ("json", "--json"),
+    ("quiet", "--quiet"),
+    ("no_color", "--no-color"),
+    ("debug", "--debug"),
+    ("yes", "--yes"),
+)
 
-    Both are in-memory overrides, so a suggested command without them would
-    run against the default profile's workspace, where the same channel name
-    can be a different channel.
-    """
+
+def _popcorn(args: argparse.Namespace) -> list[str]:
+    """`popcorn` plus every global flag this run was given."""
     argv = ["popcorn"]
-    if getattr(args, "env", None):
-        argv += ["--env", args.env]
-    if getattr(args, "workspace", None):
-        argv += ["--workspace", args.workspace]
+    for dest, flag in _GLOBAL_VALUE_FLAGS:
+        value = getattr(args, dest, None)
+        if value is not None:
+            argv += [flag, str(value)]
+    argv += [flag for dest, flag in _GLOBAL_BOOLEAN_FLAGS if getattr(args, dest, False)]
     return argv
+
+
+def _command(args: argparse.Namespace, *rest: str) -> str:
+    return " ".join(shlex.quote(a) for a in [*_popcorn(args), *rest])
 
 
 def _resume_command(args: argparse.Namespace, skip: int) -> str:
@@ -499,11 +582,12 @@ def _batch_failed(
 
     Each batch is its own transaction, so a refused batch wrote nothing and
     every earlier one is in the table. A response that never arrived (a
-    timeout, a 5xx) leaves that batch's fate unknown, and says so. Status,
+    timeout), a 5xx, or a success whose answer can't be read leaves that
+    batch's fate unknown, and says so. Status,
     request id and body are kept, so error_code, exit code and retryable stay
     the server's.
     """
-    unknown = err.status_code == 0 or err.status_code >= 500
+    unknown = _outcome_unknown(err)
     lines = [f"batch {batch}/{batches} (rows {first}-{last}) failed: {err}"]
     if written_through > skip:
         lines.append(
@@ -527,9 +611,9 @@ def _batch_failed(
         request_id=err.request_id,
     )
     if unknown:
-        rows_cmd = [*_popcorn(args), "table", "rows", args.name, "--channel", args.channel]
+        rows_cmd = _command(args, "table", "rows", args.name, "--channel", args.channel)
         wrapped.hint = (
-            f"check with `{' '.join(shlex.quote(a) for a in rows_cmd)}`, "
+            f"check with `{rows_cmd}`, "
             f"then resume with --skip {written_through} "
             f"if rows {first}-{last} are absent or --skip {last} if they are there"
         )
@@ -584,9 +668,11 @@ def _table_import(args: argparse.Namespace) -> None:
             resp = operations.insert_records(
                 client, conversation, args.name, batch, merge_on=merge_on
             )
-        except APIError as e:
+            batch_ids, batch_created, batch_updated = _insert_result(resp)
+        except (APIError, ValueError) as e:
+            err = e if isinstance(e, APIError) else _uncertain_answer(e, "")
             raise _batch_failed(
-                e,
+                err,
                 args,
                 batch=i,
                 batches=len(batches),
@@ -597,9 +683,9 @@ def _table_import(args: argparse.Namespace) -> None:
                 created=created,
                 updated=updated,
             ) from e
-        ids.extend(resp.get("ids") or [])
-        created += resp.get("created", 0)
-        updated += resp.get("updated", 0)
+        ids.extend(batch_ids)
+        created += batch_created
+        updated += batch_updated
         written_through = last
 
     data = {

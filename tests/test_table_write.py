@@ -101,6 +101,10 @@ class TestJsonRows:
         with pytest.raises(PopcornError, match="not valid JSON"):
             _json_rows("[{", "f.json")
 
+    def test_non_finite_number_is_refused(self):
+        with pytest.raises(PopcornError, match="item 2: NaN, Infinity"):
+            _json_rows('[{"a": 1}, {"a": NaN}]', "f.json")
+
 
 class TestJsonlRows:
     def test_one_object_per_line_blank_lines_skipped(self):
@@ -113,6 +117,13 @@ class TestJsonlRows:
     def test_names_the_unparseable_line(self):
         with pytest.raises(PopcornError, match="line 2: not valid JSON"):
             _jsonl_rows('{"a": 1}\n{"a":\n', "f.jsonl")
+
+    @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity", "1e400"])
+    def test_non_finite_numbers_are_refused(self, value):
+        """json.loads takes them, but the request could not be serialised."""
+        with pytest.raises(PopcornError, match="line 2: NaN, Infinity") as exc:
+            _jsonl_rows(f'{{"a": 1}}\n{{"a": {{"deep": [{value}]}}}}\n', "f.jsonl")
+        assert exc.value.error_code == "validation"
 
     def test_values_are_sent_as_written(self):
         """JSON input carries its own types; nothing is coerced."""
@@ -193,6 +204,11 @@ class TestCoerceCell:
 
     def test_json(self):
         assert _coerce_cell('{"k": [1, 2]}', "json") == {"k": [1, 2]}
+
+    @pytest.mark.parametrize("cell", ["NaN", '{"k": Infinity}', "1e400"])
+    def test_json_cell_with_a_non_finite_number(self, cell):
+        with pytest.raises(ValueError, match="NaN, Infinity"):
+            _coerce_cell(cell, "json")
 
     def test_bad_json(self):
         with pytest.raises(ValueError, match="not valid JSON"):
@@ -351,6 +367,56 @@ class TestRowCreate:
         assert err["error"] == "missing required field: Name"
         assert err["error_code"] == "validation"
 
+    def test_non_finite_data_is_refused_before_any_request(self, monkeypatch, capsys):
+        monkeypatch.setattr(
+            operations, "insert_records", lambda *a, **kw: pytest.fail("no request expected")
+        )
+        code = _run_failing(
+            monkeypatch,
+            ["table", "row", "create", "leads", "--channel", CHANNEL, "--data", '{"a": NaN}'],
+        )
+        assert code == 1
+        assert "NaN, Infinity" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        "answer", [{}, {"ids": [1187]}, {"ids": [], "created": 0, "updated": 0}]
+    )
+    def test_a_malformed_answer_is_an_uncertain_write(self, monkeypatch, capsys, answer):
+        """A success without ids/counts may still have written the row; saying
+        nothing, or "Created", would invite a retry that adds it twice."""
+        self._fake(monkeypatch, answer)
+        code = _run_failing(
+            monkeypatch,
+            ["table", "row", "create", "leads", "--channel", CHANNEL, "--data", "{}", "--json"],
+        )
+        assert code != 0
+        err = _error(capsys.readouterr().err)
+        assert "answered without" in err["error"]
+        assert "may or may not have been written" in err["hint"]
+        assert "table rows leads" in err["hint"]
+
+    def test_an_unreadable_success_is_an_uncertain_write(self, monkeypatch, capsys):
+        def garbled(*a, **kw):
+            raise APIError("Invalid JSON in response from /x", status_code=200)
+
+        monkeypatch.setattr(operations, "insert_records", garbled)
+        _run_failing(
+            monkeypatch,
+            ["table", "row", "create", "leads", "--channel", CHANNEL, "--data", "{}", "--json"],
+        )
+        assert "may or may not have been written" in _error(capsys.readouterr().err)["hint"]
+
+    def test_a_refusal_is_not_called_uncertain(self, monkeypatch, capsys):
+        def refuse(*a, **kw):
+            raise APIError("missing required field: Name", status_code=422)
+
+        monkeypatch.setattr(operations, "insert_records", refuse)
+        _run_failing(
+            monkeypatch,
+            ["table", "row", "create", "leads", "--channel", CHANNEL, "--data", "{}", "--json"],
+        )
+        assert "hint" not in _error(capsys.readouterr().err)
+
     def test_non_object_data_is_refused_before_any_request(self, monkeypatch):
         monkeypatch.setattr(
             operations, "insert_records", lambda *a, **kw: pytest.fail("no request expected")
@@ -370,7 +436,15 @@ class TestRowCreate:
 class _Store:
     """A fake insert endpoint: records each batch, optionally refuses one."""
 
-    def __init__(self, fail_on: int | None = None, error: APIError | None = None):
+    def __init__(
+        self,
+        fail_on: int | None = None,
+        error: APIError | None = None,
+        answer_on: int | None = None,
+        answer: dict | None = None,
+    ):
+        self.answer_on = answer_on
+        self.answer = answer
         self.batches: list[list[dict]] = []
         self.merge_on: list | None = None
         self.fail_on = fail_on
@@ -382,6 +456,8 @@ class _Store:
             raise self.error
         self.batches.append(records)
         self.merge_on = merge_on
+        if self.answer_on == len(self.batches):
+            return self.answer
         ids = list(range(self.next_id, self.next_id + len(records)))
         self.next_id += len(records)
         return {"ids": ids, "created": len(records), "updated": 0, "schema_version_id": 1}
@@ -660,7 +736,7 @@ class TestImport:
             ],
         )
         hint = _error(capsys.readouterr().err)["hint"]
-        assert "popcorn --env dev --workspace 'Example Co' table import leads" in hint
+        assert "popcorn --env dev --workspace 'Example Co' --json table import leads" in hint
 
     def test_unknown_hint_keeps_the_profile_too(self, monkeypatch, tmp_path, capsys):
         store = _Store(fail_on=1, error=APIError("Request timed out: POST ..."))
@@ -681,7 +757,136 @@ class TestImport:
             ],
         )
         hint = _error(capsys.readouterr().err)["hint"]
-        assert "`popcorn --env dev table rows leads" in hint
+        assert "`popcorn --env dev --json table rows leads" in hint
+
+    def test_hints_carry_every_global_flag(self, monkeypatch, tmp_path, capsys):
+        store = _Store(fail_on=2)
+        self._install(monkeypatch, store)
+        path = self._jsonl(tmp_path, 4)
+        _run_failing(
+            monkeypatch,
+            [
+                "--env",
+                "dev",
+                "--timeout",
+                "5",
+                "--quiet",
+                "--no-color",
+                "--debug",
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                path,
+                "--batch-size",
+                "2",
+                "--json",
+            ],
+        )
+        hint = _error(capsys.readouterr().err)["hint"]
+        assert (
+            "popcorn --env dev --timeout 5.0 --json --quiet --no-color --debug table import" in hint
+        )
+
+    def test_a_non_finite_number_late_in_the_file_sends_nothing(self, monkeypatch, tmp_path):
+        """Caught in the whole-file pass, not as a crash after batch 1 is written."""
+        store = _Store()
+        self._install(monkeypatch, store)
+        path = tmp_path / "rows.jsonl"
+        path.write_text('{"Name": "a"}\n{"Name": "b"}\n{"Score": Infinity}\n')
+        code = _run_failing(
+            monkeypatch,
+            [
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                str(path),
+                "--batch-size",
+                "1",
+            ],
+        )
+        assert code == 1
+        assert store.batches == []
+
+    def test_a_non_finite_json_cell_in_a_csv_sends_nothing(self, monkeypatch, tmp_path, capsys):
+        store = _Store()
+        monkeypatch.setattr(operations, "insert_records", store.insert)
+        monkeypatch.setattr(
+            operations,
+            "get_table",
+            lambda *a: {
+                "table": {
+                    "schema_version": {"schema_def": {"columns": [{"name": "M", "type": "json"}]}}
+                }
+            },
+        )
+        path = tmp_path / "rows.csv"
+        path.write_text('M\n{"v": 1}\n{"v": NaN}\n')
+        code = _run_failing(
+            monkeypatch, ["table", "import", "leads", "--channel", CHANNEL, "--file", str(path)]
+        )
+        assert code == 1
+        assert store.batches == []
+        assert "line 3, column 'M'" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("answer", [{}, {"ids": [1, 2]}, {"created": 2, "updated": 0}])
+    def test_a_malformed_answer_is_an_uncertain_write(self, monkeypatch, tmp_path, capsys, answer):
+        """A success without ids/counts may have committed the batch; resuming
+        before it would write those rows twice."""
+        store = _Store(answer_on=2, answer=answer)
+        self._install(monkeypatch, store)
+        path = self._jsonl(tmp_path, 6)
+        _run_failing(
+            monkeypatch,
+            [
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                path,
+                "--batch-size",
+                "2",
+                "--json",
+            ],
+        )
+        assert len(store.batches) == 2  # nothing after the uncertain batch was sent
+        err = _error(capsys.readouterr().err)
+        assert "batch 2/3 (rows 3-4) failed: the server accepted the write" in err["error"]
+        assert "Rows 1-2 were written" in err["error"]
+        assert "Rows 3-4 may or may not have been written" in err["error"]
+        assert "--skip 2 if rows 3-4 are absent or --skip 4" in err["hint"]
+
+    def test_an_unreadable_success_is_an_uncertain_write(self, monkeypatch, tmp_path, capsys):
+        store = _Store(
+            fail_on=2, error=APIError("Invalid JSON in response from /x", status_code=200)
+        )
+        self._install(monkeypatch, store)
+        path = self._jsonl(tmp_path, 4)
+        _run_failing(
+            monkeypatch,
+            [
+                "table",
+                "import",
+                "leads",
+                "--channel",
+                CHANNEL,
+                "--file",
+                path,
+                "--batch-size",
+                "2",
+                "--json",
+            ],
+        )
+        err = _error(capsys.readouterr().err)
+        assert "Rows 3-4 may or may not have been written" in err["error"]
+        assert "fix the file" not in err["hint"]
 
     def test_unknown_extension_sends_nothing(self, monkeypatch, tmp_path):
         store = _Store()
