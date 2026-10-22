@@ -1339,6 +1339,33 @@ def get_record(
     return client.get(f"{_store_base(client, conversation)}/tables/{name}/records/{record_id}")
 
 
+def insert_records(
+    client: APIClient,
+    conversation: str,
+    name: str,
+    records: list[dict[str, Any]],
+    merge_on: list[str] | None = None,
+) -> dict[str, Any]:
+    """Create rows in one request (`ids`, `created`, `updated`, `schema_version_id`).
+
+    The request is one transaction: a row the server rejects writes none of
+    them. The server caps how many rows one request carries, so callers with
+    more page them.
+
+    `merge_on` names the columns that identify an existing row to write over
+    instead of adding another. A hit REPLACES that row's data whole — this
+    endpoint takes no conflict policy, so columns the incoming row leaves out
+    are emptied. A table that declares its own merge key resolves by that key
+    and ignores `merge_on`, so even a plain insert can land as an update; read
+    `updated` rather than assuming every row is new. `ids` is in input order,
+    one per row, whether it was created or merged into.
+    """
+    body: dict[str, Any] = {"records": records}
+    if merge_on:
+        body["merge_on"] = merge_on
+    return client.post(f"{_store_base(client, conversation)}/tables/{name}/records", data=body)
+
+
 def patch_record(
     client: APIClient,
     conversation: str,
