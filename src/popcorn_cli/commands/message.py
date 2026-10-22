@@ -1,7 +1,10 @@
-"""`popcorn message` — delete, download, edit, get, list, react, search, send, threads.
+"""`popcorn message` — answer, delete, download, edit, get, list, questions,
+react, search, send, threads.
 
-Surface-only migration: the nine handlers stay in `cli.py` and are late-bound.
-See `_late.late_handler`.
+Surface-only migration: nine of the handlers stay in `cli.py` and are
+late-bound (see `_late.late_handler`). `questions` and `answer` were written
+here, and import their `..cli` helpers inside the function body, since cli.py
+imports this package at module load.
 
 Most subcommands take the channel as a positional that also answers to
 `--channel`, which is `_CHANNEL` below. `send` is the exception worth reading
@@ -16,7 +19,14 @@ arguments that declared what follows them.
 
 from __future__ import annotations
 
+import argparse
+import json
+import sys
+from typing import Any
+
 from popcorn_core import operations
+from popcorn_core import questions as q
+from popcorn_core.errors import PopcornError
 
 from ..registry import Argument, Command, Subcommand, register
 from ._late import late_handler
@@ -29,14 +39,171 @@ _CHANNEL = Argument(
 )
 _MESSAGE_ID = Argument("message_id", "Message UUID", positional=True)
 
+# How far back `answer` looks for the card it was named: a pending card is
+# almost always the newest message, and the history route takes up to 1000.
+_ANSWER_WINDOW = 200
+
+
+def _card_lines(card: dict[str, Any]) -> list[str]:
+    where = f"  thread {card['thread_id']}" if card.get("thread_id") else ""
+    latest = "  (open on the composer)" if card.get("latest") else ""
+    lines = [f"message {card['message_id']}{where}{latest}"]
+    for question in card["questions"]:
+        pick = "pick any" if question["multi_select"] else "pick one"
+        lines.append(
+            f"  {question['index']}. [{question['header']}] {question['question']} ({pick})"
+        )
+        for option in question["options"]:
+            desc = f" — {option['description']}" if option["description"] else ""
+            lines.append(f"       {option['index']}) {option['label']}{desc}")
+    return lines
+
+
+def _questions(args: argparse.Namespace) -> None:
+    from ..cli import _get_client, _output
+
+    resp = operations.read_messages(
+        _get_client(args), args.conversation, args.thread or "", args.limit or 50
+    )
+    messages = resp.get("messages", [])
+    cards = q.pending_cards(messages)
+    data = {"questions": cards, "scanned": len(messages), "has_more": bool(resp.get("has_more"))}
+    if not cards:
+        _output(args, data, f"No open questions in the last {len(messages)} messages.")
+        return
+    lines = [f"Open questions ({len(cards)}), newest first:", ""]
+    for card in cards:
+        lines += [*_card_lines(card), ""]
+    lines.append(
+        "Answer: popcorn message answer <channel> --message <id> "
+        "[--question N] (--option N | --label TEXT | --custom TEXT | --skip)"
+    )
+    _output(args, data, "\n".join(lines))
+
+
+def _selections(args: argparse.Namespace) -> dict[int, q.Selection]:
+    """The `--answers` list, or the single question the flags name."""
+    from ..cli import _resolve_data_arg
+
+    flags = bool(args.option or args.label or args.custom is not None or args.skip)
+    if args.answers is not None:
+        if flags or args.question is not None:
+            raise PopcornError(
+                "--answers replaces --question, --option, --label, --custom and --skip"
+            )
+        try:
+            spec = json.loads(_resolve_data_arg(args.answers))
+        except json.JSONDecodeError as e:
+            raise PopcornError(f"--answers is not valid JSON: {e}") from e
+        return q.selections_from_json(spec)
+    if not flags:
+        raise PopcornError(
+            "Say what to answer: --option N, --label TEXT, --custom TEXT or --skip",
+            hint="popcorn message questions <channel>",
+        )
+    selection = q.Selection(
+        options=[q.option_number(o, "--option") for o in args.option or []],
+        labels=list(args.label or []),
+        custom=args.custom,
+        skip=args.skip,
+    )
+    return {args.question if args.question is not None else 1: selection}
+
+
+def _answer(args: argparse.Namespace) -> None:
+    from ..cli import _assume_yes, _confirm, _get_client, _output, _status
+
+    client = _get_client(args)
+    resp = operations.read_messages(client, args.conversation, args.thread or "", _ANSWER_WINDOW)
+    message = next((m for m in resp.get("messages", []) if m.get("id") == args.message), None)
+    part = q.check_answerable(message, args.message)
+    assert message is not None
+    answers = q.build_answers(part, _selections(args))
+    answers_part = q.answers_part(part, args.message, answers)
+    # Posted where the question is: the server refuses answers in any other
+    # thread, and a top-level question's answers go top level.
+    thread_id = message.get("thread_id", args.thread)
+    preview = ["Answer the agent's question:", *q.answer_lines(answers)]
+    data: dict[str, Any] = {
+        "question_message_id": args.message,
+        "question_id": part.get("question_id"),
+        "thread_id": thread_id or None,
+        "answers": answers,
+    }
+
+    if args.dry_run:
+        _output(args, {**data, "dry_run": True, "part": answers_part}, "\n".join(preview))
+        return
+    if not _assume_yes(args):
+        # Straight to stderr, not `_status`: under --quiet the prompt would
+        # otherwise ask to send answers it never showed.
+        print("\n".join(preview), file=sys.stderr)
+    if not _confirm(args, "Send?"):
+        _status("Cancelled.")
+        return
+    sent = operations.send_parts(client, args.conversation, [answers_part], thread_id or "")
+    # The server's echo of the message is not passed on: it carries the
+    # answers' `metadata.answer_plan_ids`, which no member reads.
+    data["message_id"] = (sent.get("message") or {}).get("id")
+    _output(args, data, f"Answered (id: {data['message_id'] or '?'})\n" + "\n".join(preview[1:]))
+
+
 register(
     Command(
         name="message",
         category="messages",
         description=(
-            "Message commands (delete, download, edit, get, list, react, search, send, threads)"
+            "Message commands (answer, delete, download, edit, get, list, questions, react, "
+            "search, send, threads)"
         ),
         subcommands=[
+            Subcommand(
+                "answer",
+                "Answer an agent's question card, as tapping it in the app does",
+                _answer,
+                [
+                    _CHANNEL,
+                    Argument(
+                        "message",
+                        "The question's message id (from `message questions`)",
+                        required=True,
+                    ),
+                    Argument(
+                        "thread",
+                        "Thread the question was asked in (its root message id)",
+                        type=str,
+                    ),
+                    Argument(
+                        "question",
+                        "Which question on the card the flags answer (default 1); "
+                        "the others go as skipped, as in the app",
+                        type=int,
+                    ),
+                    Argument(
+                        "option",
+                        "Pick option N (repeat on a pick-any question)",
+                        action="append",
+                    ),
+                    Argument(
+                        "label",
+                        "Pick the option with this label (repeat on a pick-any question)",
+                        action="append",
+                    ),
+                    Argument("custom", "Free-text answer, alone or beside a pick", type=str),
+                    Argument("skip", "Skip the question", action="store_true"),
+                    Argument(
+                        "answers",
+                        "Every question at once, as a JSON list (literal, @file or @-): "
+                        '[{"option": 1}, {"label": ["A", "B"], "custom": "…"}, {"skip": true}]',
+                        type=str,
+                    ),
+                    Argument(
+                        "dry-run",
+                        "Print the answers part that would be sent, and send nothing",
+                        action="store_true",
+                    ),
+                ],
+            ),
             Subcommand(
                 "delete",
                 "Delete a message",
@@ -104,6 +271,16 @@ register(
                         "Exit after N seconds even if no messages received (with --watch)",
                         type=float,
                     ),
+                ],
+            ),
+            Subcommand(
+                "questions",
+                "List an agent's unanswered question cards, numbered for `message answer`",
+                _questions,
+                [
+                    _CHANNEL,
+                    Argument("thread", "Thread ID to look in", type=str),
+                    Argument("limit", "Recent messages to look through (default 50)", type=int),
                 ],
             ),
             Subcommand(

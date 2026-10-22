@@ -247,13 +247,23 @@ def send_message(
     file_parts: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Send a message to a channel or DM."""
-    conv_id = resolve_conversation(client, conversation)
     parts: list[dict[str, Any]] = list(file_parts or [])
     if text:
         parts.append({"type": "text", "content": text})
     if not parts:
         raise PopcornError("Nothing to send — provide text or file")
+    return send_parts(client, conversation, parts, thread_id)
 
+
+def send_parts(
+    client: APIClient,
+    conversation: str,
+    parts: list[dict[str, Any]],
+    thread_id: str = "",
+) -> dict[str, Any]:
+    """Post a message made of `parts` as they are — the route `send_message`
+    uses, for a part that is not text or a file (an answers part)."""
+    conv_id = resolve_conversation(client, conversation)
     body: dict[str, Any] = {
         "conversation": conv_id,
         "content": {"parts": parts},
