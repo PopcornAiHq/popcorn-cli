@@ -39,9 +39,22 @@ _CHANNEL = Argument(
 )
 _MESSAGE_ID = Argument("message_id", "Message UUID", positional=True)
 
-# How far back `answer` looks for the card it was named: a pending card is
-# almost always the newest message, and the history route takes up to 1000.
+# How far back `answer` looks for the card it was named among a channel's
+# top-level messages: a pending card is almost always the newest message, and
+# the history route takes up to 1000. A thread is read whole.
 _ANSWER_WINDOW = 200
+
+
+def _recent(client: Any, conversation: str, thread: str, limit: int) -> dict[str, Any]:
+    """The newest `limit` messages, oldest first, at top level or in `thread`.
+
+    A thread is read whole and its tail kept: the thread route answers its
+    OLDEST replies first, so a single read of a long thread misses the newest.
+    """
+    if not thread:
+        return operations.read_messages(client, conversation, "", limit)
+    replies = operations.read_thread(client, conversation, thread)
+    return {"messages": replies[-limit:], "has_more": len(replies) > limit}
 
 
 def _card_lines(card: dict[str, Any]) -> list[str]:
@@ -62,9 +75,7 @@ def _card_lines(card: dict[str, Any]) -> list[str]:
 def _questions(args: argparse.Namespace) -> None:
     from ..cli import _get_client, _output
 
-    resp = operations.read_messages(
-        _get_client(args), args.conversation, args.thread or "", args.limit or 50
-    )
+    resp = _recent(_get_client(args), args.conversation, args.thread or "", args.limit or 50)
     messages = resp.get("messages", [])
     cards = q.pending_cards(messages)
     data = {"questions": cards, "scanned": len(messages), "has_more": bool(resp.get("has_more"))}
@@ -114,7 +125,10 @@ def _answer(args: argparse.Namespace) -> None:
     from ..cli import _assume_yes, _confirm, _get_client, _output, _status
 
     client = _get_client(args)
-    resp = operations.read_messages(client, args.conversation, args.thread or "", _ANSWER_WINDOW)
+    if args.thread:
+        resp = {"messages": operations.read_thread(client, args.conversation, args.thread)}
+    else:
+        resp = operations.read_messages(client, args.conversation, "", _ANSWER_WINDOW)
     message = next((m for m in resp.get("messages", []) if m.get("id") == args.message), None)
     part = q.check_answerable(message, args.message)
     assert message is not None

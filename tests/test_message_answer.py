@@ -349,6 +349,19 @@ def _history(client: MagicMock, *messages: dict[str, Any]) -> None:
     client.get.return_value = {"messages": list(messages), "has_more": False}
 
 
+def _long_thread(client: MagicMock, last: dict[str, Any]) -> None:
+    """A thread of 1000 replies and then `last`, paged as the route pages it:
+    by offset, oldest first, `has_more` whenever a page comes back full."""
+    replies = [_text(1000 + i, f"reply {i}") for i in range(1000)] + [last]
+
+    def get(path: str, params: dict[str, Any]) -> dict[str, Any]:
+        assert path == "/api/messages/thread"
+        page = replies[params["offset"] : params["offset"] + params["limit"]]
+        return {"messages": page, "has_more": len(page) == params["limit"]}
+
+    client.get.side_effect = get
+
+
 def _run(monkeypatch, *argv: str) -> None:
     monkeypatch.setattr(sys, "argv", ["popcorn", *argv])
     cli.main()
@@ -385,6 +398,26 @@ class TestQuestionsCommand:
         assert client.get.call_args.args[0] == "/api/messages/thread"
         assert client.get.call_args.args[1]["thread_ts"] == _THREAD
         assert "No open questions" in capsys.readouterr().out
+
+    def test_a_long_thread_is_read_to_its_newest_reply(self, client, monkeypatch, capsys):
+        """The thread route answers oldest first; the open card is the newest."""
+        _long_thread(client, _card(thread_id=_THREAD))
+        _run(
+            monkeypatch,
+            "--json",
+            "message",
+            "questions",
+            "#example-channel",
+            "--thread",
+            _THREAD,
+            "--limit",
+            "5",
+        )
+        data = json.loads(capsys.readouterr().out)["data"]
+        assert [c["message_id"] for c in data["questions"]] == [_QUESTION_MSG]
+        assert data["questions"][0]["latest"] is True
+        assert data["scanned"] == 5
+        assert data["has_more"] is True
 
 
 class TestAnswerCommand:
@@ -434,6 +467,24 @@ class TestAnswerCommand:
             "Cancel",
             "-y",
         )
+        assert _sent_body(client)["thread_id"] == _THREAD
+
+    def test_a_question_past_the_first_page_of_its_thread_is_found(self, client, monkeypatch):
+        _long_thread(client, _card(thread_id=_THREAD))
+        _run(
+            monkeypatch,
+            "message",
+            "answer",
+            "#example-channel",
+            "--thread",
+            _THREAD,
+            "--message",
+            _QUESTION_MSG,
+            "--option",
+            "1",
+            "--yes",
+        )
+        assert [c.args[1]["offset"] for c in client.get.call_args_list] == [0, 1000]
         assert _sent_body(client)["thread_id"] == _THREAD
 
     def test_answers_json_answers_every_question(self, client, monkeypatch):

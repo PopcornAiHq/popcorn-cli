@@ -239,6 +239,38 @@ def read_messages(
     return client.get("/api/messages/history", params)
 
 
+# A thread read pages by offset, oldest first, so its newest reply is on the
+# LAST page. The cap only stops a runaway loop; no thread comes near it.
+_THREAD_PAGE = 1000
+_THREAD_MAX_PAGES = 50
+
+
+def read_thread(client: APIClient, conversation: str, thread_id: str) -> list[dict[str, Any]]:
+    """Every reply in a thread, oldest first.
+
+    `read_messages` returns a thread's FIRST page, which for a long thread
+    leaves out the newest replies — the ones an open question card sits on.
+    The route reports `has_more` whenever a page comes back full.
+    """
+    conv_id = resolve_conversation(client, conversation)
+    replies: list[dict[str, Any]] = []
+    for _ in range(_THREAD_MAX_PAGES):
+        page = client.get(
+            "/api/messages/thread",
+            {
+                "conversation": conv_id,
+                "thread_ts": thread_id,
+                "limit": _THREAD_PAGE,
+                "offset": len(replies),
+            },
+        )
+        messages = page.get("messages", [])
+        replies.extend(messages)
+        if not page.get("has_more") or not messages:
+            break
+    return replies
+
+
 def send_message(
     client: APIClient,
     conversation: str,
