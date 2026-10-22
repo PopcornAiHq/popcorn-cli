@@ -13,11 +13,13 @@ Usage:
     popcorn workspace switch [name]
     popcorn workspace users [query]
     popcorn whoami
+    popcorn message answer <conversation> --message ID (--option N | --label L | --custom T | --skip)
     popcorn message delete <conversation> <message_id>
     popcorn message download <file_key> [-o PATH]
     popcorn message edit <conversation> <message_id> "content"
     popcorn message get <message_id>
     popcorn message list <conversation> [--thread ID] [--limit N]
+    popcorn message questions <conversation> [--thread ID] [--limit N]
     popcorn message react <conversation> <message_id> <emoji> [--remove]
     popcorn message search <query>
     popcorn message send <conversation> "message" [--thread ID] [--file PATH]
@@ -2408,7 +2410,8 @@ def _fold_dual_spelled_arguments(args: argparse.Namespace) -> None:
 def build_parser() -> PopcornParser:
     epilog = """\
 Messages:
-  message         Message commands (delete, download, edit, get, list, react, search, send, threads)
+  message         Message commands (answer, delete, download, edit, get, list, questions,
+                  react, search, send, threads)
 
 Channels:
   channel         Channel commands (archive, create, delete, edit, info, invite, join, kick, leave, list, templates)
