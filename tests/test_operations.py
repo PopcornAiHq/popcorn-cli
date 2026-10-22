@@ -728,6 +728,80 @@ class TestDataStoreOperations:
             "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records/7"
         )
 
+    def test_insert_records_posts_the_rows(self, mock_client):
+        mock_client.post.return_value = {"ids": [7], "created": 1, "updated": 0}
+        operations.insert_records(mock_client, "conv-uuid", "alerts", [{"Status": "firing"}])
+        (path,) = mock_client.post.call_args.args
+        assert path == "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records"
+        # No merge_on key at all when none was asked for: a plain insert.
+        assert mock_client.post.call_args.kwargs["data"] == {"records": [{"Status": "firing"}]}
+
+    def test_insert_records_sends_merge_on_as_a_list(self, mock_client):
+        mock_client.post.return_value = {"ids": [7], "created": 0, "updated": 1}
+        operations.insert_records(
+            mock_client, "conv-uuid", "alerts", [{"Alarm": "cpu"}], merge_on=["Alarm"]
+        )
+        assert mock_client.post.call_args.kwargs["data"] == {
+            "records": [{"Alarm": "cpu"}],
+            "merge_on": ["Alarm"],
+        }
+
+    def test_insert_records_on_the_wire(self, profile):
+        """Through the real client: a POST with the rows as JSON, and the
+        ids/created/updated answer handed back as-is."""
+        from popcorn_core.client import APIClient
+
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(
+                200,
+                json={
+                    "ok": True,
+                    "ids": [11, 12],
+                    "created": 1,
+                    "updated": 1,
+                    "schema_version_id": 3,
+                },
+            )
+
+        client = APIClient(profile)
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+        result = operations.insert_records(
+            client, "conv-uuid", "alerts", [{"Alarm": "cpu"}, {"Alarm": "disk"}], merge_on=["Alarm"]
+        )
+
+        (req,) = seen
+        assert req.method == "POST"
+        assert req.url.path == "/api/v1/conversations/conv-uuid/data-store/tables/alerts/records"
+        assert json.loads(req.content) == {
+            "records": [{"Alarm": "cpu"}, {"Alarm": "disk"}],
+            "merge_on": ["Alarm"],
+        }
+        assert (result["ids"], result["created"], result["updated"]) == ([11, 12], 1, 1)
+
+    def test_insert_records_surfaces_the_servers_validation_message(self, profile):
+        from popcorn_core.client import APIClient
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                422,
+                json={
+                    "detail": {
+                        "error": "validation_failed",
+                        "detail": "missing required field: Alarm",
+                    }
+                },
+            )
+
+        client = APIClient(profile)
+        client._client = httpx.Client(transport=httpx.MockTransport(handler))
+        with pytest.raises(APIError) as exc:
+            operations.insert_records(client, "conv-uuid", "alerts", [{}])
+        assert str(exc.value) == "missing required field: Alarm"
+        assert exc.value.error_code == "validation"
+
     def test_patch_record_sends_data_body(self, mock_client):
         mock_client.patch.return_value = {"ok": True, "record": {}}
         operations.patch_record(mock_client, "conv-uuid", "alerts", 7, {"Status": "acked"})

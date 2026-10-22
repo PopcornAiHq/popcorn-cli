@@ -43,6 +43,8 @@ Usage:
     popcorn table schema <name> --channel <conv>
     popcorn table rows <name> --channel <conv> [--filter JSON] [--limit N]
     popcorn table row get|patch|delete <name> <record_id> --channel <conv>
+    popcorn table row create <name> --channel <conv> --data JSON
+    popcorn table import <name> --channel <conv> --file rows.jsonl|rows.json|rows.csv
     popcorn table scalar list|get|set --channel <conv>
     popcorn table audit --channel <conv>
     popcorn commands --json
@@ -2421,7 +2423,7 @@ Apps:
   channel-config  Channel config (show, params set/unset, integrations set/unset, accounts)
 
 Tables:
-  table           Agent-store commands (list, schema, rows, row, scalar, audit)
+  table           Agent-store commands (list, schema, rows, import, row, scalar, audit)
 
 Webhooks:
   webhook         Webhook commands (create, list, get, update, delete,

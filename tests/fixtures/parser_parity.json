@@ -2738,6 +2738,141 @@
   },
   {
     "argv": [
+      "table",
+      "import",
+      "x",
+      "--channel",
+      "x",
+      "--file",
+      "x"
+    ],
+    "namespace": {
+      "batch_size": null,
+      "channel": "x",
+      "command": "table",
+      "debug": false,
+      "env": null,
+      "file": "x",
+      "format": null,
+      "json": false,
+      "merge_on": null,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "skip": null,
+      "table_command": "import",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "table",
+      "import",
+      "x",
+      "--channel",
+      "x",
+      "--file",
+      "x",
+      "--format",
+      "csv",
+      "--merge-on",
+      "x",
+      "--merge-on",
+      "x",
+      "--batch-size",
+      "7",
+      "--skip",
+      "7"
+    ],
+    "namespace": {
+      "batch_size": 7,
+      "channel": "x",
+      "command": "table",
+      "debug": false,
+      "env": null,
+      "file": "x",
+      "format": "csv",
+      "json": false,
+      "merge_on": [
+        "x",
+        "x"
+      ],
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "skip": 7,
+      "table_command": "import",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "table",
+      "row",
+      "create",
+      "x",
+      "--channel",
+      "x",
+      "--data",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "table",
+      "data": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "merge_on": null,
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "table_command": "row",
+      "table_row_command": "create",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
+      "table",
+      "row",
+      "create",
+      "x",
+      "--channel",
+      "x",
+      "--data",
+      "x",
+      "--merge-on",
+      "x"
+    ],
+    "namespace": {
+      "channel": "x",
+      "command": "table",
+      "data": "x",
+      "debug": false,
+      "env": null,
+      "json": false,
+      "merge_on": [
+        "x"
+      ],
+      "name": "x",
+      "no_color": false,
+      "quiet": false,
+      "table_command": "row",
+      "table_row_command": "create",
+      "timeout": null,
+      "workspace": null,
+      "yes": false
+    }
+  },
+  {
+    "argv": [
       "webhook",
       "create",
       "x",

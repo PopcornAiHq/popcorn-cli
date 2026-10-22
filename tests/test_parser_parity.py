@@ -73,7 +73,7 @@ _MINIMUM_ROWS = {
     "flow": 11,
     "message": 24,
     "schedule": 2,
-    "table": 11,
+    "table": 15,
     "template": 3,
     "webhook": 22,
     "workspace": 10,
