@@ -39,6 +39,52 @@ def test_jpeg_exif_orientation_is_applied(orientation: int, size: tuple[int, int
     assert image_size(_exif_jpeg(orientation)) == size
 
 
+def _box(kind: bytes, payload: bytes) -> bytes:
+    return struct.pack(">I", 8 + len(payload)) + kind + payload
+
+
+def _full(kind: bytes, payload: bytes) -> bytes:
+    return _box(kind, b"\x00\x00\x00\x00" + payload)
+
+
+def _heif(primary: int, properties: list[bytes], ipma: dict[int, list[int]]) -> bytes:
+    """ftyp, then a meta box naming `primary` and mapping item ids to the
+    1-based `properties` each is associated with."""
+    entries = b"".join(
+        struct.pack(">HB", item, len(idx)) + bytes(idx) for item, idx in ipma.items()
+    )
+    iprp = _box(
+        b"iprp",
+        _box(b"ipco", b"".join(properties))
+        + _full(b"ipma", struct.pack(">I", len(ipma)) + entries),
+    )
+    meta = _full(b"meta", _full(b"pitm", struct.pack(">H", primary)) + iprp)
+    return _box(b"ftyp", b"heic\x00\x00\x00\x00mif1heic") + meta
+
+
+def _ispe(w: int, h: int) -> bytes:
+    return _full(b"ispe", struct.pack(">II", w, h))
+
+
+def _irot(quarters: int) -> bytes:
+    return _box(b"irot", bytes([quarters]))
+
+
+def test_heif_reads_only_the_primary_items_properties() -> None:
+    # Property 1 is another item's quarter turn; the primary (item 1) is
+    # associated with a 3x2 ispe and a zero turn.
+    data = _heif(1, [_irot(1), _ispe(3, 2), _irot(0), _ispe(320, 240)], {1: [2, 3], 2: [4, 1]})
+    assert image_size(data) == (3, 2)
+
+
+def test_heif_rotation_and_larger_thumbnail_items() -> None:
+    assert image_size(_heif(1, [_ispe(4032, 3024), _irot(1)], {1: [1, 0x82]})) == (3024, 4032)
+    assert image_size(_heif(2, [_ispe(9000, 9000), _ispe(4032, 3024)], {1: [1], 2: [2]})) == (
+        4032,
+        3024,
+    )
+
+
 def test_gif_and_webp() -> None:
     assert image_size(b"GIF89a" + struct.pack("<HH", 2400, 1350) + b"\x00" * 4) == (2400, 1350)
     vp8x = b"RIFF\x00\x00\x00\x00WEBPVP8X" + b"\x00" * 8

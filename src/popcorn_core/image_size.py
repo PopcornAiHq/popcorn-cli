@@ -76,40 +76,78 @@ def _exif_orientation(tiff: bytes) -> int:
     return 1
 
 
+def _boxes(data: bytes, start: int, end: int) -> dict[bytes, tuple[int, int]]:
+    """The first box of each type in `data[start:end]`, as (payload start, end)."""
+    found: dict[bytes, tuple[int, int]] = {}
+    while start + 8 <= end:
+        size, kind = struct.unpack(">I4s", data[start : start + 8])
+        header = 8
+        if size == 1:
+            size, header = struct.unpack(">Q", data[start + 8 : start + 16])[0], 16
+        elif size == 0:
+            size = end - start
+        if size < header:
+            break
+        found.setdefault(kind, (start + header, min(start + size, end)))
+        start += size
+    return found
+
+
 def _heif(data: bytes) -> tuple[int, int] | None:
-    """The largest `ispe` (the primary image, not a thumbnail or grid tile),
-    cropped by its `clap` and swapped if an `irot` turns it a quarter. Read from the `meta` box only, so
-    the image data can't pass for a box."""
-    at = 0
-    while at + 8 <= len(data):
+    """The primary item's `ispe`, cropped by its `clap` and swapped if its
+    `irot` turns it a quarter. Only properties `ipma` associates with the item
+    named by `pitm` count: a thumbnail or tile carries its own."""
+    meta = _boxes(data, 0, len(data)).get(b"meta")
+    if meta is None:
+        return None
+    children = _boxes(data, meta[0] + 4, meta[1])  # past the version and flags
+    iprp = children.get(b"iprp")
+    if b"pitm" not in children or iprp is None:
+        return None
+    pitm = children[b"pitm"][0]
+    primary = int.from_bytes(data[pitm + 4 : pitm + (6 if data[pitm] == 0 else 8)], "big")
+    boxes = _boxes(data, *iprp)
+    if b"ipco" not in boxes or b"ipma" not in boxes:
+        return None
+
+    # ipco's properties, addressed 1-based by ipma.
+    properties: list[tuple[bytes, int]] = []
+    at, end = boxes[b"ipco"]
+    while at + 8 <= end:
         size, kind = struct.unpack(">I4s", data[at : at + 8])
-        if kind == b"meta":
-            break
         if size < 8:
-            return None
-        at += size
-    else:
-        return None
-    data = data[at : at + size]
-    sizes = []
-    at = data.find(b"ispe")
-    while at != -1:
-        sizes.append(struct.unpack(">II", data[at + 8 : at + 16]))
-        at = data.find(b"ispe", at + 4)
-    if not sizes:
-        return None
-    w, h = max(sizes, key=lambda s: s[0] * s[1])
-    # The coded size is padded to the encoder's block size and a `clap` crops
-    # it back; one that trims only a block's worth is the primary image's.
-    at = data.find(b"clap")
-    while at != -1:
-        wn, wd, hn, hd = struct.unpack(">IIII", data[at + 4 : at + 20])
-        cw, ch = (wn // wd, hn // hd) if wd and hd else (0, 0)
-        if 0 < cw <= w < cw + 64 and 0 < ch <= h < ch + 64:
-            w, h = cw, ch
             break
-        at = data.find(b"clap", at + 4)
-    rot = data.find(b"irot")
-    if rot != -1 and data[rot + 4] & 0x3 in (1, 3):
+        properties.append((kind, at + 8))
+        at += size
+
+    at = boxes[b"ipma"][0]
+    id_size = 2 if data[at] == 0 else 4  # by version
+    index_size = 2 if data[at + 3] & 1 else 1  # by flags
+    entries = struct.unpack(">I", data[at + 4 : at + 8])[0]
+    at += 8
+    mine: dict[bytes, int] = {}
+    for _ in range(entries):
+        item = int.from_bytes(data[at : at + id_size], "big")
+        count = data[at + id_size]
+        at += id_size + 1
+        for _ in range(count):
+            # The top bit marks the property essential; the rest is its index.
+            index = int.from_bytes(data[at : at + index_size], "big") & ~(
+                0x80 << 8 * (index_size - 1)
+            )
+            at += index_size
+            if item == primary and 0 < index <= len(properties):
+                kind, payload = properties[index - 1]
+                mine.setdefault(kind, payload)
+
+    if b"ispe" not in mine:
+        return None
+    w, h = struct.unpack(">II", data[mine[b"ispe"] + 4 : mine[b"ispe"] + 12])
+    if b"clap" in mine:
+        # The coded size is padded to the encoder's block size; `clap` crops it.
+        wn, wd, hn, hd = struct.unpack(">IIII", data[mine[b"clap"] : mine[b"clap"] + 16])
+        if wd and hd:
+            w, h = wn // wd, hn // hd
+    if b"irot" in mine and data[mine[b"irot"]] & 0x3 in (1, 3):
         return h, w
     return w, h
