@@ -16,6 +16,7 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 from .errors import APIError, PopcornError
+from .image_size import image_size
 from .paging import fetch_all, listing_params
 from .resolve import resolve_conversation, resolve_user
 
@@ -565,8 +566,15 @@ def upload_file(client: APIClient, conversation: str, file_path: str) -> dict[st
         "url": file_key,
         "filename": path.name,
         "size_bytes": len(file_data),
-        "media_metadata": {},
+        # The apps lay an image out from its size before it loads; without
+        # one it renders cropped or at the wrong aspect.
+        "media_metadata": _image_metadata(file_data) if file_type == "image" else {},
     }
+
+
+def _image_metadata(data: bytes) -> dict[str, int]:
+    size = image_size(data)
+    return {"width": size[0], "height": size[1]} if size else {}
 
 
 def download_file(client: APIClient, file_key: str) -> dict[str, Any]:
