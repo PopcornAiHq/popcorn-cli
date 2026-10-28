@@ -277,14 +277,19 @@ def send_message(
     text: str = "",
     thread_id: str = "",
     file_parts: list[dict[str, Any]] | None = None,
+    mentions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Send a message to a channel or DM."""
+    """Send a message to a channel or DM.
+
+    `mentions` is the body's mention fields (`mentioned_user_ids`,
+    `mentioned_everyone`, `mentioned_here`), as `mentions.MentionResolver` makes.
+    """
     parts: list[dict[str, Any]] = list(file_parts or [])
     if text:
         parts.append({"type": "text", "content": text})
     if not parts:
         raise PopcornError("Nothing to send — provide text or file")
-    return send_parts(client, conversation, parts, thread_id)
+    return send_parts(client, conversation, parts, thread_id, mentions)
 
 
 def send_parts(
@@ -292,6 +297,7 @@ def send_parts(
     conversation: str,
     parts: list[dict[str, Any]],
     thread_id: str = "",
+    mentions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Post a message made of `parts` as they are — the route `send_message`
     uses, for a part that is not text or a file (an answers part)."""
@@ -299,6 +305,7 @@ def send_parts(
     body: dict[str, Any] = {
         "conversation": conv_id,
         "content": {"parts": parts},
+        **(mentions or {}),
     }
     if thread_id:
         body["thread_id"] = thread_id
@@ -328,9 +335,13 @@ def remove_reaction(
 
 
 def edit_message(
-    client: APIClient, conversation: str, message_id: str, content: str
+    client: APIClient,
+    conversation: str,
+    message_id: str,
+    content: str,
+    mentions: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Edit a previously sent message."""
+    """Edit a previously sent message; `mentions` as for `send_message`."""
     conv_id = resolve_conversation(client, conversation)
     return client.post(
         "/api/messages/edit",
@@ -338,6 +349,7 @@ def edit_message(
             "conversation": conv_id,
             "message": message_id,
             "content": {"parts": [{"type": "text", "content": content}]},
+            **(mentions or {}),
         },
     )
 

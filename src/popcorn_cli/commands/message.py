@@ -250,6 +250,12 @@ register(
                     _CHANNEL,
                     _MESSAGE_ID,
                     Argument("content", "New message content", positional=True),
+                    Argument(
+                        "no-mentions",
+                        "Send @names as plain text; by default each @name that matches a "
+                        "member's username or display name notifies them (@everyone, @here too)",
+                        action="store_true",
+                    ),
                 ],
             ),
             Subcommand(
@@ -375,6 +381,12 @@ register(
                     ),
                     Argument(
                         "fail-fast", "Stop batch processing on first error", action="store_true"
+                    ),
+                    Argument(
+                        "no-mentions",
+                        "Send @names as plain text; by default each @name that matches a "
+                        "member's username or display name notifies them (@everyone, @here too)",
+                        action="store_true",
                     ),
                 ],
             ),
