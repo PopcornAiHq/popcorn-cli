@@ -84,13 +84,13 @@ from the directory positional, so `--fork mydir` names the *line* `mydir`.
 | Command | Purpose |
 |---------|---------|
 | **Messages** | |
-| `popcorn message send <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast]` | Send a message |
+| `popcorn message send <conv> "msg" [--thread ID] [--file PATH] [--batch] [--fail-fast] [--no-mentions]` | Send a message. Each `@name` matching a member's username or display name (case-insensitive) notifies them, as in the app; `@everyone` and `@here` notify the channel. An `@name` that matches no one is sent as text with a warning on stderr. `--no-mentions` sends every `@name` as plain text |
 | `popcorn message list <conv> [--thread ID] [--limit N] [--before ID] [--after ID]` | Read message history |
 | `popcorn message threads <conv> [--limit N] [--offset N]` | List threads with reply counts |
 | `popcorn message get <msg_id>` | Get a single message by ID |
 | `popcorn message questions <conv> [--thread ID] [--limit N]` | List the agent's unanswered question cards, newest first, with each question and option numbered |
 | `popcorn message answer <conv> --message ID [--thread ID] [--question N] (--option N \| --label TEXT \| --custom TEXT \| --skip) [--answers JSON] [--dry-run]` | Answer a question card exactly as the web and iOS apps do. Confirms first; `--yes` sends without asking. A question the flags leave out goes as skipped, as in the apps; `--answers '[{"option": 1}, {"label": ["A", "B"]}]'` answers every question at once. An option that confirms an agent's dry run is picked like any other — the server links the plan to the answer, and the CLI never prints a plan id |
-| `popcorn message edit <conv> <msg_id> "content"` | Edit a message |
+| `popcorn message edit <conv> <msg_id> "content" [--no-mentions]` | Edit a message; `@name` mentions as for `send` |
 | `popcorn message delete <conv> <msg_id>` | Delete a message |
 | `popcorn message react <conv> <msg_id> <emoji> [--remove]` | Add/remove reaction |
 | `popcorn message search [query] [--in CHANNELS] [--from USERS] [--since T] [--until T] [--has WHAT] [--sort ORDER]` | Full-text message search. `--in` and `--from` accept comma-separated names or UUIDs; `--since`/`--until` take ISO 8601 times and `--has` takes `file,images,link,mention,video`. The query may be omitted when at least one filter other than `--sort` is given |

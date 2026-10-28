@@ -100,7 +100,7 @@ import shutil
 import sys
 import time
 import webbrowser
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -138,6 +138,7 @@ from popcorn_core.errors import (
     AuthError,
     PopcornError,
 )
+from popcorn_core.mentions import MentionResolver
 from popcorn_core.validation import extract
 
 from . import commands as _registered_commands  # noqa: F401  — registers the families
@@ -1116,6 +1117,17 @@ def cmd_info(args: argparse.Namespace) -> None:
     _output(args, resp, "\n".join(lines))
 
 
+def _mention_resolver(
+    args: argparse.Namespace, client: APIClient
+) -> Callable[[str], dict[str, Any]]:
+    """`@name` → the mention fields for `message send`/`edit`, unless `--no-mentions`."""
+    if getattr(args, "no_mentions", False):
+        return lambda _text: {}
+    # Straight to stderr, not `_status`: --quiet hides progress, not a
+    # mention that silently notified nobody.
+    return MentionResolver(client, lambda msg: print(f"Warning: {msg}", file=sys.stderr))
+
+
 def cmd_send_message(args: argparse.Namespace) -> None:
     if getattr(args, "batch", False):
         _cmd_send_batch(args)
@@ -1145,7 +1157,12 @@ def cmd_send_message(args: argparse.Namespace) -> None:
         _status("Uploaded.")
 
     resp = operations.send_message(
-        client, args.conversation, message or "", args.thread or "", file_parts
+        client,
+        args.conversation,
+        message or "",
+        args.thread or "",
+        file_parts,
+        _mention_resolver(args, client)(message or ""),
     )
     msg = resp.get("message", {})
     _output(args, resp, f"Sent (id: {msg.get('id', '?')})")
@@ -1156,6 +1173,7 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
     client = _get_client(args)
     json_mode = getattr(args, "json", False)
     fail_fast = getattr(args, "fail_fast", False)
+    mentions = _mention_resolver(args, client)
     results: list[dict[str, Any]] = []
 
     for line_num, line in enumerate(sys.stdin, 1):
@@ -1186,7 +1204,7 @@ def _cmd_send_batch(args: argparse.Namespace) -> None:
             continue
 
         try:
-            resp = operations.send_message(client, conv, msg_text, thread, [])
+            resp = operations.send_message(client, conv, msg_text, thread, [], mentions(msg_text))
             sent_msg = resp.get("message", {})
             results.append({"line": line_num, "ok": True, "message_id": sent_msg.get("id", "?")})
         except PopcornError as e:
@@ -1216,7 +1234,10 @@ def cmd_react(args: argparse.Namespace) -> None:
 
 def cmd_edit_message(args: argparse.Namespace) -> None:
     client = _get_client(args)
-    resp = operations.edit_message(client, args.conversation, args.message_id, args.content)
+    mentions = _mention_resolver(args, client)(args.content)
+    resp = operations.edit_message(
+        client, args.conversation, args.message_id, args.content, mentions
+    )
     _output(args, resp, f"Edited (id: {args.message_id})")
 
 
