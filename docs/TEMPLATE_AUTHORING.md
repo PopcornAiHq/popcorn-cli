@@ -2,7 +2,7 @@
 
 This guide now lives on the docs site:
 
-**<https://docs.popcorn.ai/template-authoring.html>**
+**<https://docs.popcorn.ai/template-authoring>**
 
 Plain Markdown, for an agent or a `curl`:
 
