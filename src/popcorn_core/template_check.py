@@ -12,6 +12,8 @@ or that every layer below accepts in silence:
 - an `output_schema` property that a later step dereferences but that is not
   listed in `required`, so the model may legally omit it
 - a schedule or webhook naming a flow the bundle does not contain
+- a `states:` graph naming a table, column or flow the bundle does not declare
+  (the graph's own rules are the server's; see `_check_states`)
 
 None of those are bad references, so none of them fail validation. All of them
 were live failures while the alerttracker bundle was written; see
@@ -340,6 +342,7 @@ class _Checker:
         self._check_checkout_version()
         self._load_flows(files)
         self._check_manifest_references()
+        self._check_states()
         for flow in self.report.flows:
             self._check_flow(flow)
         self._check_scalar_collisions()
@@ -726,6 +729,62 @@ class _Checker:
                         f"Webhook targets flow '{flow}', which no flow in this bundle declares "
                         f"as its `name:`.",
                     )
+
+    def _check_states(self) -> None:
+        """What a `states:` graph names outside itself: its table, columns, flows.
+
+        Only the names an author spelled out are checked, each against the
+        bundle — never a default the server fills in for an omitted key, and
+        never the graph itself. Reachability, dead ends, `expected:` edges,
+        terminal states, shared state names, and every reference the graph
+        resolves within itself (states, groups, events, guards) are the
+        server's to judge; their rules span the whole graph and move with it,
+        so a copy here would drift into reporting valid graphs as broken.
+        `app validate` reports them in a fork checkout when logged in;
+        otherwise publish is the first to see them.
+        """
+        manifest = self.report.manifest
+        if manifest is None or "states" not in manifest:
+            return
+        spec = manifest["states"]
+        if not isinstance(spec, dict):
+            self.err("states-not-a-mapping", "manifest.yaml:states", "`states:` must be a mapping.")
+            return
+        table = spec.get("table")
+        tables = self._table_columns()
+        if isinstance(table, str) and table not in tables:
+            self.err(
+                "states-unknown-table",
+                "manifest.yaml:states.table",
+                f"`states:` runs on table '{table}', which `tables:` does not declare. "
+                f"Known: {', '.join(sorted(tables)) or '(none)'}.",
+            )
+        columns = tables.get(table) if isinstance(table, str) else None
+        if columns is not None:
+            for where, column, reads in _states_columns(spec):
+                if column in columns:
+                    continue
+                verb = "reads" if reads else "writes"
+                self.err(
+                    "states-unknown-column",
+                    f"manifest.yaml:states.{where}",
+                    f"`states:` {verb} column '{column}', which table '{table}' does not "
+                    "declare. Publish refuses the graph"
+                    + (
+                        "; a predicate on a missing column would read blank on every row."
+                        if reads
+                        else "."
+                    ),
+                )
+        names = {f.name for f in self.report.flows}
+        for where, flow in _states_flows(spec):
+            if flow not in names:
+                self.err(
+                    "states-unknown-flow",
+                    f"manifest.yaml:states.{where}",
+                    f"A transition names flow '{flow}', which no flow in this bundle declares "
+                    f"as its `name:`. Known: {', '.join(sorted(names)) or '(none)'}.",
+                )
 
     def _check_unpublished_paths(self) -> None:
         """Name every path `app publish` would leave behind.
@@ -1261,19 +1320,34 @@ class _Checker:
         manifest = self.report.manifest
         if manifest is None:
             return
-        declared: set[str] = set()
-        for section in ("channel_parameters", "scalars", "default_scalars"):
-            block = manifest.get(section)
-            if isinstance(block, dict):
-                declared |= set(block)
-        if key not in declared:
+        params = manifest.get("channel_parameters")
+        if isinstance(params, dict) and key in params:
+            return
+        # `$channel` is built from the channel's parameters and its
+        # integrations alone. Scalars live in the agent store, so naming one
+        # here is not a near-miss the runtime forgives: a key the scope lacks
+        # is a reference error that `on_error` cannot absorb.
+        scalar_sections = [
+            s
+            for s in ("scalars", "default_scalars")
+            if isinstance(manifest.get(s), dict) and key in manifest[s]
+        ]
+        if scalar_sections:
             self.warn(
                 "undeclared-channel-key",
                 where,
-                f"'{value}' reads channel key '{key}', which the manifest does not declare under "
-                "channel_parameters, scalars or default_scalars. Fine if a flow writes it at "
-                "runtime; a typo otherwise.",
+                f"'{value}' reads '{key}' through `$channel`, but the manifest declares it under "
+                f"`{scalar_sections[0]}:`. Scalars live in the agent store and are never in "
+                "`$channel`, so this reference fails at runtime; read the scalar with a store "
+                "activity instead (`popcorn flow activities` lists them).",
             )
+            return
+        self.warn(
+            "undeclared-channel-key",
+            where,
+            f"'{value}' reads channel key '{key}', which the manifest does not declare under "
+            "channel_parameters. Fine if a flow writes it at runtime; a typo otherwise.",
+        )
 
     # ── column names ──────────────────────────────────────────────────
 
@@ -1457,6 +1531,87 @@ def _when_refs(when: str) -> list[str]:
     calls the real one.
     """
     return _EMBEDDED_REF_RE.findall(_QUOTED_RE.sub("", when))
+
+
+def _dicts(node: Any) -> list[tuple[int, dict[str, Any]]]:
+    return (
+        [(i, d) for i, d in enumerate(node) if isinstance(d, dict)]
+        if isinstance(node, list)
+        else []
+    )
+
+
+def _items(node: Any) -> list[tuple[str, dict[str, Any]]]:
+    return (
+        [(str(k), v) for k, v in node.items() if isinstance(v, dict)]
+        if isinstance(node, dict)
+        else []
+    )
+
+
+def _predicate_columns(preds: Any, where: str) -> list[tuple[str, str, bool]]:
+    return [
+        (f"{where}.{i}.column", p["column"], True)
+        for i, p in _dicts(preds)
+        if isinstance(p.get("column"), str)
+    ]
+
+
+def _states_columns(spec: dict[str, Any]) -> list[tuple[str, str, bool]]:
+    """`(where, column, reads)` for every column a `states:` spec names explicitly."""
+    out: list[tuple[str, str, bool]] = []
+
+    def named(where: str, value: Any) -> None:
+        if isinstance(value, str) and value:
+            out.append((where, value, False))
+
+    status = spec.get("status")
+    if isinstance(status, dict):
+        for key in ("column", "ctas_column", "why_column", "policy_column"):
+            named(f"status.{key}", status.get(key))
+        for i, rule in _dicts(status.get("compose")):
+            out += _predicate_columns(rule.get("when"), f"status.compose.{i}.when")
+    for m, machine in _items(spec.get("machines")):
+        named(f"machines.{m}.column", machine.get("column"))
+        named(f"machines.{m}.why_column", machine.get("why_column"))
+        for s, state in _items(machine.get("states")):
+            named(f"machines.{m}.states.{s}.why_from", state.get("why_from"))
+            detail = state.get("detail")
+            if isinstance(detail, dict):
+                named(f"machines.{m}.states.{s}.detail.column", detail.get("column"))
+    guards = spec.get("guards")
+    for g, guard in guards.items() if isinstance(guards, dict) else []:
+        if isinstance(guard, list):  # a bare predicate list means `all:`
+            out += _predicate_columns(guard, f"guards.{g}")
+        elif isinstance(guard, dict):
+            for key in ("all", "any"):
+                out += _predicate_columns(guard.get(key), f"guards.{g}.{key}")
+    for i, t in _dicts(spec.get("transitions")):
+        for key in ("writes", "payload_writes"):
+            block = t.get(key)
+            if isinstance(block, dict):
+                out += [(f"transitions.{i}.{key}", str(c), False) for c in block]
+        out += _predicate_columns(t.get("when"), f"transitions.{i}.when")
+        cta = t.get("cta")
+        if isinstance(cta, dict):
+            out += _predicate_columns(cta.get("when"), f"transitions.{i}.cta.when")
+        for j, then in _dicts(t.get("then")):
+            out += _predicate_columns(then.get("when"), f"transitions.{i}.then.{j}.when")
+    return out
+
+
+def _states_flows(spec: dict[str, Any]) -> list[tuple[str, str]]:
+    """`(where, flow)` for every flow a transition's `flow:` or `then:` names."""
+    out: list[tuple[str, str]] = []
+    for i, t in _dicts(spec.get("transitions")):
+        if isinstance(t.get("flow"), str):
+            out.append((f"transitions.{i}.flow", t["flow"]))
+        then = t.get("then")
+        for j, entry in enumerate(then if isinstance(then, list) else []):
+            flow = entry.get("flow") if isinstance(entry, dict) else entry
+            if isinstance(flow, str):
+                out.append((f"transitions.{i}.then.{j}", flow))
+    return out
 
 
 def _walk_strings(node: Any, path: str) -> list[tuple[str, str]]:

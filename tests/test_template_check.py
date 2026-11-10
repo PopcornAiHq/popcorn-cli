@@ -458,6 +458,172 @@ def test_undeclared_channel_key_warns(tmp_path):
     assert report.ok  # advisory: a flow may write the key at runtime
 
 
+@pytest.mark.parametrize("section", ["scalars", "default_scalars"])
+def test_channel_ref_to_a_scalar_warns(tmp_path, section):
+    """Scalars live in the agent store; `$channel` never carries them."""
+    flow = mutate(
+        CLEAN_SWEEP,
+        "cutoff",
+        args={"iso": "$steps.now.output.iso", "direction": "subtract", "hours": "$channel.window"},
+    )
+    root = write_bundle(
+        tmp_path / "b",
+        manifest={**CLEAN_MANIFEST, section: {"window": "6"}},
+        flows={"intake": CLEAN_INTAKE, "sweep": flow},
+    )
+    warnings = check_bundle(root).warnings
+    assert [f.code for f in warnings] == ["undeclared-channel-key"]
+    assert f"`{section}:`" in warnings[0].message
+    assert "agent store" in warnings[0].message
+
+
+def test_channel_ref_to_a_channel_parameter_is_clean(tmp_path):
+    flow = mutate(
+        CLEAN_SWEEP,
+        "cutoff",
+        args={
+            "iso": "$steps.now.output.iso",
+            "direction": "subtract",
+            "hours": "$channel.stale_hours",
+        },
+    )
+    root = write_bundle(tmp_path / "b", flows={"intake": CLEAN_INTAKE, "sweep": flow})
+    assert check_bundle(root).findings == []
+
+
+# ── states: ───────────────────────────────────────────────────────────
+
+CLEAN_STATES: dict[str, Any] = {
+    "table": "widgets",
+    "status": {"column": "Status", "ctas_column": "Title", "why_column": "Title"},
+    "machines": {
+        "alert": {
+            "column": "Stage",
+            "states": {"firing": {"label": "Firing"}, "resolved": {"terminal": True}},
+        }
+    },
+    "events": {"staff": ["resolve"], "world": ["cleared"]},
+    "guards": {"idle": [{"column": "PostMessageId", "empty": True}]},
+    "transitions": [
+        {
+            "on": "staff.resolve",
+            "from": "firing",
+            "to": "resolved",
+            "writes": {"Title": "done"},
+            "guard": ["idle"],
+            "then": ["sweep", {"flow": "intake", "when": [{"column": "Seen At", "empty": False}]}],
+        },
+        {"on": "world.cleared", "from": "firing", "to": "resolved", "flow": "sweep"},
+    ],
+}
+
+
+def states_bundle(root: Path, states: Any) -> Path:
+    manifest = json.loads(json.dumps(CLEAN_MANIFEST))
+    manifest["tables"]["widgets"]["columns"].append({"name": "Stage", "type": "string"})
+    manifest["states"] = states
+    return write_bundle(root, manifest=manifest)
+
+
+def broken(**changes: Any) -> dict[str, Any]:
+    clone = json.loads(json.dumps(CLEAN_STATES))
+    clone.update(changes)
+    return clone
+
+
+def test_states_clean(tmp_path):
+    report = check_bundle(states_bundle(tmp_path / "b", CLEAN_STATES))
+    assert report.findings == [], [str(f) for f in report.findings]
+
+
+def test_states_not_a_mapping(tmp_path):
+    assert codes(states_bundle(tmp_path / "b", ["widgets"])) == {"states-not-a-mapping"}
+
+
+def test_states_unknown_table(tmp_path):
+    report = check_bundle(states_bundle(tmp_path / "b", broken(table="gadgets")))
+    assert [(f.code, f.where) for f in report.findings] == [
+        ("states-unknown-table", "manifest.yaml:states.table")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("where", "states"),
+    [
+        ("status.ctas_column", broken(status={"column": "Status", "ctas_column": "CTAs"})),
+        (
+            "machines.alert.column",
+            broken(machines={"alert": {"column": "Phase", "states": {"firing": {}}}}),
+        ),
+        (
+            "machines.alert.states.firing.detail.column",
+            broken(
+                machines={
+                    "alert": {
+                        "column": "Stage",
+                        "states": {"firing": {"detail": {"column": "Reason", "values": ["x"]}}},
+                    }
+                }
+            ),
+        ),
+        ("guards.idle", broken(guards={"idle": [{"column": "Sending", "empty": True}]})),
+        (
+            "guards.idle.any",
+            broken(guards={"idle": {"any": [{"column": "Sending", "empty": True}]}}),
+        ),
+        (
+            "transitions.0.writes",
+            broken(transitions=[{**CLEAN_STATES["transitions"][0], "writes": {"Decision": "x"}}]),
+        ),
+        (
+            "transitions.0.then.0.when",
+            broken(
+                transitions=[
+                    {
+                        **CLEAN_STATES["transitions"][0],
+                        "then": [{"flow": "intake", "when": [{"column": "Sent", "empty": True}]}],
+                    }
+                ]
+            ),
+        ),
+    ],
+)
+def test_states_unknown_column(tmp_path, where, states):
+    report = check_bundle(states_bundle(tmp_path / "b", states))
+    assert [f.code for f in report.findings] == ["states-unknown-column"]
+    assert report.findings[0].where.startswith(f"manifest.yaml:states.{where}")
+
+
+def test_states_default_column_is_left_to_the_server(tmp_path):
+    """An omitted key's default is the server's to apply, so it is never guessed here."""
+    states = {k: v for k, v in CLEAN_STATES.items() if k != "status"}
+    assert check_bundle(states_bundle(tmp_path / "b", states)).findings == []
+
+
+@pytest.mark.parametrize(
+    ("where", "transition"),
+    [
+        (
+            "transitions.0.flow",
+            {"on": "world.cleared", "from": "firing", "to": "resolved", "flow": "nope"},
+        ),
+        (
+            "transitions.0.then.0",
+            {"on": "staff.resolve", "from": "firing", "to": "resolved", "then": ["nope"]},
+        ),
+        (
+            "transitions.0.then.0",
+            {"on": "staff.resolve", "from": "firing", "to": "resolved", "then": [{"flow": "nope"}]},
+        ),
+    ],
+)
+def test_states_unknown_flow(tmp_path, where, transition):
+    report = check_bundle(states_bundle(tmp_path / "b", broken(transitions=[transition])))
+    assert [(f.code, f.where) for f in report.findings] == [
+        ("states-unknown-flow", f"manifest.yaml:states.{where}")
+    ]
+
+
 # ── output schemas ────────────────────────────────────────────────────
 
 
