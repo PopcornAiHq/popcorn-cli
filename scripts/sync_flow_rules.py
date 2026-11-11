@@ -228,6 +228,18 @@ _FIELDS: tuple[_Field, ...] = (
         "for `foo.md.j2`.",
     ),
     _Field(
+        "MEMORY_SUBDIR",
+        ("bundle", "memory_subdir"),
+        "Directory holding the bundle's memory schemas, one level deep: a file there is a\n"
+        "memory schema only when it is exactly `<MEMORY_SUBDIR>/<name><MEMORY_SCHEMA_SUFFIX>`,\n"
+        "and the manifest's `memory:` names which ones a Routine mounts.",
+    ),
+    _Field(
+        "MEMORY_SCHEMA_SUFFIX",
+        ("bundle", "memory_schema_suffix"),
+        "The suffix that makes a file under MEMORY_SUBDIR a memory schema.",
+    ),
+    _Field(
         "CODE_SUBDIR",
         ("bundle", "code_subdir"),
         "Directory holding custom code blocks, one directory per block. A THIRD\n"

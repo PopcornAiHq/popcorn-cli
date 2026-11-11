@@ -197,6 +197,16 @@ def test_the_code_block_rules():
     assert flow_rules.CODE_PATH_SEGMENT_PATTERN == r"^[^.][^/]*$"
 
 
+def test_the_memory_schema_rules():
+    """Transcribed so the sync keeps running; nothing in the CLI reads them yet.
+
+    `app publish` and `app validate` don't recognise `memory/` paths, so a
+    bundle's memory schemas are reported as not published rather than sent.
+    """
+    assert flow_rules.MEMORY_SUBDIR == "memory"
+    assert flow_rules.MEMORY_SCHEMA_SUFFIX == ".schema.json"
+
+
 def test_the_agent_rules():
     """The fourth classification. Every agent directory holds the same
     filenames, so a checker without this rule reports each pair of agents as
