@@ -154,6 +154,12 @@ ACTIVITY_ROLES: dict[str, dict[str, Any]] = {
         "column_args": (),
         "output_schema_arg": None,
     },
+    "foundation.store.release_row": {
+        "writes_rows": True,
+        "reads_rows": True,
+        "column_args": (),
+        "output_schema_arg": None,
+    },
     "foundation.store.upsert_rows": {
         "writes_rows": True,
         "reads_rows": False,
@@ -241,6 +247,14 @@ FILE_KEY_SUFFIXES = (
     ".md",
     ".txt",
 )
+
+# Directory holding the bundle's memory schemas, one level deep: a file there is a
+# memory schema only when it is exactly `<MEMORY_SUBDIR>/<name><MEMORY_SCHEMA_SUFFIX>`,
+# and the manifest's `memory:` names which ones a Routine mounts.
+MEMORY_SUBDIR = "memory"
+
+# The suffix that makes a file under MEMORY_SUBDIR a memory schema.
+MEMORY_SCHEMA_SUFFIX = ".schema.json"
 
 # Directory holding custom code blocks, one directory per block. A THIRD
 # classification beside root files and SUBDIRS: the tree reader descends it to any
